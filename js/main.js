@@ -275,7 +275,7 @@ function renderSelect() {
   };
 
   mk("assess", prof ? "Your circle" : "Draw your circle", false, startAssessment);
-  for (const g of GAMES) mk(g.id, g.name, !prof, () => startGame(g.id, true));
+  for (const g of GAMES) { if (g.disabled) continue; mk(g.id, g.name, !prof, () => startGame(g.id, true)); }
 }
 
 /* ================= assessment ================= */
@@ -635,8 +635,10 @@ $("btn-prof-export").addEventListener("click", () => {
 // all groups are visible so staff can configure a game before starting it
 function updateDrawer() {
   const active = state.screen === "stage" ? state.current?.id : null;
-  document.querySelectorAll(".dwr-game").forEach(d =>
-    d.classList.toggle("hidden", !!active && d.dataset.for !== active));
+  document.querySelectorAll(".dwr-game").forEach(d => {
+    const disabled = GAMES.find(g => g.id === d.dataset.for)?.disabled;
+    d.classList.toggle("hidden", disabled || (!!active && d.dataset.for !== active));
+  });
 }
 $("btn-staff").addEventListener("click", () => { updateDrawer(); $("drawer").classList.toggle("hidden"); });
 

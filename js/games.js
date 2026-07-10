@@ -1520,7 +1520,7 @@ export const GAMES = [
   { id: "ember", name: "Ember Watch", cls: EmberWatch },
   { id: "lantern", name: "Lantern Release", cls: LanternRelease },
   { id: "pong", name: "Arc Pong", cls: ArcPong },
-  { id: "rhythm", name: "Melody Tiles", cls: MelodyTiles },
+  { id: "rhythm", name: "Melody Tiles", cls: MelodyTiles, disabled: true },   // disabled for now
   { id: "boxes", name: "Harbor Crates", cls: HarborCrates },
   { id: "compass", name: "Compass Rose", cls: CompassRose },
   { id: "echo", name: "Echo Reach", cls: EchoReach },
