@@ -171,6 +171,9 @@ export class Tracker {
       else if (g < close) this.gripClosed[s] = true;
     }
 
+    // fresh per-frame visibility (pts.ok is sticky; this is not) for framing checks
+    this.rawVis = { hips: raw.hipL.ok && raw.hipR.ok };
+
     // trunk axis (shoulders -> hips)
     if (raw.hipL.ok && raw.hipR.ok) {
       const hip = { x: (this.pts.hipL.x + this.pts.hipR.x) / 2, y: (this.pts.hipL.y + this.pts.hipR.y) / 2 };

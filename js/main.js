@@ -52,16 +52,47 @@ async function boot() {
 }
 
 /* ================= welcome (P1) ================= */
+// Setup gate: guide the patient until their whole upper body is in frame,
+// centered and at a good distance, settled for a moment. Only then offer
+// the raise-hand start. A click anywhere is the staff override.
+function framingMessage(t) {
+  if (!t.trackingOk) return "Step in front of the camera";
+  if (t.shoulderWFast > 0.42) return "Move back a little, so we can see your whole upper body";
+  if (t.shoulderWFast < 0.09) return "Come a little closer to the camera";
+  if (!t.rawVis?.hips) return "Move back a little, we want to see down to your hips";
+  if (t.anchorFast.x < 0.28 || t.anchorFast.x > 0.72) return "Scoot toward the middle of the picture";
+  if (t.anchorFast.y < 0.15 || t.anchorFast.y > 0.65) return "Adjust the camera so your shoulders sit near the middle";
+  return null;
+}
+
 function watchWelcome() {
-  let raisedSince = null;
+  let raisedSince = null, framedSince = null;
+  const head = document.querySelector("#screen-welcome .headline");
+  const sub = document.querySelector("#screen-welcome .subline");
   setInterval(() => {
-    if (state.screen !== "screen-welcome" || !state.tracker?.trackingOk) return;
+    if (state.screen !== "screen-welcome" || !state.tracker) return;
+    const now = performance.now();
+    const msg = framingMessage(state.tracker);
+    if (msg) {
+      framedSince = null; raisedSince = null;
+      head.textContent = "Let's get you settled";
+      sub.textContent = msg;
+      return;
+    }
+    framedSince ??= now;
+    if (now - framedSince < 1400) {
+      head.textContent = "That's it";
+      sub.textContent = "Sit comfortably, just like that";
+      return;
+    }
+    head.textContent = "Ready when you are";
+    sub.textContent = "Lift your hand into the light";
     const rel = state.tracker.handRel(state.side);
     if (rel && rel.y > 0.15) {
-      raisedSince ??= performance.now();
-      if (performance.now() - raisedSince > 900) enterSelect();
+      raisedSince ??= now;
+      if (now - raisedSince > 900) enterSelect();
     } else raisedSince = null;
-  }, 120);
+  }, 150);
   $("screen-welcome").addEventListener("click", enterSelect);
 }
 
