@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics="">
+<meta name="design_doc_mode" content="canvas">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+<link href="https://fonts.googleapis.com/css2?family=Nunito:ital,wght@0,400;0,600;0,700;0,800;0,900&amp;display=swap" rel="stylesheet">
+<style>
+  body{margin:0;background:#e9e5dd;font-family:'Nunito',system-ui,sans-serif}
+  a{color:#8a6bb0}a:hover{color:#6f4f96}
+  .dv-turn{padding:44px 48px 40px;border-bottom:1px solid rgba(0,0,0,.08);scroll-margin-top:16px}
+  .dv-thd{display:flex;align-items:baseline;gap:10px;margin:0 0 6px}
+  .dv-tid{font:800 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:#1b1b3a;color:#fff;border-radius:4px;text-decoration:none}
+  .dv-tname{font:800 14px/1.2 'Nunito',sans-serif;color:#1b1b3a}
+  .dv-sub{margin:0 0 26px;font:500 12.5px/1.5 'Nunito',sans-serif;color:rgba(27,27,58,.6);max-width:760px}
+  .dv-group{margin:0 0 30px}
+  .dv-glabel{font:800 11px/1 ui-monospace,Menlo,monospace;letter-spacing:.08em;text-transform:uppercase;color:rgba(27,27,58,.45);margin:0 0 14px;display:flex;align-items:center;gap:10px}
+  .dv-glabel::after{content:"";height:1px;flex:1;background:rgba(27,27,58,.12)}
+  .dv-opts{display:flex;flex-wrap:wrap;gap:26px;align-items:flex-start}
+  .dv-opt{flex:none;display:flex;flex-direction:column;gap:10px;scroll-margin-top:16px}
+  .dv-oid{font:800 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:rgba(27,27,58,.1);color:#1b1b3a;border-radius:5px;text-decoration:none}
+  .dv-olabel{display:flex;align-items:baseline;gap:8px;font:600 11.5px/1.35 'Nunito',sans-serif;color:rgba(27,27,58,.62)}
+  .dv-card{max-width:100%;border-radius:16px;overflow:hidden;box-shadow:0 8px 30px rgba(27,27,58,.16),0 1px 3px rgba(27,27,58,.1)}
+  .dv-opt:target .dv-oid{background:#e8a86a;color:#1b1b3a}
+  .dv-next{margin:26px 0 0;font:500 12.5px/1.6 'Nunito',sans-serif;color:rgba(27,27,58,.55)}
+  @keyframes drift{0%,100%{transform:translate(0,0)}50%{transform:translate(20px,-16px)}}
+  @keyframes drift2{0%,100%{transform:translate(0,0) rotate(0)}50%{transform:translate(-18px,14px) rotate(5deg)}}
+  @keyframes breathe{0%,100%{opacity:.45;transform:scale(1)}50%{opacity:.8;transform:scale(1.06)}}
+  @keyframes twinkle{0%,100%{opacity:.25}50%{opacity:1}}
+  @keyframes floaty{0%,100%{transform:translateY(0)}50%{transform:translateY(-12px)}}
+  @keyframes cometpath{0%{transform:translate(-40px,30px)}100%{transform:translate(40px,-30px)}}
+  @keyframes glowpulse{0%,100%{filter:drop-shadow(0 0 8px rgba(232,168,106,.5))}50%{filter:drop-shadow(0 0 22px rgba(232,168,106,.9))}}
+  @keyframes arcgrow{0%{stroke-dashoffset:var(--len)}100%{stroke-dashoffset:var(--off)}}
+  @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+  @keyframes grab{0%,100%{transform:translate(-50%,-50%) scale(1.5);opacity:.35;border-color:rgba(244,236,221,.7)}45%,62%{transform:translate(-50%,-50%) scale(.82);opacity:1;border-color:#e8a86a}}
+  @keyframes coachbreathe{0%,100%{transform:scale(1)}50%{transform:scale(1.03) translateY(-2px)}}
+  @keyframes fall{0%{transform:translateY(-24px);opacity:0}14%{opacity:1}100%{transform:translateY(240px);opacity:.15}}
+  @keyframes rise{0%{transform:translateY(0);opacity:1}100%{transform:translateY(-170px);opacity:0}}
+  @keyframes ballx{0%{transform:translate(0,0)}50%{transform:translate(360px,70px)}100%{transform:translate(0,0)}}
+  @keyframes bloom{0%,100%{transform:scale(1);opacity:.5}50%{transform:scale(1.35);opacity:.9}}
+  @keyframes threaddraw{0%{stroke-dashoffset:340}100%{stroke-dashoffset:0}}
+  @keyframes spinrev{from{transform:rotate(0deg)}to{transform:rotate(-360deg)}}
+  @keyframes amberglow{0%,100%{opacity:.55;filter:drop-shadow(0 0 4px rgba(232,168,106,.5))}50%{opacity:1;filter:drop-shadow(0 0 12px rgba(232,168,106,.95))}}
+  @keyframes arrownudge{0%,100%{transform:translateX(0);opacity:.5}50%{transform:translateX(-8px);opacity:1}}
+  @keyframes ringglow{0%,100%{filter:drop-shadow(0 0 6px rgba(232,168,106,.5))}50%{filter:drop-shadow(0 0 16px rgba(232,168,106,.85))}}
+</style>
+</helmet>
+
+<section class="dv-turn" id="t3">
+  <div class="dv-thd"><a class="dv-tid" href="#t3">3</a><span class="dv-tname">Posture Coach alert · P5 between-rounds · P7 collections · S3 staff profile</span></div>
+  <p class="dv-sub">Four screens: <a class="dv-oid" href="#3a">3a</a> the Posture Coach in its alert state (built from the 2d Ember Watch frame — world dims, offending segment glows amber, dashed ghost shows correct posture, spoken cue); <a class="dv-oid" href="#3b">3b</a> the P5 between-rounds card (drawn stars, a success ring that glows warmest near 70% — not a 100% meter — and three hover-dwell fatigue faces); <a class="dv-oid" href="#3c">3c</a> the P7 collections gallery as a calm gallery, not a store; <a class="dv-oid" href="#3d">3d</a> the S3 clinical dashboard with the <a class="dv-oid" href="#1d">1d</a> protractor ROM arc as hero. Staff screens are laptop-density; patient screens keep the 12-ft scale.</p>
+
+  <!-- ===== 3a Posture Coach alert ===== -->
+  <div class="dv-group">
+    <div class="dv-glabel">A · Posture Coach — alert state (compensation detected)</div>
+    <div class="dv-opts">
+      <div class="dv-opt" id="3a">
+        <div class="dv-olabel"><a class="dv-oid" href="#3a">3a</a>G3 Ember Watch, trunk-lean detected — world waits, nothing is lost</div>
+        <div class="dv-card" style="position:relative;width:760px;height:428px;background:linear-gradient(180deg,#3a2c4a 0%,#4a3550 40%,#2a2038 100%)">
+          <!-- village silhouette (dimmed) -->
+          <div style="position:absolute;left:0;right:0;bottom:0;height:120px;display:flex;align-items:flex-end;gap:6px;padding:0 30px;box-sizing:border-box;opacity:.8">
+            <div style="width:90px;height:80px;background:#16121f;position:relative"><div style="position:absolute;left:16px;top:20px;width:14px;height:16px;background:#e8a86a;box-shadow:0 0 8px rgba(232,168,106,.5)"></div></div>
+            <div style="width:70px;height:110px;background:#16121f"></div>
+            <div style="width:110px;height:70px;background:#16121f;position:relative"><div style="position:absolute;left:60px;top:16px;width:14px;height:16px;background:#e8a86a;box-shadow:0 0 8px rgba(232,168,106,.5)"></div></div>
+            <div style="width:80px;height:95px;background:#16121f"></div>
+            <div style="flex:1;height:60px;background:#16121f"></div>
+          </div>
+          <!-- drifting ember (slowed) -->
+          <div style="position:absolute;left:300px;top:40px;width:16px;height:16px;border-radius:50%;background:radial-gradient(circle,#fff2c2,#e8703a);box-shadow:0 0 14px rgba(232,112,58,.6);animation:fall 9s ease-in infinite"></div>
+          <!-- world-dim overlay (~15%) -->
+          <div style="position:absolute;inset:0;background:rgba(18,12,28,.32);pointer-events:none"></div>
+          <!-- coach alert figure (full opacity, docked bottom-center-left) -->
+          <div style="position:absolute;left:150px;bottom:26px;width:150px;height:210px">
+            <svg viewBox="0 0 150 210" style="width:100%;height:100%">
+              <!-- ghost correct posture (dashed white, upright) -->
+              <g stroke="rgba(255,255,255,.6)" stroke-width="4" stroke-linecap="round" stroke-dasharray="5 6" fill="none">
+                <circle cx="75" cy="34" r="16"></circle>
+                <line x1="75" y1="50" x2="75" y2="128"></line>
+                <line x1="45" y1="76" x2="105" y2="76"></line>
+              </g>
+              <!-- actual posture: head + amber leaning spine + hiked shoulder -->
+              <g fill="none" stroke-linecap="round">
+                <circle cx="95" cy="36" r="16" stroke="#f4ecdd" stroke-width="4.5"></circle>
+                <!-- leaning spine (amber, glowing) -->
+                <line x1="95" y1="52" x2="75" y2="128" stroke="#e8a86a" stroke-width="6" style="animation:amberglow 1.8s ease-in-out infinite"></line>
+                <!-- shoulders, right hiked (amber) -->
+                <line x1="62" y1="80" x2="122" y2="66" stroke="#e8a86a" stroke-width="5.5" style="animation:amberglow 1.8s ease-in-out infinite"></line>
+                <line x1="62" y1="80" x2="48" y2="120" stroke="#f4ecdd" stroke-width="4.5"></line>
+                <line x1="122" y1="66" x2="134" y2="108" stroke="#f4ecdd" stroke-width="4.5"></line>
+                <line x1="62" y1="128" x2="92" y2="128" stroke="#f4ecdd" stroke-width="4.5"></line>
+              </g>
+              <!-- corrective arrow wrong -> right -->
+              <g style="animation:arrownudge 1.6s ease-in-out infinite"><path d="M112 30 L92 30" stroke="#9fc08a" stroke-width="3.5" stroke-linecap="round" fill="none"></path><path d="M98 24 L90 30 L98 36" stroke="#9fc08a" stroke-width="3.5" stroke-linecap="round" fill="none"></path></g>
+            </svg>
+          </div>
+          <!-- spoken cue caption -->
+          <div style="position:absolute;left:50%;bottom:40px;transform:translateX(-50%);display:flex;align-items:center;gap:12px;padding:12px 22px;background:rgba(20,14,30,.6);border:1px solid rgba(244,236,221,.2);border-radius:40px;color:#f4ecdd;backdrop-filter:blur(4px)">
+            <svg viewBox="0 0 24 24" style="width:22px;height:22px"><g fill="none" stroke="#9fc08a" stroke-width="2" stroke-linecap="round"><path d="M4 9v6h4l5 4V5L8 9H4z"></path><path d="M17 8a5 5 0 0 1 0 8"></path></g></svg>
+            <span style="font-weight:700;font-size:22px">Sit tall — reach with your arm</span>
+          </div>
+        </div>
+        <div style="font:500 11.5px/1.5 'Nunito';color:rgba(27,27,58,.5);max-width:760px">Amber = the detected compensation (leaning spine + hiked shoulder). Dashed white ghost = target posture; green arrow nudges wrong→right. World dims ~15% and slows; round continues, no miss counted. On recovery the segment blooms green for 1s and the world brightens back.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 3b P5 between-rounds ===== -->
+  <div class="dv-group">
+    <div class="dv-glabel">B · P5 — between-rounds card</div>
+    <div class="dv-opts">
+      <div class="dv-opt" id="3b">
+        <div class="dv-olabel"><a class="dv-oid" href="#3b">3b</a>Stars earned · "just right" success ring · fatigue check (hover a face)</div>
+        <div class="dv-card" style="position:relative;width:640px;height:560px;background:radial-gradient(circle at 50% 30%,#3a3168,#20204a);display:flex;align-items:center;justify-content:center">
+          <div style="width:520px;background:rgba(244,236,221,.96);border-radius:28px;padding:34px 40px 30px;box-sizing:border-box;box-shadow:0 20px 60px rgba(0,0,0,.35)">
+            <!-- stars -->
+            <div style="display:flex;justify-content:center;gap:10px">
+              <svg viewBox="0 0 24 24" style="width:52px;height:52px"><polygon points="12,2 14.9,8.6 22,9.3 16.5,14 18.3,21 12,17.3 5.7,21 7.5,14 2,9.3 9.1,8.6" fill="#e8a86a"></polygon></svg>
+              <svg viewBox="0 0 24 24" style="width:64px;height:64px"><polygon points="12,2 14.9,8.6 22,9.3 16.5,14 18.3,21 12,17.3 5.7,21 7.5,14 2,9.3 9.1,8.6" fill="#e8a86a"></polygon></svg>
+              <svg viewBox="0 0 24 24" style="width:52px;height:52px"><polygon points="12,2 14.9,8.6 22,9.3 16.5,14 18.3,21 12,17.3 5.7,21 7.5,14 2,9.3 9.1,8.6" fill="rgba(27,27,58,.16)"></polygon></svg>
+            </div>
+            <!-- success ring ~70% just-right -->
+            <div style="display:flex;align-items:center;gap:24px;margin-top:22px">
+              <svg viewBox="0 0 120 120" style="width:130px;height:130px;animation:ringglow 3s ease-in-out infinite">
+                <circle cx="60" cy="60" r="50" fill="none" stroke="rgba(27,27,58,.1)" stroke-width="12"></circle>
+                <circle cx="60" cy="60" r="50" fill="none" stroke="#e8a86a" stroke-width="12" stroke-linecap="round" stroke-dasharray="314" stroke-dashoffset="94" transform="rotate(-90 60 60)"></circle>
+                <text x="60" y="58" text-anchor="middle" font-family="Nunito" font-weight="800" font-size="30" fill="#c77f4a">70%</text>
+                <text x="60" y="78" text-anchor="middle" font-family="Nunito" font-weight="700" font-size="12" fill="rgba(27,27,58,.5)">just right</text>
+              </svg>
+              <div style="font:700 22px/1.4 'Nunito';color:#1b1b3a">Your longest rally was<br><span style="color:#c77f4a">14 reaches</span> — lovely and steady.</div>
+            </div>
+            <!-- fatigue faces -->
+            <div style="margin-top:22px;font:700 17px 'Nunito';color:#1b1b3a;text-align:center">How does your arm feel?</div>
+            <div style="display:flex;justify-content:center;gap:22px;margin-top:14px">
+              <div style="text-align:center;cursor:pointer;transition:transform .3s" style-hover="transform:scale(1.12)">
+                <div style="position:relative;width:84px;height:84px;border-radius:50%;background:#dff0d8;display:flex;align-items:center;justify-content:center"><div style="position:absolute;inset:-6px;border-radius:50%;border:4px solid #9fc08a;opacity:0;transition:opacity .3s" class="fdot"></div><svg viewBox="0 0 48 48" style="width:52px;height:52px"><g fill="none" stroke="#4a7a3a" stroke-width="3" stroke-linecap="round"><circle cx="18" cy="20" r="2.5" fill="#4a7a3a" stroke="none"></circle><circle cx="30" cy="20" r="2.5" fill="#4a7a3a" stroke="none"></circle><path d="M16 30 Q24 37 32 30"></path></g></svg></div>
+                <div style="font:700 15px 'Nunito';color:#4a7a3a;margin-top:8px">Fine</div>
+              </div>
+              <div style="text-align:center;cursor:pointer;transition:transform .3s" style-hover="transform:scale(1.12)">
+                <div style="width:84px;height:84px;border-radius:50%;background:#f2e6cf;display:flex;align-items:center;justify-content:center"><svg viewBox="0 0 48 48" style="width:52px;height:52px"><g fill="none" stroke="#b8892a" stroke-width="3" stroke-linecap="round"><circle cx="18" cy="20" r="2.5" fill="#b8892a" stroke="none"></circle><circle cx="30" cy="20" r="2.5" fill="#b8892a" stroke="none"></circle><line x1="16" y1="31" x2="32" y2="31"></line></g></svg></div>
+                <div style="font:700 15px 'Nunito';color:#b8892a;margin-top:8px">Tired</div>
+              </div>
+              <div style="text-align:center;cursor:pointer;transition:transform .3s" style-hover="transform:scale(1.12)">
+                <div style="width:84px;height:84px;border-radius:50%;background:#f2dcd6;display:flex;align-items:center;justify-content:center"><svg viewBox="0 0 48 48" style="width:52px;height:52px"><g fill="none" stroke="#b5503a" stroke-width="3" stroke-linecap="round"><circle cx="18" cy="20" r="2.5" fill="#b5503a" stroke="none"></circle><circle cx="30" cy="20" r="2.5" fill="#b5503a" stroke="none"></circle><path d="M16 33 Q24 26 32 33"></path></g></svg></div>
+                <div style="font:700 15px 'Nunito';color:#b5503a;margin-top:8px">Hurts</div>
+              </div>
+            </div>
+            <div style="margin-top:22px;text-align:center;font:600 15px 'Nunito';color:rgba(27,27,58,.6)">Next round, the stars will drift a little farther.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 3c P7 collections ===== -->
+  <div class="dv-group">
+    <div class="dv-glabel">C · P7 — collections / star shop (a calm gallery, not a store)</div>
+    <div class="dv-opts">
+      <div class="dv-opt" id="3c">
+        <div class="dv-olabel"><a class="dv-oid" href="#3c">3c</a>Constellation creatures · lantern sky · village · cursor skins — one price chip each</div>
+        <div class="dv-card" style="position:relative;width:820px;height:500px;background:linear-gradient(180deg,#20204a,#3a3168);padding:30px 34px;box-sizing:border-box">
+          <div style="display:flex;align-items:center;justify-content:space-between">
+            <div style="color:#f4ecdd;font-weight:800;font-size:32px">Your collection</div>
+            <div style="display:flex;align-items:center;gap:8px;padding:8px 16px;background:rgba(244,236,221,.12);border-radius:30px"><svg viewBox="0 0 24 24" style="width:24px;height:24px"><polygon points="12,2 14.9,8.6 22,9.3 16.5,14 18.3,21 12,17.3 5.7,21 7.5,14 2,9.3 9.1,8.6" fill="#e8a86a"></polygon></svg><span style="color:#f4ecdd;font-weight:800;font-size:22px">128</span></div>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:18px;margin-top:24px">
+            <!-- owned creature -->
+            <div style="border-radius:18px;background:rgba(244,236,221,.08);overflow:hidden">
+              <div style="height:130px;background:radial-gradient(circle at 50% 45%,#4a3f78,#20204a);position:relative"><svg viewBox="0 0 120 120" style="position:absolute;inset:0;width:100%;height:100%"><g stroke="#fff6d8" stroke-width="2" fill="none"><line x1="30" y1="40" x2="55" y2="65"></line><line x1="55" y1="65" x2="85" y2="45"></line><line x1="85" y1="45" x2="95" y2="80"></line><line x1="55" y1="65" x2="60" y2="95"></line></g><g fill="#fff6d8"><circle cx="30" cy="40" r="4"></circle><circle cx="55" cy="65" r="4"></circle><circle cx="85" cy="45" r="4"></circle><circle cx="95" cy="80" r="4"></circle><circle cx="60" cy="95" r="4"></circle></g></svg></div>
+              <div style="padding:12px 14px;display:flex;align-items:center;justify-content:space-between"><span style="color:#f4ecdd;font-weight:700;font-size:15px">The Crane</span><span style="color:#9fc08a;font-weight:800;font-size:13px">Owned</span></div>
+            </div>
+            <!-- lantern sky -->
+            <div style="border-radius:18px;background:rgba(244,236,221,.08);overflow:hidden">
+              <div style="height:130px;background:linear-gradient(180deg,#1b1b3a,#3a3168);position:relative"><div style="position:absolute;left:24px;top:30px;width:16px;height:20px;border-radius:40% 40% 50% 50%;background:radial-gradient(circle,#ffd98a,#e8a86a);box-shadow:0 0 12px rgba(232,168,106,.6)"></div><div style="position:absolute;left:60px;top:50px;width:14px;height:18px;border-radius:40% 40% 50% 50%;background:radial-gradient(circle,#ffd98a,#e8a86a);box-shadow:0 0 10px rgba(232,168,106,.6)"></div><div style="position:absolute;left:90px;top:24px;width:12px;height:16px;border-radius:40% 40% 50% 50%;background:radial-gradient(circle,#ffd98a,#e8a86a);box-shadow:0 0 10px rgba(232,168,106,.6)"></div></div>
+              <div style="padding:12px 14px;display:flex;align-items:center;justify-content:space-between"><span style="color:#f4ecdd;font-weight:700;font-size:15px">Lantern sky</span><span style="color:#9fc08a;font-weight:800;font-size:13px">Owned</span></div>
+            </div>
+            <!-- village decor (buyable) -->
+            <div style="border-radius:18px;background:rgba(244,236,221,.08);overflow:hidden">
+              <div style="height:130px;background:linear-gradient(180deg,#4a3550,#2a2038);position:relative;display:flex;align-items:flex-end;gap:4px;padding:0 18px 14px;box-sizing:border-box"><div style="width:26px;height:44px;background:#16121f;position:relative"><div style="position:absolute;left:8px;top:10px;width:8px;height:9px;background:#e8a86a"></div></div><div style="width:20px;height:60px;background:#16121f"></div><div style="width:30px;height:38px;background:#16121f"></div></div>
+              <div style="padding:12px 14px;display:flex;align-items:center;justify-content:space-between"><span style="color:#f4ecdd;font-weight:700;font-size:15px">Windmill</span><span style="display:flex;align-items:center;gap:4px;padding:3px 9px;background:rgba(232,168,106,.2);border-radius:20px;color:#e8a86a;font-weight:800;font-size:13px"><svg viewBox="0 0 24 24" style="width:14px;height:14px"><polygon points="12,2 14.9,8.6 22,9.3 16.5,14 18.3,21 12,17.3 5.7,21 7.5,14 2,9.3 9.1,8.6" fill="#e8a86a"></polygon></svg>40</span></div>
+            </div>
+            <!-- cursor skin (buyable) -->
+            <div style="border-radius:18px;background:rgba(244,236,221,.08);overflow:hidden">
+              <div style="height:130px;background:radial-gradient(circle at 50% 50%,#2f5560,#14243f);position:relative"><div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:30px;height:30px;border-radius:50%;background:radial-gradient(circle,#fff,#9fc0c8);box-shadow:0 0 22px 7px rgba(200,230,235,.7)"></div></div>
+              <div style="padding:12px 14px;display:flex;align-items:center;justify-content:space-between"><span style="color:#f4ecdd;font-weight:700;font-size:15px">Comet cursor</span><span style="display:flex;align-items:center;gap:4px;padding:3px 9px;background:rgba(232,168,106,.2);border-radius:20px;color:#e8a86a;font-weight:800;font-size:13px"><svg viewBox="0 0 24 24" style="width:14px;height:14px"><polygon points="12,2 14.9,8.6 22,9.3 16.5,14 18.3,21 12,17.3 5.7,21 7.5,14 2,9.3 9.1,8.6" fill="#e8a86a"></polygon></svg>25</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 3d S3 staff profile ===== -->
+  <div class="dv-group">
+    <div class="dv-glabel">D · S3 — patient profile (clinical dashboard, laptop density)</div>
+    <div class="dv-opts">
+      <div class="dv-opt" id="3d">
+        <div class="dv-olabel"><a class="dv-oid" href="#3d">3d</a>Hero ROM arc (1d) + grasp map + key numbers with sparklines + compensation + session log</div>
+        <div class="dv-card" style="width:1120px;background:#f3efe7;padding:0;font-family:'Nunito',sans-serif">
+          <!-- header -->
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:22px 30px;background:#1b1b3a;color:#f4ecdd">
+            <div style="display:flex;align-items:center;gap:22px">
+              <div><div style="font-weight:800;font-size:26px">Patient RH-0428</div><div style="font-weight:600;font-size:13px;opacity:.7">Affected side: Left · Day 23 of program</div></div>
+              <div style="display:flex;gap:8px"><span style="padding:5px 12px;border-radius:20px;background:rgba(232,168,106,.25);color:#e8a86a;font-weight:700;font-size:13px">L affected</span><span style="padding:5px 12px;border-radius:20px;background:rgba(244,236,221,.12);font-weight:700;font-size:13px">R baseline</span></div>
+            </div>
+            <div style="display:flex;align-items:center;gap:14px">
+              <div style="text-align:right"><div style="font-weight:700;font-size:13px;opacity:.7">Last assessment</div><div style="font-weight:800;font-size:15px">Jul 7 · 2 days ago</div></div>
+              <span style="padding:6px 14px;border-radius:20px;background:#9fc08a;color:#1b3a1b;font-weight:800;font-size:13px">Up to date</span>
+            </div>
+          </div>
+          <!-- body grid -->
+          <div style="display:grid;grid-template-columns:1.15fr 1fr;gap:18px;padding:22px 30px">
+            <!-- hero ROM arc (1d protractor) -->
+            <div style="background:#fbf7ef;border-radius:16px;padding:20px 22px;box-shadow:0 2px 10px rgba(27,27,58,.06)">
+              <div style="display:flex;align-items:center;justify-content:space-between"><div style="font:800 16px 'Nunito';color:#1b1b3a">Range of motion</div><div style="font:600 12px 'Nunito';color:rgba(27,27,58,.5)">Shoulder abduction · both arms · ghosts = past sessions</div></div>
+              <svg viewBox="0 0 400 232" style="width:100%;margin-top:6px" data-om-raster>
+                <g stroke="rgba(27,27,58,.12)" stroke-width="1"><line x1="200" y1="212" x2="200" y2="44"></line><line x1="200" y1="212" x2="40" y2="212"></line><line x1="200" y1="212" x2="360" y2="212"></line><line x1="200" y1="212" x2="85.7" y2="97.4"></line><line x1="200" y1="212" x2="314.3" y2="97.4"></line></g>
+                <path d="M40 212 A160 160 0 0 1 360 212" fill="none" stroke="rgba(27,27,58,.1)" stroke-width="3"></path>
+                <path d="M96 122 A140 140 0 0 1 304 122" fill="none" stroke="rgba(232,168,106,.2)" stroke-width="9" stroke-linecap="round"></path>
+                <path d="M78 132 A150 150 0 0 1 322 132" fill="none" stroke="rgba(232,168,106,.3)" stroke-width="9" stroke-linecap="round"></path>
+                <path d="M52 178 A155 155 0 0 1 348 178" fill="none" stroke="rgba(27,27,58,.35)" stroke-width="11" stroke-linecap="round"></path>
+                <path d="M86 122 A150 150 0 0 1 314 122" fill="none" stroke="#e8a86a" stroke-width="13" stroke-linecap="round"></path>
+                <circle cx="200" cy="212" r="6" fill="#1b1b3a"></circle>
+                <text x="30" y="226" font-family="Nunito" font-size="12" font-weight="700" fill="rgba(27,27,58,.55)">0°</text><text x="182" y="34" font-family="Nunito" font-size="12" font-weight="700" fill="rgba(27,27,58,.55)">90°</text><text x="350" y="226" font-family="Nunito" font-size="12" font-weight="700" fill="rgba(27,27,58,.55)">180°</text>
+              </svg>
+              <div style="display:flex;gap:24px;margin-top:2px">
+                <div><div style="display:flex;align-items:center;gap:7px;font:700 13px 'Nunito';color:#1b1b3a"><span style="width:11px;height:11px;border-radius:50%;background:#e8a86a"></span>Affected (L)</div><div style="font:800 20px 'Nunito';color:#c77f4a">18°–142°</div></div>
+                <div><div style="display:flex;align-items:center;gap:7px;font:700 13px 'Nunito';color:#1b1b3a"><span style="width:11px;height:11px;border-radius:50%;background:rgba(27,27,58,.35)"></span>Other (R)</div><div style="font:800 20px 'Nunito';color:rgba(27,27,58,.6)">8°–168°</div></div>
+              </div>
+            </div>
+            <!-- grasp map -->
+            <div style="background:#fbf7ef;border-radius:16px;padding:20px 22px;box-shadow:0 2px 10px rgba(27,27,58,.06)">
+              <div style="font:800 16px 'Nunito';color:#1b1b3a">Grasp map</div>
+              <div style="font:600 12px 'Nunito';color:rgba(27,27,58,.5)">Grasp ✓/✗ and hold-stability at 3 positions</div>
+              <svg viewBox="0 0 400 232" style="width:100%;margin-top:6px" data-om-raster>
+                <path d="M86 122 A150 150 0 0 1 314 122" fill="none" stroke="rgba(232,168,106,.5)" stroke-width="4"></path>
+                <!-- pos 1 pass -->
+                <circle cx="86" cy="122" r="22" fill="rgba(159,192,138,.25)" stroke="#9fc08a" stroke-width="3"></circle><path d="M78 122 l6 7 l12 -14" stroke="#4a7a3a" stroke-width="3.5" fill="none" stroke-linecap="round"></path>
+                <!-- pos 2 pass -->
+                <circle cx="200" cy="72" r="22" fill="rgba(159,192,138,.25)" stroke="#9fc08a" stroke-width="3"></circle><path d="M192 72 l6 7 l12 -14" stroke="#4a7a3a" stroke-width="3.5" fill="none" stroke-linecap="round"></path>
+                <!-- pos 3 fail -->
+                <circle cx="314" cy="122" r="22" fill="rgba(181,80,58,.18)" stroke="#b5503a" stroke-width="3"></circle><g stroke="#b5503a" stroke-width="3.5" stroke-linecap="round"><line x1="307" y1="115" x2="321" y2="129"></line><line x1="321" y1="115" x2="307" y2="129"></line></g>
+                <text x="64" y="168" font-family="Nunito" font-size="11" font-weight="700" fill="rgba(27,27,58,.6)">stable</text>
+                <text x="182" y="46" font-family="Nunito" font-size="11" font-weight="700" fill="rgba(27,27,58,.6)">stable</text>
+                <text x="296" y="168" font-family="Nunito" font-size="11" font-weight="700" fill="#b5503a">slipped</text>
+              </svg>
+            </div>
+          </div>
+          <!-- key numbers -->
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;padding:0 30px">
+            <div style="background:#fbf7ef;border-radius:14px;padding:14px 16px;box-shadow:0 2px 10px rgba(27,27,58,.06)"><div style="font:700 12px 'Nunito';color:rgba(27,27,58,.55)">Reaction time</div><div style="display:flex;align-items:baseline;justify-content:space-between"><span style="font:800 24px 'Nunito';color:#1b1b3a">0.82s</span><svg viewBox="0 0 70 24" style="width:70px;height:24px"><polyline points="2,18 14,16 26,17 38,12 50,10 68,7" fill="none" stroke="#9fc08a" stroke-width="2.5" stroke-linecap="round"></polyline></svg></div></div>
+            <div style="background:#fbf7ef;border-radius:14px;padding:14px 16px;box-shadow:0 2px 10px rgba(27,27,58,.06)"><div style="font:700 12px 'Nunito';color:rgba(27,27,58,.55)">Movement time</div><div style="display:flex;align-items:baseline;justify-content:space-between"><span style="font:800 24px 'Nunito';color:#1b1b3a">1.4s</span><svg viewBox="0 0 70 24" style="width:70px;height:24px"><polyline points="2,8 14,10 26,9 38,13 50,15 68,17" fill="none" stroke="#9fc08a" stroke-width="2.5" stroke-linecap="round"></polyline></svg></div></div>
+            <div style="background:#fbf7ef;border-radius:14px;padding:14px 16px;box-shadow:0 2px 10px rgba(27,27,58,.06)"><div style="font:700 12px 'Nunito';color:rgba(27,27,58,.55)">Precision</div><div style="display:flex;align-items:baseline;justify-content:space-between"><span style="font:800 24px 'Nunito';color:#1b1b3a">78%</span><svg viewBox="0 0 70 24" style="width:70px;height:24px"><polyline points="2,18 14,15 26,14 38,11 50,9 68,6" fill="none" stroke="#9fc08a" stroke-width="2.5" stroke-linecap="round"></polyline></svg></div></div>
+            <div style="background:#fbf7ef;border-radius:14px;padding:14px 16px;box-shadow:0 2px 10px rgba(27,27,58,.06)"><div style="font:700 12px 'Nunito';color:rgba(27,27,58,.55)">Smoothness</div><div style="display:flex;align-items:baseline;justify-content:space-between"><span style="font:800 24px 'Nunito';color:#1b1b3a">Good</span><svg viewBox="0 0 70 24" style="width:70px;height:24px"><polyline points="2,14 14,13 26,14 38,11 50,10 68,9" fill="none" stroke="#9fc08a" stroke-width="2.5" stroke-linecap="round"></polyline></svg></div></div>
+          </div>
+          <!-- compensation + session log -->
+          <div style="display:grid;grid-template-columns:1fr 1.6fr;gap:18px;padding:18px 30px 26px">
+            <div style="background:#fbf7ef;border-radius:16px;padding:18px 20px;box-shadow:0 2px 10px rgba(27,27,58,.06)">
+              <div style="font:800 15px 'Nunito';color:#1b1b3a;margin-bottom:12px">Compensation (this session)</div>
+              <div style="display:flex;align-items:center;justify-content:space-between;padding:9px 0;border-bottom:1px solid rgba(27,27,58,.08)"><span style="font:700 14px 'Nunito';color:#1b1b3a">Trunk lean</span><span style="display:flex;align-items:center;gap:8px"><span style="font:800 15px 'Nunito';color:#c77f4a">4 · 1.2 min</span><span style="color:#9fc08a;font-weight:800">↓</span></span></div>
+              <div style="display:flex;align-items:center;justify-content:space-between;padding:9px 0;border-bottom:1px solid rgba(27,27,58,.08)"><span style="font:700 14px 'Nunito';color:#1b1b3a">Shoulder hike</span><span style="display:flex;align-items:center;gap:8px"><span style="font:800 15px 'Nunito';color:#c77f4a">7 · 2.0 min</span><span style="color:#b5503a;font-weight:800">↑</span></span></div>
+              <div style="display:flex;align-items:center;justify-content:space-between;padding:9px 0"><span style="font:700 14px 'Nunito';color:#1b1b3a">Trunk rotation</span><span style="display:flex;align-items:center;gap:8px"><span style="font:800 15px 'Nunito';color:#c77f4a">2 · 0.4 min</span><span style="color:#9fc08a;font-weight:800">↓</span></span></div>
+            </div>
+            <div style="background:#fbf7ef;border-radius:16px;padding:18px 20px;box-shadow:0 2px 10px rgba(27,27,58,.06)">
+              <div style="font:800 15px 'Nunito';color:#1b1b3a;margin-bottom:10px">Session log</div>
+              <table style="width:100%;border-collapse:collapse;font-family:'Nunito'">
+                <thead><tr style="text-align:left;color:rgba(27,27,58,.5);font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.04em"><th style="padding:5px 4px">Date</th><th style="padding:5px 4px">Game</th><th style="padding:5px 4px">Rounds</th><th style="padding:5px 4px">Success</th><th style="padding:5px 4px">Arc cov.</th></tr></thead>
+                <tbody style="font-size:13px;font-weight:700;color:#1b1b3a">
+                  <tr style="border-top:1px solid rgba(27,27,58,.08)"><td style="padding:7px 4px">Jul 9</td><td style="padding:7px 4px">Ember Watch</td><td style="padding:7px 4px">6</td><td style="padding:7px 4px;color:#4a7a3a">71%</td><td style="padding:7px 4px">83%</td></tr>
+                  <tr style="border-top:1px solid rgba(27,27,58,.08)"><td style="padding:7px 4px">Jul 7</td><td style="padding:7px 4px">Constellations</td><td style="padding:7px 4px">5</td><td style="padding:7px 4px;color:#4a7a3a">68%</td><td style="padding:7px 4px">79%</td></tr>
+                  <tr style="border-top:1px solid rgba(27,27,58,.08)"><td style="padding:7px 4px">Jul 5</td><td style="padding:7px 4px">Lantern Release</td><td style="padding:7px 4px">4</td><td style="padding:7px 4px;color:#b8892a">62%</td><td style="padding:7px 4px">74%</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <!-- action buttons -->
+          <div style="display:flex;gap:12px;padding:0 30px 26px">
+            <button style="border:none;cursor:pointer;padding:13px 26px;border-radius:12px;background:#e8a86a;color:#1b1b3a;font:800 15px 'Nunito'">Start session</button>
+            <button style="cursor:pointer;padding:13px 26px;border-radius:12px;background:transparent;border:2px solid rgba(27,27,58,.2);color:#1b1b3a;font:800 15px 'Nunito'">Re-run assessment</button>
+            <button style="cursor:pointer;padding:13px 26px;border-radius:12px;background:transparent;border:2px solid rgba(27,27,58,.2);color:#1b1b3a;font:800 15px 'Nunito'">Export data</button>
+            <button style="cursor:pointer;padding:13px 26px;border-radius:12px;background:transparent;border:2px solid rgba(27,27,58,.2);color:#1b1b3a;font:800 15px 'Nunito'">Settings</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <p class="dv-next">Try next: "add the recovery (green bloom) state next to <a class="dv-oid" href="#3a">3a</a>" · "build S1 setup + S5 live monitor" · "the Pong bimanual + multiplayer variants" · "make the system sheet (palette, type scale, components)"</p>
+</section>
+
+<section class="dv-turn" id="t2">
+  <div class="dv-thd"><a class="dv-tid" href="#t2">2</a><span class="dv-tname">Simplified assessment — "draw your biggest circle + grab" — and the five game mockups</span></div>
+  <p class="dv-sub">Assessment collapsed to one patient screen (<a class="dv-oid" href="#2a">2a</a>): the patient traces the biggest circle they can reach; the circle they paint <em>is</em> the range-of-motion readout (captures up/down AND left/right in one motion), and a squeeze anywhere on it records grasp. The looping demo shows exactly how — a firefly orbits the guide circle and pulses closed to show the grab. Games <a class="dv-oid" href="#2b">2b</a>–<a class="dv-oid" href="#2f">2f</a> are one in-game frame each, fully diegetic (no HUD), with the Posture Coach docked faint at bottom-left. Built on the <a class="dv-oid" href="#1a">1a</a> dusk palette. All patient scenes ~40% of true 1920×1080.</p>
+
+  <!-- ===== 2a ROM assessment single screen + demo ===== -->
+  <div class="dv-group">
+    <div class="dv-glabel">A · Assessment — one screen, self-demonstrating</div>
+    <div class="dv-opts">
+      <div class="dv-opt" id="2a">
+        <div class="dv-olabel"><a class="dv-oid" href="#2a">2a</a>"Draw a big circle" — animated demo (the painted circle = ROM; squeeze = grasp)</div>
+        <div class="dv-card" style="position:relative;width:820px;height:462px;background:radial-gradient(circle at 50% 42%,#3a3168 0%,#20204a 55%,#161636 100%)">
+          <!-- ambient stars -->
+          <div style="position:absolute;left:80px;top:60px;width:5px;height:5px;border-radius:50%;background:#fff;animation:twinkle 4s infinite"></div>
+          <div style="position:absolute;left:700px;top:90px;width:4px;height:4px;border-radius:50%;background:#fff;animation:twinkle 5s .7s infinite"></div>
+          <div style="position:absolute;left:400px;top:40px;width:4px;height:4px;border-radius:50%;background:#fff;animation:twinkle 6s 1.3s infinite"></div>
+          <!-- guide circle (aim for the edges) -->
+          <div style="position:absolute;left:50%;top:46%;width:280px;height:280px;transform:translate(-50%,-50%);border-radius:50%;border:3px dashed rgba(244,236,221,.28)"></div>
+          <!-- painted ROM circle -->
+          <div style="position:absolute;left:50%;top:46%;width:280px;height:280px;transform:translate(-50%,-50%);border-radius:50%;border:7px solid rgba(232,168,106,.6);box-shadow:0 0 34px rgba(232,168,106,.4),inset 0 0 34px rgba(232,168,106,.25)"></div>
+          <!-- orbiting firefly cursor -->
+          <div style="position:absolute;left:50%;top:46%;width:0;height:0;animation:spin 7s linear infinite">
+            <div style="position:absolute;left:140px;top:0;transform:translate(-50%,-50%)">
+              <div style="position:relative;width:0;height:0;animation:spinrev 7s linear infinite">
+                <!-- firefly at fingertips -->
+                <div style="position:absolute;left:0;top:0;transform:translate(-50%,-50%);width:26px;height:26px;border-radius:50%;background:radial-gradient(circle,#fff6d8,#e8a86a);box-shadow:0 0 26px 9px rgba(232,168,106,.7);animation:glowpulse 3s ease-in-out infinite;z-index:2"></div>
+                <!-- open hand, fingertips reaching the light -->
+                <div style="position:absolute;left:-31px;top:-4px;width:62px;height:84px">
+                  <svg viewBox="0 0 62 84" style="width:100%;height:100%;filter:drop-shadow(0 4px 8px rgba(0,0,0,.35))"><g fill="rgba(244,236,221,.92)">
+                    <rect x="15" y="36" width="34" height="40" rx="15"></rect>
+                    <rect x="17" y="14" width="8" height="34" rx="4"></rect>
+                    <rect x="26" y="8" width="8" height="40" rx="4"></rect>
+                    <rect x="35" y="12" width="8" height="38" rx="4"></rect>
+                    <rect x="43" y="20" width="8" height="32" rx="4"></rect>
+                    <rect x="4" y="42" width="8" height="22" rx="4" transform="rotate(-32 8 53)"></rect>
+                  </g></svg>
+                </div>
+              </div>
+            </div>
+          </div>
+          <!-- headline -->
+          <div style="position:absolute;left:0;right:0;top:26px;text-align:center;color:#f4ecdd">
+            <div style="font-weight:800;font-size:42px;letter-spacing:-.01em">Draw the biggest circle you can</div>
+          </div>
+          <!-- grasp mini-demo -->
+          <div style="position:absolute;left:44px;bottom:34px;text-align:center;color:#f4ecdd">
+            
+            <div style="position:relative;width:88px;height:88px;margin:0 auto 8px">
+              <div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:34px;height:34px;border-radius:50%;background:radial-gradient(circle,#fff6d8,#e8a86a);box-shadow:0 0 20px 6px rgba(232,168,106,.6)"></div>
+              <div style="position:absolute;left:50%;top:50%;width:34px;height:34px;border-radius:50%;border:4px dashed rgba(244,236,221,.7);box-sizing:border-box;animation:grab 2.6s ease-in-out infinite"></div>
+            </div><div style="font-weight:700;font-size:19px;opacity:.85">Squeeze to grab the light</div>
+          </div>
+          <!-- narration line -->
+          <div style="position:absolute;left:0;right:0;bottom:30px;text-align:center;color:#f4ecdd;font-weight:600;font-size:20px;opacity:.75">Reach as wide, high and low as feels comfortable</div>
+        </div>
+        <div style="font:500 11.5px/1.5 'Nunito';color:rgba(27,27,58,.5);max-width:820px">The traced circle's width and height give the horizontal + vertical ROM in one pass; grasp events are logged at their position on the circle — replacing the old 6-step Dawn Painter flow with a single ~30s motion. Staff variant (numbers + skeleton side-rail) is a quick follow-on.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== Games ===== -->
+  <div class="dv-group">
+    <div class="dv-glabel">B · In-game mockups — Posture Coach docked faint at bottom-left</div>
+    <div class="dv-opts">
+
+      <!-- 2b Constellations -->
+      <div class="dv-opt" id="2b">
+        <div class="dv-olabel"><a class="dv-oid" href="#2b">2b</a>G1 · Constellations — mid-thread, figure forming</div>
+        <div class="dv-card" style="position:relative;width:760px;height:428px;background:radial-gradient(circle at 50% 40%,#2b2b52,#141433)">
+          <div style="position:absolute;left:90px;top:70px;width:5px;height:5px;border-radius:50%;background:#fff;animation:twinkle 4s infinite"></div>
+          <div style="position:absolute;left:560px;top:110px;width:4px;height:4px;border-radius:50%;background:#fff;animation:twinkle 5s .6s infinite"></div>
+          <div style="position:absolute;left:300px;top:50px;width:4px;height:4px;border-radius:50%;background:#fff;animation:twinkle 6s 1.1s infinite"></div>
+          <svg viewBox="0 0 760 428" style="position:absolute;inset:0;width:100%;height:100%">
+            <polyline points="180,300 300,200 430,250 520,150" fill="none" stroke="#fff6d8" stroke-width="3" stroke-linecap="round" stroke-dasharray="340" stroke-dashoffset="0" style="filter:drop-shadow(0 0 6px rgba(232,168,106,.8));animation:threaddraw 4s ease-in-out infinite alternate"></polyline>
+            <g stroke="rgba(244,236,221,.35)" stroke-width="1.5" stroke-dasharray="4 5" fill="none"><line x1="520" y1="150" x2="600" y2="230"></line><line x1="600" y1="230" x2="520" y2="300"></line></g>
+            <g fill="#fff6d8"><circle cx="180" cy="300" r="6"></circle><circle cx="300" cy="200" r="6"></circle><circle cx="430" cy="250" r="6"></circle><circle cx="520" cy="150" r="6"></circle></g>
+            <g fill="rgba(244,236,221,.4)"><circle cx="600" cy="230" r="5"></circle><circle cx="520" cy="300" r="5"></circle></g>
+          </svg>
+          <!-- cursor at thread end -->
+          <div style="position:absolute;left:520px;top:150px;transform:translate(-50%,-50%);width:22px;height:22px;border-radius:50%;background:radial-gradient(circle,#fff6d8,#e8a86a);box-shadow:0 0 22px 7px rgba(232,168,106,.7);animation:glowpulse 3s infinite"></div>
+          <!-- posture coach idle -->
+          <div style="position:absolute;left:60px;bottom:22px;width:66px;height:98px;opacity:.26;animation:coachbreathe 5s ease-in-out infinite"><svg viewBox="0 0 80 120" style="width:100%;height:100%"><g stroke="#f4ecdd" stroke-width="3.5" stroke-linecap="round" fill="none"><circle cx="40" cy="16" r="9"></circle><line x1="40" y1="25" x2="40" y2="66"></line><line x1="22" y1="40" x2="58" y2="40"></line><line x1="22" y1="40" x2="15" y2="60"></line><line x1="15" y1="60" x2="24" y2="74"></line><line x1="58" y1="40" x2="66" y2="58"></line><line x1="66" y1="58" x2="72" y2="74"></line><line x1="30" y1="66" x2="50" y2="66"></line></g></svg></div>
+        </div>
+      </div>
+
+      <!-- 2c Drift -->
+      <div class="dv-opt" id="2c">
+        <div class="dv-olabel"><a class="dv-oid" href="#2c">2c</a>G2 · Drift — orbs to shore, one blooming</div>
+        <div class="dv-card" style="position:relative;width:760px;height:428px;background:linear-gradient(180deg,#e6c9a0 0%,#c99e8c 34%,#5a7f88 74%,#2f5560 100%)">
+          <!-- shore line -->
+          <div style="position:absolute;left:0;right:0;bottom:70px;height:2px;background:rgba(244,236,221,.4)"></div>
+          <div style="position:absolute;left:0;right:0;bottom:0;height:70px;background:rgba(20,45,52,.35)"></div>
+          <!-- drifting orbs -->
+          <div style="position:absolute;left:160px;top:60px;width:44px;height:44px;border-radius:50%;background:radial-gradient(circle at 40% 35%,#fff6e6,#dba0b0);box-shadow:0 0 18px rgba(255,246,230,.5);animation:fall 6s ease-in infinite"></div>
+          <div style="position:absolute;left:430px;top:40px;width:40px;height:40px;border-radius:50%;background:radial-gradient(circle at 40% 35%,#fff6e6,#a8c8d0);box-shadow:0 0 16px rgba(255,246,230,.5);animation:fall 7.5s ease-in 1.5s infinite"></div>
+          <div style="position:absolute;left:600px;top:50px;width:46px;height:46px;border-radius:50%;background:radial-gradient(circle at 40% 35%,#fff6e6,#e8b98a);box-shadow:0 0 18px rgba(255,246,230,.5);animation:fall 6.8s ease-in .8s infinite"></div>
+          <!-- blooming caught orb -->
+          <div style="position:absolute;left:300px;top:210px;width:70px;height:70px;border-radius:50%;background:radial-gradient(circle,#fff6e6,rgba(232,168,106,.2));animation:bloom 2.4s ease-in-out infinite"></div>
+          <!-- brush cursor -->
+          <div style="position:absolute;left:322px;top:232px;width:24px;height:24px;border-radius:58% 42% 55% 45%;background:radial-gradient(circle at 40% 40%,#e8a86a,#c77f4a);box-shadow:0 3px 12px rgba(199,127,74,.5)"></div>
+          <div style="position:absolute;left:60px;bottom:80px;width:66px;height:98px;opacity:.28;animation:coachbreathe 5s ease-in-out infinite"><svg viewBox="0 0 80 120" style="width:100%;height:100%"><g stroke="#20303a" stroke-width="3.5" stroke-linecap="round" fill="none"><circle cx="40" cy="16" r="9"></circle><line x1="40" y1="25" x2="40" y2="66"></line><line x1="22" y1="40" x2="58" y2="40"></line><line x1="22" y1="40" x2="15" y2="60"></line><line x1="15" y1="60" x2="24" y2="74"></line><line x1="58" y1="40" x2="66" y2="58"></line><line x1="66" y1="58" x2="72" y2="74"></line><line x1="30" y1="66" x2="50" y2="66"></line></g></svg></div>
+        </div>
+      </div>
+
+      <!-- 2d Ember Watch -->
+      <div class="dv-opt" id="2d">
+        <div class="dv-olabel"><a class="dv-oid" href="#2d">2d</a>G3 · Ember Watch — embers fall, one rises as a firefly</div>
+        <div class="dv-card" style="position:relative;width:760px;height:428px;background:linear-gradient(180deg,#3a2c4a 0%,#4a3550 40%,#2a2038 100%)">
+          <!-- village silhouette -->
+          <div style="position:absolute;left:0;right:0;bottom:0;height:120px;display:flex;align-items:flex-end;gap:6px;padding:0 30px;box-sizing:border-box">
+            <div style="width:90px;height:80px;background:#16121f;position:relative"><div style="position:absolute;left:16px;top:20px;width:14px;height:16px;background:#e8a86a;box-shadow:0 0 10px rgba(232,168,106,.7)"></div><div style="position:absolute;left:50px;top:20px;width:14px;height:16px;background:rgba(232,168,106,.25)"></div></div>
+            <div style="width:70px;height:110px;background:#16121f;position:relative"><div style="position:absolute;left:14px;top:24px;width:12px;height:14px;background:#e8a86a;box-shadow:0 0 10px rgba(232,168,106,.7)"></div></div>
+            <div style="width:110px;height:70px;background:#16121f;position:relative"><div style="position:absolute;left:20px;top:16px;width:14px;height:16px;background:rgba(232,168,106,.25)"></div><div style="position:absolute;left:60px;top:16px;width:14px;height:16px;background:#e8a86a;box-shadow:0 0 10px rgba(232,168,106,.7)"></div></div>
+            <div style="width:80px;height:95px;background:#16121f"></div>
+            <div style="flex:1;height:60px;background:#16121f;position:relative"><div style="position:absolute;left:30px;top:14px;width:14px;height:16px;background:#e8a86a;box-shadow:0 0 10px rgba(232,168,106,.7)"></div></div>
+          </div>
+          <!-- falling embers -->
+          <div style="position:absolute;left:220px;top:40px;width:16px;height:16px;border-radius:50%;background:radial-gradient(circle,#fff2c2,#e8703a);box-shadow:0 0 16px rgba(232,112,58,.7);animation:fall 5s ease-in infinite"></div>
+          <div style="position:absolute;left:480px;top:30px;width:14px;height:14px;border-radius:50%;background:radial-gradient(circle,#fff2c2,#e8703a);box-shadow:0 0 14px rgba(232,112,58,.7);animation:fall 6.4s ease-in 1.2s infinite"></div>
+          <!-- rising firefly -->
+          <div style="position:absolute;left:360px;top:200px;width:14px;height:14px;border-radius:50%;background:radial-gradient(circle,#fff,#9fc08a);box-shadow:0 0 18px rgba(159,192,138,.8);animation:rise 4s ease-out infinite"></div>
+          <!-- cursor -->
+          <div style="position:absolute;left:472px;top:120px;transform:translate(-50%,-50%);width:22px;height:22px;border-radius:50%;background:radial-gradient(circle,#fff6d8,#e8a86a);box-shadow:0 0 22px 7px rgba(232,168,106,.7);animation:glowpulse 3s infinite"></div>
+          <div style="position:absolute;left:56px;bottom:130px;width:66px;height:98px;opacity:.3;animation:coachbreathe 5s ease-in-out infinite"><svg viewBox="0 0 80 120" style="width:100%;height:100%"><g stroke="#f4ecdd" stroke-width="3.5" stroke-linecap="round" fill="none"><circle cx="40" cy="16" r="9"></circle><line x1="40" y1="25" x2="40" y2="66"></line><line x1="22" y1="40" x2="58" y2="40"></line><line x1="22" y1="40" x2="15" y2="60"></line><line x1="15" y1="60" x2="24" y2="74"></line><line x1="58" y1="40" x2="66" y2="58"></line><line x1="66" y1="58" x2="72" y2="74"></line><line x1="30" y1="66" x2="50" y2="66"></line></g></svg></div>
+        </div>
+      </div>
+
+      <!-- 2e Lantern Release -->
+      <div class="dv-opt" id="2e">
+        <div class="dv-olabel"><a class="dv-oid" href="#2e">2e</a>G4 · Lantern Release — carry to the ring, past lanterns rising</div>
+        <div class="dv-card" style="position:relative;width:760px;height:428px;background:linear-gradient(180deg,#1b1b3a 0%,#2f2a5a 60%,#4a3f78 100%)">
+          <!-- past lanterns -->
+          <div style="position:absolute;left:120px;top:60px;width:20px;height:26px;border-radius:40% 40% 50% 50%;background:radial-gradient(circle,#ffd98a,#e8a86a);box-shadow:0 0 16px rgba(232,168,106,.6);opacity:.55;animation:floaty 7s ease-in-out infinite"></div>
+          <div style="position:absolute;left:230px;top:40px;width:18px;height:24px;border-radius:40% 40% 50% 50%;background:radial-gradient(circle,#ffd98a,#e8a86a);box-shadow:0 0 14px rgba(232,168,106,.6);opacity:.4;animation:floaty 8s ease-in-out 1s infinite"></div>
+          <div style="position:absolute;left:600px;top:70px;width:16px;height:22px;border-radius:40% 40% 50% 50%;background:radial-gradient(circle,#ffd98a,#e8a86a);box-shadow:0 0 12px rgba(232,168,106,.6);opacity:.35;animation:floaty 9s ease-in-out .5s infinite"></div>
+          <!-- release ring -->
+          <div style="position:absolute;right:120px;top:120px;width:96px;height:96px;border-radius:50%;border:4px dashed rgba(244,236,221,.55);animation:bloom 3s ease-in-out infinite"></div>
+          <!-- carry arc guide (faint) -->
+          <svg viewBox="0 0 760 428" style="position:absolute;inset:0;width:100%;height:100%"><path d="M220 320 Q400 180 590 168" fill="none" stroke="rgba(244,236,221,.18)" stroke-width="2" stroke-dasharray="5 7"></path></svg>
+          <!-- carried lantern + cursor -->
+          <div style="position:absolute;left:360px;top:236px;transform:translate(-50%,-50%);width:34px;height:44px;border-radius:38% 38% 50% 50%;background:radial-gradient(circle at 45% 40%,#fff6d8,#e8a86a);box-shadow:0 0 26px 8px rgba(232,168,106,.7);animation:floaty 4s ease-in-out infinite"></div>
+          <div style="position:absolute;left:56px;bottom:22px;width:66px;height:98px;opacity:.26;animation:coachbreathe 5s ease-in-out infinite"><svg viewBox="0 0 80 120" style="width:100%;height:100%"><g stroke="#f4ecdd" stroke-width="3.5" stroke-linecap="round" fill="none"><circle cx="40" cy="16" r="9"></circle><line x1="40" y1="25" x2="40" y2="66"></line><line x1="22" y1="40" x2="58" y2="40"></line><line x1="22" y1="40" x2="15" y2="60"></line><line x1="15" y1="60" x2="24" y2="74"></line><line x1="58" y1="40" x2="66" y2="58"></line><line x1="66" y1="58" x2="72" y2="74"></line><line x1="30" y1="66" x2="50" y2="66"></line></g></svg></div>
+        </div>
+      </div>
+
+      <!-- 2f Arc Pong -->
+      <div class="dv-opt" id="2f">
+        <div class="dv-olabel"><a class="dv-oid" href="#2f">2f</a>G5 · Arc Pong — rally, background blooming</div>
+        <div class="dv-card" style="position:relative;width:760px;height:428px;background:radial-gradient(circle at 50% 50%,#3a4f6a,#1c2740)">
+          <!-- bloom halo growing with rally -->
+          <div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:320px;height:320px;border-radius:50%;background:radial-gradient(circle,rgba(159,192,138,.28),transparent 70%);animation:bloom 3.5s ease-in-out infinite"></div>
+          <!-- arc guides (faint paddle travel) -->
+          <svg viewBox="0 0 760 428" style="position:absolute;inset:0;width:100%;height:100%"><path d="M90 90 Q40 214 90 338" fill="none" stroke="rgba(244,236,221,.16)" stroke-width="2" stroke-dasharray="5 7"></path><path d="M670 90 Q720 214 670 338" fill="none" stroke="rgba(244,236,221,.16)" stroke-width="2" stroke-dasharray="5 7"></path></svg>
+          <!-- left paddle -->
+          <div style="position:absolute;left:78px;top:150px;width:16px;height:110px;border-radius:10px;background:linear-gradient(180deg,#c8b3d9,#8f76b0);box-shadow:0 0 18px rgba(183,156,200,.6)"></div>
+          <!-- right paddle -->
+          <div style="position:absolute;right:78px;top:210px;width:16px;height:110px;border-radius:10px;background:linear-gradient(180deg,#e8b98a,#c77f4a);box-shadow:0 0 18px rgba(232,168,106,.6)"></div>
+          <!-- ball -->
+          <div style="position:absolute;left:190px;top:190px;width:26px;height:26px;border-radius:50%;background:radial-gradient(circle,#fff,#fff6d8);box-shadow:0 0 24px 8px rgba(255,246,216,.6);animation:ballx 5s ease-in-out infinite"></div>
+          <div style="position:absolute;left:56px;bottom:22px;width:66px;height:98px;opacity:.26;animation:coachbreathe 5s ease-in-out infinite"><svg viewBox="0 0 80 120" style="width:100%;height:100%"><g stroke="#f4ecdd" stroke-width="3.5" stroke-linecap="round" fill="none"><circle cx="40" cy="16" r="9"></circle><line x1="40" y1="25" x2="40" y2="66"></line><line x1="22" y1="40" x2="58" y2="40"></line><line x1="22" y1="40" x2="15" y2="60"></line><line x1="15" y1="60" x2="24" y2="74"></line><line x1="58" y1="40" x2="66" y2="58"></line><line x1="66" y1="58" x2="72" y2="74"></line><line x1="30" y1="66" x2="50" y2="66"></line></g></svg></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <p class="dv-next">Try next: "add the Posture Coach alert state to <a class="dv-oid" href="#2d">2d</a>" · "build P5 between-rounds + P7 collections" · "start the staff S3 profile with arc <a class="dv-oid" href="#1d">1d</a>" · "the circle demo needs a hand, not just a firefly"</p>
+</section>
+
+<section class="dv-turn" id="t1">
+  <div class="dv-thd"><a class="dv-tid" href="#t1">1</a><span class="dv-tname">Foundations — palette / patient visual language · the ROM arc widget · game-select cards</span></div>
+  <p class="dv-sub">Base direction locked to the night-blue → dusk-lavender palette you picked, then explored three ways each. Everything is mid-fidelity: real proportions, calm ambient motion, hover a game card to see the dwell-fill. Patient scenes render at ~40% of true 1920×1080 (type still honors the 12-ft minimums at full size). Pick one per row — e.g. "go with <a class="dv-oid" href="#1b">1b</a> palette, <a class="dv-oid" href="#1d">1d</a> arc, <a class="dv-oid" href="#1h">1h</a> cards".</p>
+
+  <!-- ============ GROUP A: PALETTE / VISUAL LANGUAGE (P1 welcome scene) ============ -->
+  <div class="dv-group">
+    <div class="dv-glabel">A · Patient visual language — P1 welcome scene</div>
+    <div class="dv-opts">
+
+      <!-- 1a Dusk lavender + firefly -->
+      <div class="dv-opt" id="1a">
+        <div class="dv-olabel"><a class="dv-oid" href="#1a">1a</a>Dusk — night blue → lavender, firefly cursor</div>
+        <div class="dv-card" style="position:relative;width:760px;height:428px;background:linear-gradient(165deg,#1b1b3a 0%,#3a3168 46%,#8f76b0 100%)">
+          <div style="position:absolute;width:340px;height:300px;left:-60px;top:60px;border-radius:52% 48% 60% 40%/55% 50% 50% 45%;background:radial-gradient(circle at 40% 40%,rgba(183,156,200,.5),transparent 70%);animation:drift 16s ease-in-out infinite"></div>
+          <div style="position:absolute;width:280px;height:260px;right:-40px;bottom:-40px;border-radius:47% 53% 45% 55%/52% 45% 55% 48%;background:radial-gradient(circle at 60% 40%,rgba(232,168,106,.28),transparent 70%);animation:drift2 20s ease-in-out infinite"></div>
+          <div style="position:absolute;left:60px;top:40px;width:6px;height:6px;border-radius:50%;background:#fff;animation:twinkle 4s ease-in-out infinite"></div>
+          <div style="position:absolute;left:640px;top:80px;width:5px;height:5px;border-radius:50%;background:#fff;animation:twinkle 5s ease-in-out .8s infinite"></div>
+          <div style="position:absolute;left:300px;top:30px;width:4px;height:4px;border-radius:50%;background:#fff;animation:twinkle 6s ease-in-out 1.4s infinite"></div>
+          <!-- firefly cursor -->
+          <div style="position:absolute;left:520px;top:250px;animation:floaty 5s ease-in-out infinite">
+            <div style="width:26px;height:26px;border-radius:50%;background:radial-gradient(circle,#fff2c2,#e8a86a);box-shadow:0 0 24px 8px rgba(232,168,106,.6);animation:glowpulse 3s ease-in-out infinite"></div>
+          </div>
+          <div style="position:absolute;left:0;right:0;top:150px;text-align:center;color:#f4ecdd">
+            <div style="font-weight:800;font-size:46px;letter-spacing:-.01em">Ready when you are</div>
+            <div style="font-weight:600;font-size:22px;opacity:.8;margin-top:12px">Lift your hand into the light</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 1b Twilight teal + comet -->
+      <div class="dv-opt" id="1b">
+        <div class="dv-olabel"><a class="dv-oid" href="#1b">1b</a>Twilight — cooler blue → teal, comet cursor</div>
+        <div class="dv-card" style="position:relative;width:760px;height:428px;background:linear-gradient(160deg,#14243f 0%,#1f3b52 50%,#3f6b78 100%)">
+          <div style="position:absolute;width:380px;height:320px;right:-80px;top:-40px;border-radius:50% 50% 55% 45%/55% 45% 55% 45%;background:radial-gradient(circle at 50% 50%,rgba(120,180,190,.35),transparent 70%);animation:drift 18s ease-in-out infinite"></div>
+          <div style="position:absolute;width:260px;height:240px;left:-40px;bottom:-30px;border-radius:48% 52% 50% 50%/50% 52% 48% 50%;background:radial-gradient(circle at 50% 50%,rgba(159,192,138,.28),transparent 70%);animation:drift2 22s ease-in-out infinite"></div>
+          <!-- comet cursor -->
+          <div style="position:absolute;left:480px;top:270px;animation:cometpath 7s ease-in-out infinite alternate">
+            <div style="position:relative;width:22px;height:22px;border-radius:50%;background:radial-gradient(circle,#fff,#9fc0c8);box-shadow:0 0 20px 6px rgba(200,230,235,.7)"></div>
+            <div style="position:absolute;right:14px;top:6px;width:90px;height:8px;border-radius:8px;background:linear-gradient(to left,rgba(200,230,235,.7),transparent);transform:rotate(18deg);transform-origin:right center"></div>
+          </div>
+          <div style="position:absolute;left:0;right:0;top:150px;text-align:center;color:#eef4f2">
+            <div style="font-weight:800;font-size:46px;letter-spacing:-.01em">Ready when you are</div>
+            <div style="font-weight:600;font-size:22px;opacity:.8;margin-top:12px">Let your hand sweep across the sky</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 1c Dawn cream + brush -->
+      <div class="dv-opt" id="1c">
+        <div class="dv-olabel"><a class="dv-oid" href="#1c">1c</a>Dawn — warm cream → lavender, brush-tip cursor</div>
+        <div class="dv-card" style="position:relative;width:760px;height:428px;background:linear-gradient(170deg,#f4ecdd 0%,#e6d3d9 48%,#b79cc8 100%)">
+          <div style="position:absolute;width:360px;height:300px;left:-70px;bottom:-50px;border-radius:52% 48% 58% 42%/50% 55% 45% 50%;background:radial-gradient(circle at 50% 50%,rgba(232,168,106,.4),transparent 70%);animation:drift 17s ease-in-out infinite"></div>
+          <div style="position:absolute;width:300px;height:280px;right:-60px;top:-40px;border-radius:47% 53% 45% 55%/55% 48% 52% 45%;background:radial-gradient(circle at 50% 50%,rgba(255,255,255,.55),transparent 70%);animation:drift2 21s ease-in-out infinite"></div>
+          <!-- brush cursor -->
+          <div style="position:absolute;left:520px;top:250px;animation:floaty 6s ease-in-out infinite">
+            <div style="width:30px;height:30px;border-radius:60% 40% 55% 45%/55% 50% 50% 45%;background:radial-gradient(circle at 40% 40%,#e8a86a,#c77f4a);box-shadow:0 4px 14px rgba(199,127,74,.5)"></div>
+          </div>
+          <div style="position:absolute;left:0;right:0;top:150px;text-align:center;color:#4a3a5c">
+            <div style="font-weight:800;font-size:46px;letter-spacing:-.01em">Ready when you are</div>
+            <div style="font-weight:600;font-size:22px;opacity:.75;margin-top:12px">Paint the morning with your hand</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ============ GROUP B: ROM ARC WIDGET ============ -->
+  <div class="dv-group">
+    <div class="dv-glabel">B · ROM arc widget (S3 profile hero) — affected arm amber, other arm gray, faint ghost trails = history</div>
+    <div class="dv-opts">
+
+      <!-- 1d protractor gauge -->
+      <div class="dv-opt" id="1d">
+        <div class="dv-olabel"><a class="dv-oid" href="#1d">1d</a>Protractor gauge — angle ticks + min/max readouts</div>
+        <div class="dv-card" style="width:440px;background:#fbf7ef;padding:26px 28px 22px">
+          <div style="font:800 15px 'Nunito';color:#1b1b3a">Range of motion</div>
+          <div style="font:600 12px 'Nunito';color:rgba(27,27,58,.5);margin-top:2px">Shoulder abduction · both arms</div>
+          <svg viewBox="0 0 400 232" style="width:100%;margin-top:8px" data-om-raster="">
+            <g stroke="rgba(27,27,58,.12)" stroke-width="1">
+              <line x1="200" y1="212" x2="200" y2="44"></line><line x1="200" y1="212" x2="40" y2="212"></line><line x1="200" y1="212" x2="360" y2="212"></line>
+              <line x1="200" y1="212" x2="85.7" y2="97.4"></line><line x1="200" y1="212" x2="314.3" y2="97.4"></line>
+            </g>
+            <path d="M40 212 A160 160 0 0 1 360 212" fill="none" stroke="rgba(27,27,58,.1)" stroke-width="3"></path>
+            <!-- ghost trails -->
+            <path d="M96 122 A140 140 0 0 1 304 122" fill="none" stroke="rgba(232,168,106,.2)" stroke-width="9" stroke-linecap="round"></path>
+            <path d="M78 132 A150 150 0 0 1 322 132" fill="none" stroke="rgba(232,168,106,.3)" stroke-width="9" stroke-linecap="round"></path>
+            <!-- other arm gray -->
+            <path d="M52 178 A155 155 0 0 1 348 178" fill="none" stroke="rgba(27,27,58,.35)" stroke-width="11" stroke-linecap="round"></path>
+            <!-- affected amber current -->
+            <path d="M86 122 A150 150 0 0 1 314 122" fill="none" stroke="#e8a86a" stroke-width="13" stroke-linecap="round"></path>
+            <circle cx="200" cy="212" r="6" fill="#1b1b3a"></circle>
+            <text x="30" y="226" font-family="Nunito" font-size="13" font-weight="700" fill="rgba(27,27,58,.55)">0°</text>
+            <text x="180" y="34" font-family="Nunito" font-size="13" font-weight="700" fill="rgba(27,27,58,.55)">90°</text>
+            <text x="352" y="226" font-family="Nunito" font-size="13" font-weight="700" fill="rgba(27,27,58,.55)">180°</text>
+          </svg>
+          <div style="display:flex;gap:24px;margin-top:6px">
+            <div><div style="display:flex;align-items:center;gap:7px;font:700 13px 'Nunito';color:#1b1b3a"><span style="width:12px;height:12px;border-radius:50%;background:#e8a86a"></span>Affected (L)</div><div style="font:800 22px 'Nunito';color:#c77f4a;margin-top:2px">18°–142°</div></div>
+            <div><div style="display:flex;align-items:center;gap:7px;font:700 13px 'Nunito';color:#1b1b3a"><span style="width:12px;height:12px;border-radius:50%;background:rgba(27,27,58,.35)"></span>Other (R)</div><div style="font:800 22px 'Nunito';color:rgba(27,27,58,.6);margin-top:2px">8°–168°</div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 1e diegetic sunrise fan -->
+      <div class="dv-opt" id="1e">
+        <div class="dv-olabel"><a class="dv-oid" href="#1e">1e</a>Diegetic "sunrise fan" — the painted sky is the readout</div>
+        <div class="dv-card" style="width:440px;background:linear-gradient(180deg,#20204a,#3a3168);padding:26px 28px 22px">
+          <div style="font:800 15px 'Nunito';color:#f4ecdd">Range of motion</div>
+          <div style="font:600 12px 'Nunito';color:rgba(244,236,221,.55);margin-top:2px">The fuller the sky, the wider the reach</div>
+          <svg viewBox="0 0 400 232" style="width:100%;margin-top:10px" data-om-raster="">
+            <defs>
+              <radialGradient id="sun" cx="50%" cy="100%" r="100%"><stop offset="0%" stop-color="#e8a86a"></stop><stop offset="55%" stop-color="#c77f9a"></stop><stop offset="100%" stop-color="#3a3168"></stop></radialGradient>
+              <clipPath id="fan"><path d="M200 212 L52 178 A155 155 0 0 1 348 178 Z"></path></clipPath>
+            </defs>
+            <path d="M40 212 A160 160 0 0 1 360 212" fill="none" stroke="rgba(244,236,221,.12)" stroke-width="2"></path>
+            <!-- other arm (wide, faint fill) -->
+            <path d="M200 212 L52 178 A155 155 0 0 1 348 178 Z" fill="rgba(244,236,221,.1)"></path>
+            <!-- affected arm painted sunrise -->
+            <g clip-path="url(#fan)"><rect x="40" y="52" width="320" height="160" fill="url(#sun)" opacity="0"></rect></g>
+            <path d="M200 212 L86 122 A150 150 0 0 1 314 122 Z" fill="url(#sun)"></path>
+            <!-- ghost outline previous -->
+            <path d="M200 212 L96 132 A140 140 0 0 1 304 132 Z" fill="none" stroke="rgba(244,236,221,.3)" stroke-width="1.5" stroke-dasharray="4 4"></path>
+            <circle cx="112" cy="150" r="3" fill="#fff" opacity=".8"></circle><circle cx="288" cy="150" r="3" fill="#fff" opacity=".8"></circle>
+          </svg>
+          <div style="display:flex;gap:24px;margin-top:6px">
+            <div><div style="display:flex;align-items:center;gap:7px;font:700 13px 'Nunito';color:#f4ecdd"><span style="width:12px;height:12px;border-radius:50%;background:#e8a86a"></span>Affected (L)</div><div style="font:800 22px 'Nunito';color:#e8a86a;margin-top:2px">124° arc</div></div>
+            <div><div style="display:flex;align-items:center;gap:7px;font:700 13px 'Nunito';color:rgba(244,236,221,.8)"><span style="width:12px;height:12px;border-radius:50%;background:rgba(244,236,221,.4)"></span>Other (R)</div><div style="font:800 22px 'Nunito';color:rgba(244,236,221,.7);margin-top:2px">160° arc</div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 1f mirrored dual arcs -->
+      <div class="dv-opt" id="1f">
+        <div class="dv-olabel"><a class="dv-oid" href="#1f">1f</a>Mirrored pair — each arm its own arc, symmetry gap = deficit</div>
+        <div class="dv-card" style="width:440px;background:#fbf7ef;padding:26px 28px 22px">
+          <div style="font:800 15px 'Nunito';color:#1b1b3a">Range of motion</div>
+          <div style="font:600 12px 'Nunito';color:rgba(27,27,58,.5);margin-top:2px">Left vs right — the gap is the goal</div>
+          <div style="display:flex;gap:8px;margin-top:8px">
+            <svg viewBox="0 0 200 210" style="width:50%" data-om-raster="">
+              <path d="M180 190 A150 150 0 0 0 30 60" fill="none" stroke="rgba(27,27,58,.1)" stroke-width="3"></path>
+              <path d="M180 190 A150 150 0 0 0 58 92" fill="none" stroke="rgba(232,168,106,.25)" stroke-width="10" stroke-linecap="round"></path>
+              <path d="M180 190 A150 150 0 0 0 66 104" fill="none" stroke="#e8a86a" stroke-width="12" stroke-linecap="round"></path>
+              <circle cx="180" cy="190" r="5" fill="#1b1b3a"></circle>
+              <text x="150" y="205" font-family="Nunito" font-size="12" font-weight="800" fill="#c77f4a">L · 128°</text>
+            </svg>
+            <svg viewBox="0 0 200 210" style="width:50%" data-om-raster="">
+              <path d="M20 190 A150 150 0 0 1 170 60" fill="none" stroke="rgba(27,27,58,.1)" stroke-width="3"></path>
+              <path d="M20 190 A150 150 0 0 1 150 74" fill="none" stroke="rgba(27,27,58,.35)" stroke-width="12" stroke-linecap="round"></path>
+              <circle cx="20" cy="190" r="5" fill="#1b1b3a"></circle>
+              <text x="14" y="205" font-family="Nunito" font-size="12" font-weight="800" fill="rgba(27,27,58,.6)">R · 160°</text>
+            </svg>
+          </div>
+          <div style="margin-top:10px;padding:10px 14px;background:rgba(232,168,106,.14);border-radius:10px;font:700 13px 'Nunito';color:#c77f4a;display:flex;align-items:center;gap:8px">
+            <span style="width:8px;height:8px;border-radius:50%;background:#9fc08a"></span>+11° on the affected side since last week
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ============ GROUP C: GAME-SELECT CARDS ============ -->
+  <div class="dv-group">
+    <div class="dv-glabel">C · Game-select cards (P3) — hover a card to see the dwell-fill selection</div>
+    <div class="dv-opts">
+
+      <!-- 1g full-bleed art -->
+      <div class="dv-opt" id="1g">
+        <div class="dv-olabel"><a class="dv-oid" href="#1g">1g</a>Full-bleed art — dwell fills upward from the base</div>
+        <div class="dv-card" style="position:relative;width:300px;height:400px;background:linear-gradient(180deg,#1b1b3a,#3a3168)">
+          <div style="position:absolute;left:40px;top:70px;width:6px;height:6px;border-radius:50%;background:#fff;animation:twinkle 4s infinite"></div>
+          <div style="position:absolute;left:220px;top:120px;width:5px;height:5px;border-radius:50%;background:#fff;animation:twinkle 5s .5s infinite"></div>
+          <div style="position:absolute;left:130px;top:60px;width:4px;height:4px;border-radius:50%;background:#fff;animation:twinkle 6s 1s infinite"></div>
+          <svg viewBox="0 0 300 200" style="position:absolute;top:80px;left:0;width:100%"><g stroke="rgba(244,236,221,.5)" stroke-width="1.5" fill="none"><line x1="70" y1="60" x2="140" y2="100"></line><line x1="140" y1="100" x2="210" y2="70"></line><line x1="210" y1="70" x2="230" y2="140"></line><line x1="230" y1="140" x2="140" y2="100"></line></g><g fill="#fff2c2">
+            <circle cx="70" cy="60" r="4"></circle><circle cx="140" cy="100" r="4"></circle><circle cx="210" cy="70" r="4"></circle><circle cx="230" cy="140" r="4"></circle></g></svg>
+          <div style="position:absolute;left:0;right:0;bottom:26px;text-align:center;color:#f4ecdd;font-weight:800;font-size:28px">Constellations</div>
+          <div style="position:absolute;inset:0;background:linear-gradient(to top,rgba(232,168,106,.55),rgba(232,168,106,.15));transform:scaleY(0);transform-origin:bottom;transition:transform 1.5s ease-out;cursor:pointer" style-hover="transform:scaleY(1)"></div>
+        </div>
+      </div>
+
+      <!-- 1h postcard plate -->
+      <div class="dv-opt" id="1h">
+        <div class="dv-olabel"><a class="dv-oid" href="#1h">1h</a>Postcard — framed art with title plate, radial dwell ring</div>
+        <div class="dv-card" style="position:relative;width:300px;height:400px;background:#f4ecdd;padding:16px 16px 0;box-sizing:border-box">
+          <div style="position:relative;height:284px;border-radius:12px;overflow:hidden;background:linear-gradient(180deg,#20204a,#4a3f78)">
+            <div style="position:absolute;left:36px;top:40px;width:5px;height:5px;border-radius:50%;background:#fff;animation:twinkle 4s infinite"></div>
+            <div style="position:absolute;left:200px;top:80px;width:4px;height:4px;border-radius:50%;background:#fff;animation:twinkle 5s .6s infinite"></div>
+            <svg viewBox="0 0 268 160" style="position:absolute;top:60px;left:0;width:100%"><g stroke="rgba(244,236,221,.5)" stroke-width="1.5" fill="none"><line x1="60" y1="50" x2="120" y2="90"></line><line x1="120" y1="90" x2="190" y2="55"></line><line x1="190" y1="55" x2="200" y2="120"></line></g><g fill="#fff2c2"><circle cx="60" cy="50" r="4"></circle><circle cx="120" cy="90" r="4"></circle><circle cx="190" cy="55" r="4"></circle><circle cx="200" cy="120" r="4"></circle></g></svg>
+            <!-- dwell ring -->
+            <svg viewBox="0 0 60 60" style="position:absolute;left:50%;top:50%;width:64px;height:64px;transform:translate(-50%,-50%);opacity:0;transition:opacity .3s" style-hover="opacity:1" <circle="" cx="30" cy="30" r="26" fill="rgba(27,27,58,.35)"></svg><circle cx="30" cy="30" r="26" fill="none" stroke="#e8a86a" stroke-width="5" stroke-linecap="round" stroke-dasharray="163" stroke-dashoffset="122" transform="rotate(-90 30 30)">
+          </circle></div>
+          <div style="text-align:center;color:#1b1b3a;font-weight:800;font-size:26px;padding:22px 0">Constellations</div>
+        </div>
+      </div>
+
+      <!-- 1i minimal shape-forward -->
+      <div class="dv-opt" id="1i">
+        <div class="dv-olabel"><a class="dv-oid" href="#1i">1i</a>Minimal — art only, label rises on dwell</div>
+        <div class="dv-card" style="position:relative;width:300px;height:400px;background:radial-gradient(circle at 50% 38%,#4a3f78,#1b1b3a);cursor:pointer">
+          <div style="position:absolute;left:0;right:0;top:96px;text-align:center">
+            <svg viewBox="0 0 200 200" style="width:150px;height:150px"><g stroke="rgba(244,236,221,.6)" stroke-width="2" fill="none"><line x1="50" y1="60" x2="100" y2="110"></line><line x1="100" y1="110" x2="150" y2="55"></line><line x1="150" y1="55" x2="140" y2="130"></line><line x1="140" y1="130" x2="100" y2="110"></line></g><g fill="#fff2c2"><circle cx="50" cy="60" r="5"></circle><circle cx="100" cy="110" r="5"></circle><circle cx="150" cy="55" r="5"></circle><circle cx="140" cy="130" r="5"></circle></g></svg>
+          </div>
+          <div style="position:absolute;left:0;right:0;bottom:34px;text-align:center;color:#f4ecdd;font-weight:800;font-size:26px;opacity:.35;transform:translateY(10px);transition:all .5s" style-hover="opacity:1;transform:translateY(0)">Constellations</div>
+          <div style="position:absolute;left:50%;bottom:22px;width:80px;height:4px;border-radius:4px;background:rgba(232,168,106,.3);transform:translateX(-50%) scaleX(0);transform-origin:left;transition:transform 1.4s ease-out" style-hover="transform:translateX(-50%) scaleX(1)"></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <p class="dv-next">Try next: "lock <a class="dv-oid" href="#1a">1a</a> + <a class="dv-oid" href="#1d">1d</a> + <a class="dv-oid" href="#1h">1h</a>, build the patient screens" · "arc <a class="dv-oid" href="#1e">1e</a> is the one, riff on it 3 more ways" · "warmer palette than <a class="dv-oid" href="#1c">1c</a>"</p>
+</section>
+</x-dc>
+</body>
+</html>

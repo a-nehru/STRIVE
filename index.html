@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rehab Suite</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<video id="video" autoplay playsinline muted></video>
+
+<!-- P1 welcome -->
+<div id="screen-welcome" class="screen">
+  <div class="blob b1"></div><div class="blob b2"></div>
+  <div class="star-tw" style="left:8vw;top:10vh;width:6px;height:6px"></div>
+  <div class="star-tw" style="left:84vw;top:16vh;width:5px;height:5px;animation-delay:.8s"></div>
+  <div class="star-tw" style="left:40vw;top:7vh;width:4px;height:4px;animation-delay:1.4s"></div>
+  <div id="welcome-firefly" style="left:64vw;top:56vh"></div>
+  <div class="headline">Ready when you are</div>
+  <div class="subline">Lift your hand into the light</div>
+</div>
+
+<!-- P3 game select -->
+<div id="screen-select" class="screen hidden">
+  <h1>What shall we play today?</h1>
+  <div class="cards" id="cards"></div>
+</div>
+
+<!-- stage: assessment + games -->
+<div id="stage" class="hidden">
+  <canvas id="canvas"></canvas>
+  <div id="prompt"></div>
+  <div id="cue" class="hidden"></div>
+  <div id="paused" class="hidden">One moment —<br>settle in, and we'll continue</div>
+  <button id="btn-quit" title="Back">&#10005;</button>
+</div>
+
+<!-- P5 between rounds -->
+<div id="screen-between" class="screen hidden">
+  <div class="round-card">
+    <div class="rc-stars" id="rc-stars"></div>
+    <div class="rc-main">
+      <svg class="rc-ring" id="rc-ring" viewBox="0 0 120 120" width="132" height="132"></svg>
+      <div class="rc-text" id="rc-text"></div>
+    </div>
+    <div class="rc-ask">How does your arm feel?</div>
+    <div class="faces">
+      <button class="face f-fine" data-feel="fine"><span class="disc">
+        <svg viewBox="0 0 48 48" width="52" height="52"><g fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><circle cx="18" cy="20" r="2.5" fill="currentColor" stroke="none"/><circle cx="30" cy="20" r="2.5" fill="currentColor" stroke="none"/><path d="M16 30 Q24 37 32 30"/></g></svg>
+      </span><span class="lbl">Fine</span></button>
+      <button class="face f-tired" data-feel="tired"><span class="disc">
+        <svg viewBox="0 0 48 48" width="52" height="52"><g fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><circle cx="18" cy="20" r="2.5" fill="currentColor" stroke="none"/><circle cx="30" cy="20" r="2.5" fill="currentColor" stroke="none"/><line x1="16" y1="31" x2="32" y2="31"/></g></svg>
+      </span><span class="lbl">Tired</span></button>
+      <button class="face f-hurts" data-feel="hurts"><span class="disc">
+        <svg viewBox="0 0 48 48" width="52" height="52"><g fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><circle cx="18" cy="20" r="2.5" fill="currentColor" stroke="none"/><circle cx="30" cy="20" r="2.5" fill="currentColor" stroke="none"/><path d="M16 33 Q24 26 32 33"/></g></svg>
+      </span><span class="lbl">Hurts</span></button>
+    </div>
+    <div class="rc-note" id="rc-note"></div>
+    <div class="rc-actions">
+      <button class="btn" id="btn-next-round">Next round</button>
+      <button class="btn ghost" id="btn-finish">Finish for today</button>
+    </div>
+  </div>
+</div>
+
+<!-- P7 collections -->
+<div id="screen-collections" class="screen hidden">
+  <div class="coll-head">
+    <h1>Your collection</h1>
+    <div style="display:flex;gap:14px;align-items:center">
+      <div class="star-balance"><svg viewBox="0 0 24 24" width="26" height="26"><polygon points="12,2 14.9,8.6 22,9.3 16.5,14 18.3,21 12,17.3 5.7,21 7.5,14 2,9.3 9.1,8.6" fill="#e8a86a"/></svg><span id="coll-stars">0</span></div>
+      <button class="btn ghost-light" id="btn-coll-back">Back</button>
+    </div>
+  </div>
+  <div class="coll-grid" id="coll-grid"></div>
+</div>
+
+<!-- S3 staff profile -->
+<div id="screen-profile" class="hidden">
+  <div class="prof-head">
+    <div style="display:flex;align-items:center;gap:20px">
+      <div><div class="who" id="prof-who">Patient</div><div class="sub" id="prof-sub"></div></div>
+      <div id="prof-armchips"></div>
+    </div>
+    <div style="display:flex;align-items:center;gap:14px">
+      <div style="text-align:right"><div class="sub">Last assessment</div><div style="font-weight:800;font-size:15px" id="prof-lastass">—</div></div>
+      <span class="chip ok" id="prof-assstate">Up to date</span>
+      <button class="btn ghost-light" id="btn-prof-back" style="font-size:14px;padding:10px 16px">Close</button>
+    </div>
+  </div>
+  <div class="prof-body">
+    <div class="prof-grid2">
+      <div class="pcard">
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <h3>Range of motion</h3>
+          <span class="psub">Frontal plane · both arms · ghosts = past sessions</span>
+        </div>
+        <svg id="prof-arc" viewBox="0 0 400 232" style="width:100%;margin-top:6px"></svg>
+        <div class="arc-legend" id="prof-arc-legend"></div>
+      </div>
+      <div class="pcard">
+        <h3>Grasp map</h3>
+        <div class="psub">Grab ✓/✗ and hold-stability at 3 positions</div>
+        <svg id="prof-grasp" viewBox="0 0 400 232" style="width:100%;margin-top:6px"></svg>
+      </div>
+    </div>
+    <div class="prof-grid4" id="prof-kpis"></div>
+    <div class="prof-grid-log">
+      <div class="pcard">
+        <h3 style="margin-bottom:12px">Compensation (recent)</h3>
+        <div id="prof-comp"></div>
+      </div>
+      <div class="pcard">
+        <h3 style="margin-bottom:10px">Session log</h3>
+        <div style="overflow-x:auto"><table class="log" id="prof-log"></table></div>
+      </div>
+    </div>
+    <div class="prof-actions">
+      <button class="btn" id="btn-prof-session">Start session</button>
+      <button class="btn ghost" id="btn-prof-assess">Re-run assessment</button>
+      <button class="btn ghost" id="btn-prof-export">Export data</button>
+    </div>
+  </div>
+</div>
+
+<!-- staff drawer -->
+<button id="btn-staff" title="Staff">&#9881;</button>
+<div id="drawer" class="hidden">
+  <h2>Staff</h2>
+  <label>Patient ID <input type="text" id="in-patient" placeholder="e.g. RH-0428" maxlength="24"></label>
+  <label>Training arm
+    <select id="in-arm"><option value="right">Right</option><option value="left">Left</option></select>
+  </label>
+  <label>Coach sensitivity
+    <select id="in-coach"><option value="gentle">Gentle</option><option value="strict">Strict</option><option value="off">Off</option></select>
+  </label>
+  <div class="dwr-game" data-for="pong">
+    <label>Pong mode
+      <select id="in-pong">
+        <option value="solo">Solo (vs gentle AI)</option>
+        <option value="bimanual">Bimanual (arm vs arm)</option>
+        <option value="coupled">Coupled (both arms, one paddle)</option>
+        <option value="companion">Vs companion (arrow keys)</option>
+        <option value="team-arms">Team: both arms vs AI</option>
+        <option value="team-keys">Team: you + companion vs AI</option>
+      </select>
+    </label>
+    <label>Pong skills
+      <select id="in-pongskills">
+        <option value="auto">Auto (level up with play)</option>
+        <option value="none">Off — basic rally only</option>
+        <option value="grip">Grip shot</option>
+        <option value="spin">Spin shot</option>
+        <option value="both">Grip + spin</option>
+      </select>
+    </label>
+  </div>
+  <div class="dwr-game" data-for="rhythm">
+    <label>Melody Tiles song
+      <select id="in-song"></select>
+    </label>
+    <label>Melody Tiles hands
+      <select id="in-tiles"><option value="one">One arm</option><option value="bimanual">Both arms (piano-style)</option></select>
+    </label>
+  </div>
+  <div id="camstate">Camera: not started</div>
+  <div class="row"><button class="btn" id="btn-drawer-assess">Assessment</button><button class="btn ghost-light" id="btn-drawer-profile">Profile</button></div>
+  <div class="row"><button class="btn ghost-light" id="btn-drawer-collections">Collections</button><button class="btn ghost-light" id="btn-drawer-close">Close</button></div>
+</div>
+
+<div id="handcursor" class="hidden"></div>
+
+<div id="loading" class="hidden"><div class="spinner"></div><div id="loading-text">Waking up the camera&hellip;</div></div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

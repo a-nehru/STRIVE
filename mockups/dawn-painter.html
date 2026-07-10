@@ -1,0 +1,369 @@
+<title>Dawn Painter — Assessment Screen Mockup</title>
+<style>
+  :root {
+    --bg: #0d1017;
+    --panel: #141926;
+    --line: #232c42;
+    --ink: #e9edf7;
+    --ink-dim: #8d97b3;
+    --accent: #ffb98a;
+    --accent-ink: #2b1608;
+    --chip: #1c2438;
+    --good: #9fd9a8;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg:#eef0f5; --panel:#ffffff; --line:#d8dde9; --ink:#232a3d; --ink-dim:#66708c; --chip:#eef1f8; }
+  }
+  :root[data-theme="dark"]  { --bg:#0d1017; --panel:#141926; --line:#232c42; --ink:#e9edf7; --ink-dim:#8d97b3; --chip:#1c2438; }
+  :root[data-theme="light"] { --bg:#eef0f5; --panel:#ffffff; --line:#d8dde9; --ink:#232a3d; --ink-dim:#66708c; --chip:#eef1f8; }
+
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font-family: "Segoe UI", system-ui, sans-serif;
+    line-height: 1.5; padding: 32px 24px 64px;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; }
+
+  header { margin-bottom: 24px; }
+  .eyebrow {
+    font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase;
+    color: var(--ink-dim); margin-bottom: 6px;
+  }
+  h1 {
+    font-family: Georgia, "Times New Roman", serif; font-style: italic;
+    font-weight: 500; font-size: clamp(26px, 3.5vw, 38px); text-wrap: balance;
+  }
+  h1 em { font-style: normal; color: var(--accent); }
+  .sub { color: var(--ink-dim); max-width: 62ch; margin-top: 8px; font-size: 15px; }
+
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 20px; align-items: start; }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+
+  /* ---- the TV ---- */
+  .tv-shell { position: relative; }
+  .tv {
+    position: relative; width: 100%; aspect-ratio: 16/9;
+    border-radius: 10px; overflow: hidden;
+    background: #0b1226;
+    box-shadow: 0 30px 80px -20px rgba(6, 10, 30, 0.9), 0 0 0 3px #05070d, 0 0 0 4px #2a3350;
+  }
+  .tv canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .tv .grain {
+    position: absolute; inset: 0; pointer-events: none; opacity: 0.07; mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+  .tv-caption { display: flex; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+  .voice {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: var(--chip); border: 1px solid var(--line); border-radius: 999px;
+    padding: 6px 14px; font-size: 13.5px; color: var(--ink);
+  }
+  .voice::before {
+    content: ""; width: 8px; height: 8px; border-radius: 50%;
+    background: var(--accent); box-shadow: 0 0 8px var(--accent); flex: none;
+  }
+  .voice i { font-style: italic; font-family: Georgia, serif; }
+  .toggle {
+    margin-left: auto; display: inline-flex; align-items: center; gap: 8px;
+    font-size: 13px; color: var(--ink-dim); cursor: pointer; user-select: none;
+  }
+  .toggle input { accent-color: var(--accent); width: 16px; height: 16px; cursor: pointer; }
+
+  /* ---- step rail ---- */
+  .steps { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; margin-top: 18px; }
+  @media (max-width: 700px) { .steps { grid-template-columns: repeat(3, 1fr); } }
+  .step {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+    padding: 10px 10px 8px; cursor: pointer; text-align: left;
+    color: var(--ink-dim); font: inherit; font-size: 12px; line-height: 1.35;
+    transition: border-color .15s, color .15s;
+  }
+  .step:hover { border-color: var(--accent); }
+  .step:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .step .n {
+    font-family: Georgia, serif; font-style: italic; font-size: 15px;
+    color: var(--ink-dim); display: block;
+  }
+  .step .t { color: var(--ink); font-weight: 600; font-size: 12.5px; display: block; margin: 2px 0 3px; }
+  .step .m { font-size: 11px; }
+  .step[aria-current="true"] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .step[aria-current="true"] .n { color: var(--accent); }
+
+  /* ---- annotation panel ---- */
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 20px; position: sticky; top: 20px; }
+  .panel h2 {
+    font-family: Georgia, serif; font-style: italic; font-weight: 500;
+    font-size: 20px; margin-bottom: 2px;
+  }
+  .panel .stepno { font-size: 11px; letter-spacing: .16em; text-transform: uppercase; color: var(--accent); }
+  .panel section { margin-top: 16px; }
+  .panel h3 {
+    font-size: 11px; letter-spacing: .14em; text-transform: uppercase;
+    color: var(--ink-dim); margin-bottom: 6px; font-weight: 600;
+  }
+  .panel p { font-size: 13.5px; color: var(--ink); }
+  .panel .measure { border-left: 2px solid var(--accent); padding-left: 10px; }
+  .panel .datum {
+    display: inline-block; background: var(--chip); border: 1px solid var(--line);
+    border-radius: 6px; padding: 2px 8px; font-size: 12px; margin: 3px 4px 0 0;
+    font-variant-numeric: tabular-nums; color: var(--ink);
+  }
+  .hint { margin-top: 16px; font-size: 12px; color: var(--ink-dim); }
+  kbd {
+    background: var(--chip); border: 1px solid var(--line); border-bottom-width: 2px;
+    border-radius: 4px; padding: 0 6px; font-family: inherit; font-size: 11px;
+  }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Upper-Limb Rehab Suite · Screen Mockup · P2</div>
+    <h1>Dawn Painter — <em>the assessment is a sunrise</em></h1>
+    <p class="sub">What the patient sees on the TV, 10–12 ft away. No numbers, no gauges, no camera feed —
+    the painted sky <em>is</em> the range-of-motion readout. Step through the six states below.</p>
+  </header>
+
+  <div class="layout">
+    <div class="tv-shell">
+      <div class="tv"><canvas id="cv" width="1600" height="900"></canvas><div class="grain"></div></div>
+      <div class="tv-caption">
+        <span class="voice">Voice: <i id="voiceline"></i></span>
+        <label class="toggle" id="alertwrap"><input type="checkbox" id="alert"> Preview posture alert</label>
+      </div>
+      <div class="steps" id="steps" role="tablist"></div>
+    </div>
+
+    <aside class="panel" id="panel">
+      <div class="stepno" id="p-no"></div>
+      <h2 id="p-title"></h2>
+      <section><h3>Patient sees</h3><p id="p-sees"></p></section>
+      <section class="measure"><h3>System measures</h3><p id="p-measures"></p><div id="p-data"></div></section>
+      <p class="hint">Navigate with <kbd>←</kbd> <kbd>→</kbd>. The small figure at the bottom of the screen is the
+      <strong>Posture Coach</strong> — nearly invisible while posture is good; toggle the alert to see it wake.</p>
+    </aside>
+  </div>
+</div>
+
+<script>
+"use strict";
+const cv = document.getElementById("cv"), ctx = cv.getContext("2d");
+const W = cv.width, H = cv.height;
+const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/* geometry: shoulder anchor + arc (deg: -20 low … 95 high) */
+const AX = W*0.60, AY = H*0.90, R = H*0.66;
+const a2r = th => (185 - (th+20)*(125/115)) * Math.PI/180;
+const arcPt = (th, r=R) => [AX + Math.cos(a2r(th))*r, AY - Math.sin(a2r(th))*r];
+
+const STATES = [
+ { t:"Settle", voice:"Hold your hand still.",
+   sees:"A near-black indigo sky and one soft circle floating where their hand is, slowly filling like ink as they hold. A chime when it fills — then no text ever again.",
+   measures:"Home position captured after 1.5 s of stillness; baseline trunk posture recorded for the Coach.",
+   data:["home ✓","baseline ✓"] },
+ { t:"Sweeps ×3", voice:"Paint the sky — sweep your arm as far as you can.",
+   sees:"Their hand becomes a brush trailing light. A watercolor dawn follows the arm — the boundary between painted sky and night is literally their maximum reach. New territory blooms brighter with a rising note.",
+   measures:"Active ROM: sustained-max shoulder angle vs. trunk axis, best of 3 sweeps, compensation-vetoed frames excluded.",
+   data:["arc −18° → 74°","sweep 2 of 3"] },
+ { t:"Hold", voice:"Rest your hand inside the sun.",
+   sees:"Three soft suns appear along the painted arc, one at a time. Holding inside makes the sun swell and the sky around it brighten; wobble makes its edge flicker.",
+   measures:"Postural stability at 25 / 60 / 90 % of the arc — hand-position variance during a 2 s hold.",
+   data:["stability 0.91","0.74","…"] },
+ { t:"Grasp", voice:"Close your hand around the light.",
+   sees:"A small glowing orb, like a firefly, at each tested position. A grasp squeezes it into a burst of sparks that rise into the sky. No grasp — it just drifts away, never a failure.",
+   measures:"Grasp yes/no per position + hand-close time (wrist-crop hand tracking).",
+   data:["pos 1 ✓ 0.64 s","pos 2 ✓","pos 3 —"] },
+ { t:"Quick reaches", voice:"Touch the stars as they appear.",
+   sees:"Five morning stars pop up in sequence along the arc, each with a soft ping; a touch scatters the star into light.",
+   measures:"Reaction time (star → hand leaves rest) and movement time (leave → touch), per star.",
+   data:["RT 0.61 s","MT 1.12 s","err 0.14 SW"] },
+ { t:"Finale", voice:"Your sky is bigger than yesterday.",
+   sees:"The finished sunrise — the sun sits at the top of their arc, birds cross the sweep. One faint dashed line shows yesterday's boundary against today's: the only data the patient ever sees, and it's part of the painting.",
+   measures:"Profile saved: arc, stability, grasp map, RT/MT → initial difficulty for every game.",
+   data:["arc −18° → 92°","+7° vs last","profile saved ✓"] },
+];
+
+let cur = 0, t0 = performance.now();
+
+/* ---------- paint helpers ---------- */
+function glow(x, y, r, color, a) {
+  const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+  g.addColorStop(0, color); g.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.globalAlpha = a; ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill(); ctx.globalAlpha = 1;
+}
+function star(x, y, r, color, a=1) {
+  ctx.globalAlpha = a; ctx.fillStyle = color; ctx.beginPath();
+  for (let i=0;i<10;i++){ const rr = i%2?r*0.44:r, an = i*Math.PI/5 - Math.PI/2;
+    ctx[i?"lineTo":"moveTo"](x+rr*Math.cos(an), y+rr*Math.sin(an)); }
+  ctx.closePath(); ctx.fill(); ctx.globalAlpha = 1;
+}
+const lerp = (a,b,f)=>a+(b-a)*f;
+function dawnColor(f){ // horizon gold → high rose
+  return `rgb(${lerp(255,214,f)|0},${lerp(207,106,f)|0},${lerp(140,124,f)|0})`;
+}
+/* deterministic pseudo-random (stable painting) */
+function rnd(seed){ let s = seed; return ()=> (s = (s*16807)%2147483647)/2147483647; }
+
+function sky() {
+  const g = ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,"#0a1024"); g.addColorStop(0.72,"#131c40"); g.addColorStop(1,"#1b2450");
+  ctx.fillStyle = g; ctx.fillRect(0,0,W,H);
+}
+function wash(maxTh, brightness=1) { // the painted dawn, up to angle maxTh
+  const r = rnd(7);
+  for (let i=0;i<170;i++){
+    const th = -20 + r()*(maxTh+20);
+    const f = (th+20)/115;
+    const d = R*(0.18 + r()*0.86), [x,y] = arcPt(th, d);
+    glow(x, y, R*(0.10+r()*0.13), dawnColor(f), (0.05+r()*0.05)*brightness);
+  }
+  // luminous rim at the boundary = the measurement itself
+  ctx.save(); ctx.strokeStyle = "#ffe9c4"; ctx.lineWidth = 5; ctx.shadowColor = "#ffd9a0"; ctx.shadowBlur = 26;
+  ctx.globalAlpha = 0.8*brightness; ctx.beginPath();
+  const [bx,by] = arcPt(maxTh, R*0.2), [ex,ey] = arcPt(maxTh, R*1.02);
+  ctx.moveTo(bx,by);
+  for (let s=0.2; s<=1.02; s+=0.05){ const [x,y]=arcPt(maxTh + Math.sin(s*22)*0.7, R*s); ctx.lineTo(x,y); }
+  ctx.stroke(); ctx.restore();
+  glow(...arcPt(maxTh, R*0.92), 60, "#fff3d8", 0.5*brightness);
+}
+function horizon() {
+  ctx.fillStyle = "#080d1e";
+  ctx.beginPath(); ctx.moveTo(0,H);
+  for (let x=0;x<=W;x+=80) ctx.lineTo(x, H*0.94 + Math.sin(x*0.004+2)*14);
+  ctx.lineTo(W,H); ctx.closePath(); ctx.fill();
+}
+function hand(th, pulse) {
+  const [x,y] = arcPt(th, R*0.97);
+  for (let i=1;i<=4;i++){ const [tx,ty]=arcPt(th - i*3.2, R*0.97); glow(tx,ty,26-i*4,"#ffd9a0",0.16); }
+  glow(x,y, 46+pulse*8, "#ffedc9", 0.85); glow(x,y, 14, "#ffffff", 1);
+}
+function coach(alert, t) {
+  const x = W*0.16, y = H*0.80, s = H*0.115;
+  ctx.save();
+  ctx.lineWidth = 5; ctx.lineCap = "round";
+  const base = alert ? "rgba(255,178,102,0.95)" : "rgba(220,230,255,0.22)";
+  ctx.strokeStyle = base;
+  if (alert){ ctx.shadowColor = "#ffb266"; ctx.shadowBlur = 18; }
+  const leanN = alert ? Math.sin(t*0.0016)*0.02+0.20 : 0.02;
+  // head + leaning spine
+  ctx.beginPath(); ctx.arc(x+leanN*s*2.4, y-s*1.55, s*0.24, 0, 7); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x, y); ctx.quadraticCurveTo(x+leanN*s*1.5, y-s*0.8, x+leanN*s*2.4, y-s*1.28); ctx.stroke();
+  // arms
+  ctx.beginPath(); ctx.moveTo(x+leanN*s*2.0, y-s*1.05); ctx.lineTo(x+s*0.85, y-s*1.5); ctx.stroke(); // reaching arm
+  ctx.beginPath(); ctx.moveTo(x+leanN*s*2.0, y-s*1.05); ctx.lineTo(x-s*0.4, y-s*0.55); ctx.stroke();
+  // seat line
+  ctx.shadowBlur = 0; ctx.strokeStyle = alert ? "rgba(255,178,102,0.4)" : "rgba(220,230,255,0.12)";
+  ctx.beginPath(); ctx.moveTo(x-s*0.7, y+2); ctx.lineTo(x+s*0.7, y+2); ctx.stroke();
+  if (alert){ // ghost of correct posture + settle arrow
+    ctx.setLineDash([7,7]); ctx.strokeStyle = "rgba(255,255,255,0.75)"; ctx.lineWidth = 3.5;
+    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y-s*1.28); ctx.stroke();
+    ctx.beginPath(); ctx.arc(x, y-s*1.55, s*0.24, 0, 7); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.strokeStyle = "rgba(255,255,255,0.85)";
+    ctx.beginPath(); ctx.moveTo(x+leanN*s*2.2, y-s*1.85); ctx.quadraticCurveTo(x+leanN*s, y-s*2.05, x+s*0.05, y-s*1.9); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x+s*0.05, y-s*1.9); ctx.lineTo(x+s*0.22, y-s*1.82); ctx.moveTo(x+s*0.05, y-s*1.9); ctx.lineTo(x+s*0.2, y-s*2.0); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/* ---------- states ---------- */
+function render(now) {
+  const t = reduced ? 1200 : now - t0;
+  const alert = document.getElementById("alert").checked && cur>0 && cur<5;
+  const pulse = Math.sin(t*0.003)*0.5+0.5;
+  const dim = alert ? 0.85 : 1;
+
+  sky();
+
+  if (cur===0){
+    const [x,y] = arcPt(18, R*0.42);
+    ctx.save(); ctx.setLineDash([10,10]); ctx.strokeStyle="rgba(255,240,215,0.8)"; ctx.lineWidth=4;
+    ctx.beginPath(); ctx.arc(x,y,74,0,7); ctx.stroke(); ctx.restore();
+    const fill = reduced ? 0.7 : (t%3000)/3000;
+    glow(x,y, 66*fill+6, "#ffedc9", 0.75);
+    ctx.fillStyle="rgba(233,237,247,0.9)"; ctx.font="500 44px Georgia, serif"; ctx.textAlign="center";
+    ctx.fillText("Hold your hand still", W/2, H*0.2);
+  }
+  if (cur===1){
+    const sweep = reduced ? 74 : Math.min(74, -20 + ((t*0.02)% (94+40)));
+    wash(Math.max(sweep, 30), dim);
+    hand(Math.max(sweep,30), pulse);
+  }
+  if (cur===2){
+    wash(74, dim*0.9);
+    const [sx,sy] = arcPt(38, R*0.62);
+    glow(sx,sy, 120+pulse*18, "#ffdf9e", 0.9*dim);
+    glow(sx,sy, 54, "#fff6dd", 1);
+    hand(38.5, pulse*0.4);
+  }
+  if (cur===3){
+    wash(74, dim*0.9);
+    const [ox,oy] = arcPt(66, R*0.72);
+    glow(ox,oy, 40+pulse*8, "#ffe9a8", 1);
+    const r = rnd(3);
+    for (let i=0;i<9;i++){ const an=r()*7, d=50+r()*90*(reduced?0.7:pulse);
+      glow(ox+Math.cos(an)*d, oy-Math.sin(an)*d - 30, 8, "#fff3c8", 0.8); }
+    hand(64, pulse*0.4);
+  }
+  if (cur===4){
+    wash(74, dim*0.9);
+    [[8,0.5],[52,0.82],[30,0.68],[70,0.9]].forEach(([th,d],i)=>{
+      const [x,y]=arcPt(th, R*d); star(x,y, i===2? 30:20, i===2 ? "#fff3c8" : "rgba(255,235,180,0.75)");
+      if (i===2) glow(x,y,70,"#ffe9a8",0.6);
+    });
+    hand(24, pulse);
+  }
+  if (cur===5){
+    wash(92, 1.05);
+    const [sx,sy] = arcPt(92, R*0.8);
+    glow(sx,sy, 130, "#fff1cf", 1); glow(sx,sy, 60, "#ffffff", 1);
+    // yesterday's ghost boundary
+    ctx.save(); ctx.setLineDash([12,12]); ctx.strokeStyle="rgba(255,255,255,0.5)"; ctx.lineWidth=3;
+    ctx.beginPath();
+    for (let s=0.2;s<=1.0;s+=0.05){ const [x,y]=arcPt(85, R*s); s===0.2?ctx.moveTo(x,y):ctx.lineTo(x,y); }
+    ctx.stroke(); ctx.restore();
+    // birds
+    ctx.strokeStyle="rgba(20,26,54,0.9)"; ctx.lineWidth=4; ctx.lineCap="round";
+    [[0.32,0.3],[0.4,0.24],[0.47,0.34]].forEach(([fx,fy])=>{
+      const x=W*fx, y=H*fy; ctx.beginPath();
+      ctx.moveTo(x-16,y); ctx.quadraticCurveTo(x-6,y-10,x,y); ctx.quadraticCurveTo(x+6,y-10,x+16,y); ctx.stroke();
+    });
+  }
+
+  horizon();
+  coach(alert, t);
+  if (alert){ ctx.fillStyle="rgba(8,10,24,0.25)"; ctx.fillRect(0,0,W,H); coach(true, t); }
+
+  if (!reduced) requestAnimationFrame(render);
+}
+
+/* ---------- chrome wiring ---------- */
+const stepsEl = document.getElementById("steps");
+STATES.forEach((s,i)=>{
+  const b = document.createElement("button");
+  b.className = "step"; b.setAttribute("role","tab");
+  b.innerHTML = `<span class="n">${i+1}</span><span class="t">${s.t}</span><span class="m">${s.data[0]}</span>`;
+  b.onclick = ()=> go(i);
+  stepsEl.appendChild(b);
+});
+function go(i){
+  cur = i; t0 = performance.now();
+  [...stepsEl.children].forEach((b,j)=> b.setAttribute("aria-current", j===i));
+  document.getElementById("voiceline").textContent = "“" + STATES[i].voice + "”";
+  document.getElementById("p-no").textContent = "State " + (i+1) + " of 6";
+  document.getElementById("p-title").textContent = STATES[i].t;
+  document.getElementById("p-sees").textContent = STATES[i].sees;
+  document.getElementById("p-measures").textContent = STATES[i].measures;
+  document.getElementById("p-data").innerHTML = STATES[i].data.map(d=>`<span class="datum">${d}</span>`).join("");
+  document.getElementById("alertwrap").style.visibility = (i>0 && i<5) ? "visible" : "hidden";
+  if (reduced) requestAnimationFrame(render);
+}
+document.getElementById("alert").onchange = ()=>{ if (reduced) requestAnimationFrame(render); };
+addEventListener("keydown", e=>{
+  if (e.key==="ArrowRight") go(Math.min(cur+1,5));
+  if (e.key==="ArrowLeft") go(Math.max(cur-1,0));
+});
+go(1);
+if (!reduced) requestAnimationFrame(render);
+</script>
