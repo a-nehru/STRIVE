@@ -1,7 +1,13 @@
-# ⭐ Star Harbor — MediaPipe Upper-Limb Rehab Game
+# ⭐ STRIVE
 
-A webcam-based upper-limb rehabilitation serious game with a built-in motor
-assessment. Design is grounded in two papers:
+**Webcam-based upper-limb rehab game suite with a built-in motor assessment.**
+Developed by Synapse Lab, Shirley Ryan AbilityLab. (Working title during
+development: Star Harbor.)
+
+**Play online:** https://a-nehru.github.io/STRIVE/ (Chrome/Edge, webcam
+required; all data stays in your browser)
+
+Design is grounded in two papers:
 
 - **Zhang, Yu & Ji (2024)** — *CFI: a VR motor rehabilitation serious game
   design framework* (J NeuroEngineering Rehabil 21:113)
@@ -11,12 +17,13 @@ assessment. Design is grounded in two papers:
 No VR headset needed — MediaPipe Pose tracks the arms through an ordinary
 webcam (same "inexpensive, out-of-the-box components" philosophy as the RGS).
 
-## Run it
+## Run it locally
 
 1. Double-click `start_game.bat` (needs Python installed), or run
    `python -m http.server 8321` in this folder.
 2. The browser opens `http://localhost:8321`. Allow camera access.
-3. Internet is required on first load (MediaPipe model downloads once).
+3. Internet is required on first load (MediaPipe pose + hand models
+   download once).
 
 Stand or sit 1–2 m from the camera with your whole upper body visible.
 
