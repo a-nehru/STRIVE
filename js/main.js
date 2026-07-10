@@ -56,10 +56,10 @@ async function boot() {
 // centered and at a good distance, settled for a moment. Only then offer
 // the raise-hand start. A click anywhere is the staff override.
 function framingMessage(t) {
-  if (!t.trackingOk) return "Step in front of the camera";
-  if (t.shoulderWFast > 0.42) return "Move back a little, so we can see your whole upper body";
+  if (!t.trackingOk) return "Take a seat facing the camera";
+  if (t.shoulderWFast > 0.42) return "Sit back a little, so we can see your whole upper body";
   if (t.shoulderWFast < 0.09) return "Come a little closer to the camera";
-  if (!t.rawVis?.hips) return "Move back a little, we want to see down to your hips";
+  if (!t.rawVis?.hips) return "Sit back a little, we want to see down to your hips";
   if (t.anchorFast.x < 0.28 || t.anchorFast.x > 0.72) return "Scoot toward the middle of the picture";
   if (t.anchorFast.y < 0.15 || t.anchorFast.y > 0.65) return "Adjust the camera so your shoulders sit near the middle";
   return null;

@@ -69,7 +69,8 @@ button { font-family: inherit; cursor: pointer; }
 .brand-foot {
   position: absolute; bottom: 5vh; left: 0; right: 0;
   text-align: center; font-weight: 700; font-size: 14px;
-  letter-spacing: 0.06em; color: rgba(244, 236, 221, 0.55);
+  letter-spacing: 0.06em; color: #e8a86a;
+  text-shadow: 0 0 14px rgba(232, 168, 106, 0.35);
 }
 
 /* the ambient firefly on welcome */
