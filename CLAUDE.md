@@ -12,7 +12,11 @@ STRIVE (formerly Star Harbor / "Rehab Suite") — a webcam-based upper-limb reha
 python -m http.server 8321
 ```
 
-then open `http://localhost:8321` (or double-click `start_game.bat`). A server is required — camera access is blocked on `file://` pages. Testing requires a webcam and allowing camera access; data persists in the browser's localStorage under the key `rehabsuite-v1`.
+then open `http://localhost:8321` (or double-click `start_game.bat`). A server is required — camera access is blocked on `file://` pages. Testing requires a webcam and allowing camera access; data persists in the browser's localStorage under the key `rehabsuite-v1` (do not rename the key — it would orphan patient data).
+
+## Deploy
+
+Live site: **https://a-nehru.github.io/STRIVE/** — GitHub Pages, deployed automatically from `main` of https://github.com/a-nehru/STRIVE (legacy branch build, repo root). To publish: commit, push, wait ~1–2 min. **Always bump the `?v=N` query on the `style.css` and `main.js` references in `index.html` in the same commit** — Pages caches assets for 10 min and browsers hold them longer; the version bump is what makes deploys show up immediately. Verify a deploy by curling the live file for a string unique to the new commit, not just HTTP 200.
 
 ## Architecture
 
@@ -30,7 +34,7 @@ The tracker keeps the body anchor on two time scales: a slow filter (targets fol
 
 ### Assessment → profile → difficulty
 
-`assessment.js` (one screen: hold still → trace the biggest circle → 3 dwell-to-grab orbs) produces the per-arm profile: `envelope[16]` (max radial reach per 16 angular bins, SW), `arcMinDeg`/`arcMaxDeg`, `jitter`, `loopSeconds`, `grasp[]`. Games must not spawn targets outside `rangeScale × envelope` — that is a clinical constraint, not a style choice.
+`assessment.js` (one screen: hold still → 3-2-1 countdown → trace the biggest circle → 3 grasp orbs) produces the per-arm profile: `envelope[16]` (max radial reach per 16 angular bins, SW), `arcMinDeg`/`arcMaxDeg`, `jitter`, `loopSeconds`, `grasp[]` (each orb: `ok` = hold succeeded, `stability`, `squeeze` = real hand-close observed — hold is the pass/fail so patients without grasp still complete). Games must not spawn targets outside `rangeScale × envelope` — that is a clinical constraint, not a style choice.
 
 `dda.js` defines the three difficulty params (`rangeScale`, `radius`, `lifetime`) with hard `LIMITS`, seeds them from the assessment (`initialParams`), and adjusts between rounds: hit rate >70% harder, <50% easier; when easing, `missFar` (misses beyond 70% of range demand) decides whether to reduce range demand vs grow radius/lifetime. `main.js` additionally holds difficulty steady if ≥3 compensation events occurred in the round.
 
@@ -38,7 +42,7 @@ The tracker keeps the body anchor on two time scales: a slow filter (targets fol
 
 `engine.js` exports `GameBase`: round loop with pause handling, `samplePos()` (envelope-bounded AND clamped on-screen via margins, staying body-anchored), `hit()`/`miss()` accounting, particle bursts, the always-drawn arm skeleton + hand cursor with capture-radius ring, and the "therapist voice" (`say()`, `_feedbackTick()` — spoken praise/tips, rate-limited).
 
-A game subclass supplies: `id` (class field, must match its entry in the `GAMES` array at the bottom of `games.js` and its `CARD_ART` key in `main.js`), `setup()`, `update(now, dt)`, `drawBg(ctx, c, now)`, `draw(ctx, c, now)`, and optional `extra()` for per-game round metrics (these flow into the round record, the between-rounds summary text in `main.js`, and the therapist log). Interaction is dwell-based in most games ("grab" = hold hand on target); Harbor Crates uses real hand-close detection (`tracker.handClosed`) — squeeze on the crate to grab, open past the midline to release. Nine games exist; several have modes set via the staff drawer (`pong` has 6 modes incl. bimanual/companion-keys, `rhythm` has one-arm/bimanual, `drift` has 3 stages that progress on hit rate in `main.js`).
+A game subclass supplies: `id` (class field, must match its entry in the `GAMES` array at the bottom of `games.js` and its `CARD_ART` key in `main.js`), `setup()`, `update(now, dt)`, `drawBg(ctx, c, now)`, `draw(ctx, c, now)`, and optional `extra()` for per-game round metrics (these flow into the round record, the between-rounds summary text in `main.js`, and the therapist log). Interaction is dwell-based in most games ("grab" = hold hand on target); Harbor Crates uses real hand-close detection (`tracker.handClosed`) — a grasp *event* (arrive open, then squeeze) to grab, open past the midline to release. Nine games exist; a `disabled: true` flag on a `GAMES` entry hides its card and its drawer settings (Melody Tiles is currently disabled this way). Modes: `pong` has 6 modes chosen via an in-flow tile picker (`renderPongModes` in `main.js`, kept in sync with the drawer select) plus grip/spin skill shots (level-based unlock in `store.getPongLevel`, or staff override); `drift` has 3 stages that progress on hit rate in `main.js`.
 
 ### Audio
 
@@ -46,7 +50,8 @@ A game subclass supplies: `id` (class field, must match its entry in the `GAMES`
 
 ### UI conventions
 
-- Menus are operable without a mouse: elements with `data-dwell="1"` are clicked by holding the hand cursor over them for 1.4 s (`dwellLoop` in `main.js`).
+- Menus are operable without a mouse: elements with `data-dwell="1"` are clicked by **squeezing** (hand-close edge, instant) or by holding the hand cursor over them for 1.4 s (`dwellLoop` in `main.js`). The grasp click needs a fresh open→close, so a held fist can't chain-select across screens.
+- The welcome screen is a setup gate (`watchWelcome` in `main.js`): it draws a live skeleton mirror on `#welcome-canvas` (amber → sage when framed), shows a tracking/feature status line, guides the patient to sit centered at the right distance (`framingMessage`), and starts on lift+squeeze (fast), lift-hold (fallback), the Start button, or a click.
 - In-game UI is diegetic/no-HUD: no numbers except where the count IS the test (Harbor Crates). Feedback is glow, music, and spoken lines.
 - Calm night-harbor visual language; palette anchors: cream `#f4ecdd`, amber `#e8a86a`, sage `#9fc08a`, ink `#1b1b3a` (see DESIGN_BRIEF.md).
 - Patient-facing text is gentle and non-judgmental (misses are "soft"); it's aimed at an older stroke population.
