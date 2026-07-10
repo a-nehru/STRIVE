@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>STRIVE</title>
-<link rel="stylesheet" href="css/style.css?v=2">
+<link rel="stylesheet" href="css/style.css?v=3">
 </head>
 <body>
 
@@ -13,6 +13,7 @@
 <!-- P1 welcome -->
 <div id="screen-welcome" class="screen">
   <div class="blob b1"></div><div class="blob b2"></div>
+  <canvas id="welcome-canvas"></canvas>
   <div class="star-tw" style="left:8vw;top:10vh;width:6px;height:6px"></div>
   <div class="star-tw" style="left:84vw;top:16vh;width:5px;height:5px;animation-delay:.8s"></div>
   <div class="star-tw" style="left:40vw;top:7vh;width:4px;height:4px;animation-delay:1.4s"></div>
@@ -20,6 +21,8 @@
   <div class="brand-title">STRIVE</div>
   <div class="headline">Ready when you are</div>
   <div class="subline">Lift your hand into the light</div>
+  <button class="btn" id="btn-welcome-start">Start</button>
+  <div class="track-status" id="welcome-track"></div>
   <div class="brand-foot">Developed by Synapse Lab · Shirley Ryan AbilityLab</div>
 </div>
 
@@ -175,6 +178,6 @@
 
 <div id="loading" class="hidden"><div class="spinner"></div><div id="loading-text">Waking up the camera&hellip;</div></div>
 
-<script type="module" src="js/main.js?v=2"></script>
+<script type="module" src="js/main.js?v=3"></script>
 </body>
 </html>

@@ -65,35 +65,122 @@ function framingMessage(t) {
   return null;
 }
 
+const TAU2 = Math.PI * 2;
+
+// live mirror: draw the tracked upper body + both hands so the patient SEES
+// what the camera sees (sage when framed well, amber while adjusting)
+function drawWelcomeBody(ctx, c, t, framed) {
+  const p = t.pts;
+  if (!p?.shL || !p?.shR) return;
+  const P = pt => t._videoToPx(pt.x, pt.y, c);
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.strokeStyle = framed ? "rgba(159,192,138,0.55)" : "rgba(232,168,106,0.5)";
+  ctx.lineWidth = 6;
+  const seg = (a, b) => { const A = P(a), B = P(b); ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(B.x, B.y); ctx.stroke(); };
+  seg(p.shL, p.shR);
+  const shMid = { x: (p.shL.x + p.shR.x) / 2, y: (p.shL.y + p.shR.y) / 2 };
+  if (p.hipL && p.hipR) {
+    seg(p.hipL, p.hipR);
+    seg(shMid, { x: (p.hipL.x + p.hipR.x) / 2, y: (p.hipL.y + p.hipR.y) / 2 });
+  }
+  for (const s of ["left", "right"]) {
+    const sh = t.shoulder(s), el = t.elbow(s), wr = t.wrist(s);
+    if (sh && el?.ok) {
+      seg(sh, el);
+      if (wr?.ok) {
+        seg(el, wr);
+        const pm = t.palm(s);
+        if (pm) seg(wr, pm);
+      }
+    }
+  }
+  const ear = p.earL && p.earR ? { x: (p.earL.x + p.earR.x) / 2, y: (p.earL.y + p.earR.y) / 2 } : (p.earL || p.earR);
+  if (ear) {
+    const E = P(ear);
+    ctx.beginPath(); ctx.arc(E.x, E.y, 0.34 * t.pxPerSW(c), 0, TAU2); ctx.stroke();
+  }
+  // hands: glowing dots, ring tightens and turns sage on a squeeze
+  for (const s of ["left", "right"]) {
+    const hp = t.handPx(s, c);
+    if (!hp) continue;
+    const closed = t.handClosed(s);
+    ctx.shadowColor = closed ? "rgba(159,192,138,0.9)" : "rgba(232,168,106,0.8)";
+    ctx.shadowBlur = closed ? 26 : 18;
+    ctx.fillStyle = closed ? "#9fc08a" : "#e8a86a";
+    ctx.beginPath(); ctx.arc(hp.x, hp.y, 11, 0, TAU2); ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = closed ? "#9fc08a" : "rgba(244,236,221,0.55)";
+    ctx.lineWidth = closed ? 4 : 2.5;
+    if (!closed) ctx.setLineDash([6, 7]);
+    ctx.beginPath(); ctx.arc(hp.x, hp.y, closed ? 16 : 24, 0, TAU2); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  ctx.restore();
+}
+
 function watchWelcome() {
-  let raisedSince = null, framedSince = null;
+  let raisedSince = null, closedSince = null, framedSince = null, squeezeSeen = false;
   const head = document.querySelector("#screen-welcome .headline");
   const sub = document.querySelector("#screen-welcome .subline");
-  setInterval(() => {
-    if (state.screen !== "screen-welcome" || !state.tracker) return;
+  const trackEl = $("welcome-track");
+  const setText = (el, s) => { if (el.textContent !== s) el.textContent = s; };
+
+  function loop() {
+    requestAnimationFrame(loop);
+    if (state.screen !== "screen-welcome") return;
+    const c = $("welcome-canvas");
+    if (c.width !== innerWidth || c.height !== innerHeight) { c.width = innerWidth; c.height = innerHeight; }
+    const ctx = c.getContext("2d");
+    ctx.clearRect(0, 0, c.width, c.height);
+    const t = state.tracker;
+    if (!t) return;
     const now = performance.now();
-    const msg = framingMessage(state.tracker);
+
+    // tracking + feature status (so staff can see the whole chain is alive)
+    if (t.handClosed(state.side)) squeezeSeen = true;
+    const handFresh = t._handPts(state.side) != null;
+    setText(trackEl, t.trackingOk
+      ? `Tracking: body ✓ · hand ${handFresh ? "✓" : "…"} · squeeze ${squeezeSeen ? "✓" : "… try closing your fist"}`
+      : "Tracking: looking for you …");
+
+    const msg = framingMessage(t);
+    const framed = !msg;
+    if (t.trackingOk) drawWelcomeBody(ctx, c, t, framed);
+
     if (msg) {
-      framedSince = null; raisedSince = null;
-      head.textContent = "Let's get you settled";
-      sub.textContent = msg;
+      framedSince = null; raisedSince = null; closedSince = null;
+      setText(head, "Let's get you settled");
+      setText(sub, msg);
       return;
     }
     framedSince ??= now;
     if (now - framedSince < 1400) {
-      head.textContent = "That's it";
-      sub.textContent = "Sit comfortably, just like that";
+      setText(head, "That's it");
+      setText(sub, "Sit comfortably, just like that");
       return;
     }
-    head.textContent = "Ready when you are";
-    sub.textContent = "Lift your hand into the light";
-    const rel = state.tracker.handRel(state.side);
+    setText(head, "Ready when you are");
+    setText(sub, "Lift your hand and squeeze to begin");
+
+    // start gesture: lift + squeeze (fast), or just hold the hand up (fallback)
+    const rel = t.handRel(state.side);
+    let prog = 0;
     if (rel && rel.y > 0.15) {
       raisedSince ??= now;
-      if (now - raisedSince > 900) enterSelect();
-    } else raisedSince = null;
-  }, 150);
+      if (t.handClosed(state.side)) closedSince ??= now; else closedSince = null;
+      prog = Math.max((now - raisedSince) / 3500, closedSince ? (now - closedSince) / 700 : 0);
+      const hp = t.handPx(state.side, c);
+      if (hp) {
+        ctx.strokeStyle = "#fff2c2"; ctx.lineWidth = 5;
+        ctx.beginPath(); ctx.arc(hp.x, hp.y, 32, -Math.PI / 2, -Math.PI / 2 + TAU2 * Math.min(1, prog)); ctx.stroke();
+      }
+      if (prog >= 1) { raisedSince = null; closedSince = null; enterSelect(); }
+    } else { raisedSince = null; closedSince = null; }
+  }
+  loop();
   $("screen-welcome").addEventListener("click", enterSelect);
+  $("btn-welcome-start").addEventListener("click", e => { e.stopPropagation(); enterSelect(); });
 }
 
 function enterSelect() {
