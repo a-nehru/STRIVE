@@ -7,10 +7,10 @@
 import { audio } from "./audio.js";
 
 const CUES = {
-  lean: "Sit tall — reach with your arm",
+  lean: "Sit tall, reach with your arm",
   hike: "Let your shoulder relax",
   rotation: "Keep your chest facing me",
-  tilt: "Straighten up gently — nice and tall",
+  tilt: "Straighten up gently, nice and tall",
 };
 const THRESH = { gentle: 1.0, strict: 0.65 };
 

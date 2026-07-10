@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Star Harbor ("Rehab Suite") — a webcam-based upper-limb rehabilitation game suite for stroke patients. Plain static site: vanilla JS ES modules, no build step, no dependencies to install, no tests or linter. MediaPipe Pose is loaded from CDN at runtime (internet required on first load). Design decisions are grounded in two rehab papers (CFI framework, Rehabilitation Gaming System) — README.md has a table mapping paper concepts to code; SPEC.md and DESIGN_BRIEF.md hold the full spec and visual design language.
+STRIVE (formerly Star Harbor / "Rehab Suite") — a webcam-based upper-limb rehabilitation game suite for stroke patients, developed by Synapse Lab, Shirley Ryan AbilityLab. UI copy convention: no em dashes in patient-facing text. Plain static site: vanilla JS ES modules, no build step, no dependencies to install, no tests or linter. MediaPipe Pose is loaded from CDN at runtime (internet required on first load). Design decisions are grounded in two rehab papers (CFI framework, Rehabilitation Gaming System) — README.md has a table mapping paper concepts to code; SPEC.md and DESIGN_BRIEF.md hold the full spec and visual design language.
 
 ## Run
 

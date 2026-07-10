@@ -20,13 +20,13 @@ const deg = d => d * Math.PI / 180;
 const STORIES = {
   constellations: { title: "The sky lost its shapes", text: "Draw threads between the stars to bring the sky-animals home." },
   drift: { title: "Starlight on the tide", text: "The sea is pulling the light away. Catch each orb before it sinks." },
-  ember: { title: "The sleeping village", text: "Embers are falling on the rooftops. Catch them — each becomes a firefly and lights a window." },
+  ember: { title: "The sleeping village", text: "Embers are falling on the rooftops. Catch them. Each becomes a firefly and lights a window." },
   lantern: { title: "The lantern festival", text: "Tonight, every lantern you set free joins the sky forever." },
   pong: { title: "A star wants to play", text: "Keep the little star dancing between the paddles." },
   rhythm: { title: "The star cascade", text: "Falling stars keep a beat. Meet each one in its ring, right on time." },
   boxes: { title: "The last ferry", text: "The harbor crates must cross before the ferry leaves. Carry them over, one by one." },
-  compass: { title: "The compass rose", text: "From the heart of the compass, light every point — and always return home." },
-  echo: { title: "The star's echo", text: "A star leaves an invisible echo where it shone. Remember the spot — and find it again." },
+  compass: { title: "The compass rose", text: "From the heart of the compass, light every point, and always return home." },
+  echo: { title: "The star's echo", text: "A star leaves an invisible echo where it shone. Remember the spot, and find it again." },
 };
 
 /* ==================== G1 Constellations ==================== */
@@ -332,7 +332,7 @@ export class EmberWatch extends GameBase {
     this.windowsLit = 2;
     const wait = this.tellStory(STORIES.ember);
     if (!wait) {
-      this._prompt("Catch the embers", "Hold your hand on each one — it lights a window");
+      this._prompt("Catch the embers", "Hold your hand on each one. It lights a window");
       setTimeout(() => this._prompt(""), 3200);
     }
     this.nextSpawn = performance.now() + wait + 600;
@@ -479,7 +479,7 @@ export class LanternRelease extends GameBase {
           this.burst(this.ring, L.hue);
           audio.fanfare();
           // story beats
-          if (this.stats.lanterns === 2) { this.act = 2; this._speak("Look — the colored lanterns are joining in!"); }
+          if (this.stats.lanterns === 2) { this.act = 2; this._speak("Look! The colored lanterns are joining in!"); }
           if (this.stats.lanterns === 4) { this.act = 3; this._speak("The wind is up! Follow the drifting ring."); }
           this._newLantern();
         }
@@ -584,16 +584,16 @@ export class ArcPong extends GameBase {
     const wait = this.tellStory(STORIES.pong);
     if (!wait) {
       const SUB = {
-        solo: "Raise and lower your arm — score points past the other paddle!",
-        bimanual: "Each arm has its own paddle — rally with yourself!",
+        solo: "Raise and lower your arm to score points past the other paddle!",
+        bimanual: "Each arm has its own paddle. Rally with yourself!",
         coupled: "Both arms together steer one paddle",
         companion: "A friend plays the other paddle with the arrow keys",
-        "team-arms": "Both your arms defend together — beat the AI!",
-        "team-keys": "You and your teammate defend together — beat the AI!",
+        "team-arms": "Both your arms defend together. Beat the AI!",
+        "team-keys": "You and your teammate defend together. Beat the AI!",
       };
       const skillHint = [this.skills.grip && "squeeze to catch & fire", this.skills.spin && "turn your palm for spin"]
         .filter(Boolean).join(" · ");
-      this._prompt("Rally with the light", SUB[this.mode] + (skillHint ? ` — ${skillHint}!` : ""));
+      this._prompt("Rally with the light", SUB[this.mode] + (skillHint ? ` (${skillHint})` : ""));
       setTimeout(() => this._prompt(""), 3200);
     }
     this._startServe(performance.now() + wait);
@@ -931,10 +931,10 @@ export class MelodyTiles extends GameBase {
 
     const wait = this.tellStory({
       title: this.song.name,
-      text: "The tiles are the song. Be in the ring when each one lands — and you'll play the tune.",
+      text: "The tiles are the song. Be in the ring when each one lands, and you'll play the tune.",
     });
     if (!wait) {
-      this._prompt(this.song.name, "Catch each tile in its ring — you are playing the melody");
+      this._prompt(this.song.name, "Catch each tile in its ring. You are playing the melody");
       setTimeout(() => this._prompt(""), 3400);
     }
     // the game owns the song clock so tiles and music always agree
@@ -1077,7 +1077,7 @@ export class HarborCrates extends GameBase {
     this._newCrate();
     const wait = this.tellStory(STORIES.boxes);
     if (!wait) {
-      this._prompt("Carry the crates across", "Squeeze to grab — open your hand on the far side to drop");
+      this._prompt("Carry the crates across", "Squeeze to grab, open your hand on the far side to drop");
       setTimeout(() => this._prompt(""), 3200);
     }
     this.crate.born = performance.now() + wait;
@@ -1331,7 +1331,7 @@ export class EchoReach extends GameBase {
     this.state = "echo";
     this.echoStart = now;
     this.nudged = false;
-    this._prompt("Now find its echo", "Reach to where it was and hold — take your time");
+    this._prompt("Now find its echo", "Reach to where it was and hold. Take your time");
     if (this.errors.length < 2) this._speak("Now reach to where the star was, and hold still there. There is no rush.");
   }
   update(now) {
@@ -1357,7 +1357,7 @@ export class EchoReach extends GameBase {
             this.dwell = null;
             audio.note(2);
             this.state = "return";
-            this._prompt("Come back home", "Gently — no hurry");
+            this._prompt("Come back home", "Gently, no hurry");
           }
         } else this.dwell = null;
         break;
@@ -1393,7 +1393,7 @@ export class EchoReach extends GameBase {
         // gentle mid-way nudge, generous deadline, and a kind reveal on timeout
         if (!this.nudged && now - this.echoStart > 10000) {
           this.nudged = true;
-          this.say("Take your time — feel where the star was, and hold still there.");
+          this.say("Take your time. Feel where the star was, and hold still there.");
         }
         if (now - this.echoStart > 25000) {
           this.stats.misses++;

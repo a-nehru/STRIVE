@@ -59,6 +59,19 @@ button { font-family: inherit; cursor: pointer; }
 
 .star-tw { position: absolute; border-radius: 50%; background: #fff; animation: twinkle 5s ease-in-out infinite; pointer-events: none; }
 
+/* STRIVE branding (welcome) */
+.brand-title {
+  position: absolute; top: 8vh; left: 0; right: 0;
+  text-align: center; font-weight: 800;
+  font-size: clamp(30px, 4vw, 52px); letter-spacing: 0.4em; text-indent: 0.4em;
+  color: var(--cream); text-shadow: 0 0 34px rgba(232, 168, 106, 0.4);
+}
+.brand-foot {
+  position: absolute; bottom: 5vh; left: 0; right: 0;
+  text-align: center; font-weight: 700; font-size: 14px;
+  letter-spacing: 0.06em; color: rgba(244, 236, 221, 0.55);
+}
+
 /* the ambient firefly on welcome */
 #welcome-firefly {
   position: absolute; width: 30px; height: 30px; border-radius: 50%;

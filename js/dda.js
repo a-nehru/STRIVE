@@ -52,13 +52,13 @@ export function adjust(params, stats) {
     const k = Math.min((hitRate - 0.7) / 0.3, 1);        // 0..1
     if (p.rangeScale < LIMITS.rangeScale[1] - 0.01) {
       p.rangeScale = clamp(p.rangeScale + 0.08 * k + 0.02, LIMITS.rangeScale);
-      note = "Great accuracy — targets will reach a little further.";
+      note = "Great accuracy! Targets will reach a little further.";
     } else if (p.radius > LIMITS.radius[0] + 0.01) {
       p.radius = clamp(p.radius - 0.04 * k - 0.01, LIMITS.radius);
-      note = "Great accuracy — targets get a little smaller.";
+      note = "Great accuracy! Targets get a little smaller.";
     } else {
       p.lifetime = clamp(p.lifetime - 0.5 * k - 0.1, LIMITS.lifetime);
-      note = "Great accuracy — targets disappear a little faster.";
+      note = "Great accuracy! Targets disappear a little faster.";
     }
   } else if (hitRate < 0.5) {
     const k = Math.min((0.5 - hitRate) / 0.5, 1);
@@ -72,7 +72,7 @@ export function adjust(params, stats) {
       note = "Targets get a little bigger and stay a little longer.";
     }
   } else {
-    note = "Difficulty is just right — no change.";
+    note = "Difficulty is just right. No change.";
   }
 
   return { params: p, note };

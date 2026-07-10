@@ -184,9 +184,9 @@ export class GameBase {
     this.fb.hitStreak++; this.fb.missStreak = 0;
     if ([5, 10, 15].includes(this.fb.hitStreak)) {
       this.say(pickOne([
-        `${this.fb.hitStreak} in a row — wonderful!`,
+        `${this.fb.hitStreak} in a row, wonderful!`,
         `${this.fb.hitStreak} straight! Beautiful control.`,
-        "You're on a roll — keep that rhythm.",
+        "You're on a roll, keep that rhythm.",
       ]));
     }
   }
@@ -216,7 +216,7 @@ export class GameBase {
     if (now - this.fb.lastSpeak < 10000) return;
     if (this.fb.missStreak >= 3) {
       this.fb.missStreak = 0;
-      this.say(this.tips?.miss || "No rush — watch it come, and start your reach early.");
+      this.say(this.tips?.miss || "No rush. Watch it come, and start your reach early.");
       return;
     }
     // arc encouragement once per round when playing safe & shallow
@@ -224,7 +224,7 @@ export class GameBase {
       const mean = this.stats.reachFracs.reduce((s, v) => s + v, 0) / this.stats.reachFracs.length;
       if (mean < 0.58) {
         this.fb.saidReach = true;
-        this.say("Lovely — now try stretching a little farther out.");
+        this.say("Lovely! Now try stretching a little farther out.");
       }
     }
   }

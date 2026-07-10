@@ -44,7 +44,7 @@ async function boot() {
     $("camstate").textContent = "Camera: tracking";
     $("camstate").className = "ok";
   } catch (e) {
-    $("camstate").textContent = "Camera: unavailable — " + e.message;
+    $("camstate").textContent = "Camera: unavailable. " + e.message;
     $("camstate").className = "bad";
   } finally {
     $("loading").classList.add("hidden");
@@ -239,8 +239,8 @@ function onRoundEnd(round) {
     if (lvl < 3 && round.hitRate > 0.7 && (round.bestRally ?? 0) >= 4) {
       store.setPongLevel(state.patient, lvl + 1);
       result.note += lvl === 1
-        ? " ⭐ New skill unlocked: the Grip Shot — squeeze to catch the star, open your hand to fire it back!"
-        : " ⭐ New skill unlocked: the Spin Shot — turn your palm as you hit for topspin or backspin!";
+        ? " ⭐ New skill unlocked: the Grip Shot! Squeeze to catch the star, open your hand to fire it back!"
+        : " ⭐ New skill unlocked: the Spin Shot! Turn your palm as you hit for topspin or backspin!";
     }
   }
 
@@ -284,20 +284,20 @@ function renderBetween(round, note) {
   if (round.game === "pong") {
     lines.push(`Longest rally: <b>${round.bestRally ?? round.hits} returns</b>.`);
     if (round.points != null && (round.points > 0 || round.aiPoints > 0))
-      lines.push(`Score: <b>you ${round.points} — ${round.aiPoints} AI</b>${round.points > round.aiPoints ? " — you won! 🌟" : round.points === round.aiPoints ? " — a draw!" : ""}`);
+      lines.push(`Score: <b>you ${round.points} : ${round.aiPoints} AI</b>${round.points > round.aiPoints ? ", you won! 🌟" : round.points === round.aiPoints ? ", a draw!" : ""}`);
     if (round.gripShots || round.spinShots)
       lines.push(`Trick shots: <b>${round.gripShots ? `${round.gripShots} grip ✊` : ""}${round.gripShots && round.spinShots ? " · " : ""}${round.spinShots ? `${round.spinShots} spin ↻` : ""}</b>`);
   }
-  else if (round.game === "boxes") lines.push(`You carried <b>${round.boxes} crates</b> across — a fine ferry load!`);
-  else if (round.game === "rhythm") lines.push(`You played <b>${round.notesHitPct}%</b> of "${round.song}" — best streak <b>${round.bestCombo} notes</b>.`);
+  else if (round.game === "boxes") lines.push(`You carried <b>${round.boxes} crates</b> across, a fine ferry load!`);
+  else if (round.game === "rhythm") lines.push(`You played <b>${round.notesHitPct}%</b> of "${round.song}", best streak <b>${round.bestCombo} notes</b>.`);
   else if (round.game === "compass") lines.push(`You lit <b>${round.hits} compass points</b> and always found your way home.`);
-  else if (round.game === "echo") lines.push(`You found <b>${round.hits} echoes</b>${round.meanEchoErrSW != null ? ` — on average <b>${round.meanEchoErrSW}</b> shoulder-widths from the star` : ""}.`);
+  else if (round.game === "echo") lines.push(`You found <b>${round.hits} echoes</b>${round.meanEchoErrSW != null ? `, on average <b>${round.meanEchoErrSW}</b> shoulder-widths from the star` : ""}.`);
   else lines.push(`You caught <b>${round.hits} of ${round.hits + round.misses}</b> in ${gname}.`);
   lines.push(`⭐ <b>${round.stars}</b> this round · <b>${state.sessionStars}</b> today`);
   $("rc-text").innerHTML = lines.join("<br>");
 
   const rest = state.roundNumber % 4 === 0
-    ? " You've earned a longer break — have some water."
+    ? " You've earned a longer break. Have some water."
     : "";
   $("rc-note").textContent = note + rest;
 
@@ -311,9 +311,9 @@ document.querySelectorAll(".face").forEach(f => {
     f.classList.add("selected");
     store.logFeel(state.patient, f.dataset.feel);
     if (f.dataset.feel === "hurts")
-      $("rc-note").textContent = "Thank you for telling us — let's stop here for today and rest that arm.";
+      $("rc-note").textContent = "Thank you for telling us. Let's stop here for today and rest that arm.";
     if (f.dataset.feel === "tired")
-      $("rc-note").textContent = "A little tired is okay — one gentler round, or finish for today?";
+      $("rc-note").textContent = "A little tired is okay. One gentler round, or finish for today?";
   });
 });
 
@@ -533,7 +533,7 @@ setInterval(() => {
   if (curl != null) src = "hand model";
   else {
     const cal = t.gripCal?.[state.side];
-    src = "pose fallback" + (cal && cal.hi - cal.lo > 0.10 ? "" : " — open & close to calibrate");
+    src = "pose fallback" + (cal && cal.hi - cal.lo > 0.10 ? "" : ", open & close to calibrate");
   }
   $("camstate").textContent = `Camera: tracking · ${state.side} hand ${t.handClosed(state.side) ? "CLOSED ✊" : "open ✋"}`
     + (g != null ? ` · ${g.toFixed(2)} (${src})` : " · fingers not visible");

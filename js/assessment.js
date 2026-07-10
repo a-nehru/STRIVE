@@ -132,7 +132,7 @@ export class Assessment {
           this.traceStart = now;
           this.state = "trace"; this.stateT = now;
           this.halfSaid = false;
-          this._prompt("Draw the biggest circle you can", "Follow the glowing firefly — big and slow");
+          this._prompt("Draw the biggest circle you can", "Follow the glowing firefly, big and slow");
           this._speak("Now draw the biggest circle you can. Follow the glowing firefly. Big and slow.");
         }
         break;
@@ -159,7 +159,7 @@ export class Assessment {
         const covered = this.visited.filter(v => v >= 2).length;
         if (!this.halfSaid && covered >= BINS / 2) {
           this.halfSaid = true;
-          this._prompt("Halfway there!", "Keep circling — nice and big");
+          this._prompt("Halfway there!", "Keep circling, nice and big");
           this._speak("Halfway there. Keep circling.");
         }
         const done = (covered >= BINS - 2 && now - this.stateT > 10000) || now - this.stateT > 40000;
@@ -167,8 +167,8 @@ export class Assessment {
           this.loopSeconds = Math.min(20, (now - this.stateT) / 1000 / Math.max(1, this.loops));
           this.state = "grasp-move"; this.stateT = now;
           audio.fanfare();
-          this._prompt("Beautiful!", "Now — squeeze to grab the light");
-          this._speak("Beautiful! Now hold your hand on each light — and squeeze it if you can.");
+          this._prompt("Beautiful!", "Now squeeze to grab the light");
+          this._speak("Beautiful! Now hold your hand on each light, and squeeze it if you can.");
         }
         break;
       }
@@ -178,7 +178,7 @@ export class Assessment {
           this.orb = this._orbPos(this.graspIdx);
           this.dwell = { since: null, samples: [], start: now };
           this.state = "grasp"; this.stateT = now;
-          this._prompt("Reach to the light and hold", "Squeeze gently if you can — like catching a firefly");
+          this._prompt("Reach to the light and hold", "Squeeze gently if you can, like catching a firefly");
         }
         break;
       }
