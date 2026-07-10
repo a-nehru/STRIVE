@@ -262,6 +262,7 @@ const CARD_ART = {
 function renderSelect() {
   const wrap = $("cards");
   wrap.innerHTML = "";
+  document.querySelector("#screen-select h1").textContent = "What shall we play today?";
   const prof = store.getProfile(state.patient, state.side);
 
   const mk = (id, name, locked, onClick) => {
@@ -275,7 +276,41 @@ function renderSelect() {
   };
 
   mk("assess", prof ? "Your circle" : "Draw your circle", false, startAssessment);
-  for (const g of GAMES) { if (g.disabled) continue; mk(g.id, g.name, !prof, () => startGame(g.id, true)); }
+  for (const g of GAMES) {
+    if (g.disabled) continue;
+    mk(g.id, g.name, !prof, g.id === "pong" ? renderPongModes : () => startGame(g.id, true));
+  }
+}
+
+// Pong mode picker: shown as tiles after choosing Arc Pong
+const PONG_MODES = [
+  ["solo", "Solo", "You vs a gentle star"],
+  ["bimanual", "Arm vs arm", "Left paddle vs right paddle"],
+  ["coupled", "Both arms", "Two arms steer one paddle"],
+  ["companion", "With a friend", "They play the arrow keys"],
+  ["team-arms", "Team: both arms", "Both your arms vs the AI"],
+  ["team-keys", "Team: with a friend", "Defend together vs the AI"],
+];
+function renderPongModes() {
+  const wrap = $("cards");
+  wrap.innerHTML = "";
+  document.querySelector("#screen-select h1").textContent = "How shall we play Pong?";
+  const mk = (label, sub, onClick) => {
+    const b = document.createElement("button");
+    b.className = "gcard";
+    b.dataset.dwell = "1";
+    b.innerHTML = CARD_ART.pong + `<div class="dwell-fill"></div><div class="title">${label}<small>${sub}</small></div>`;
+    b.addEventListener("click", onClick);
+    wrap.appendChild(b);
+  };
+  for (const [id, label, sub] of PONG_MODES) {
+    mk(label, sub, () => {
+      state.pongMode = id;
+      $("in-pong").value = id;
+      startGame("pong", true);
+    });
+  }
+  mk("↩ Back", "All games", renderSelect);
 }
 
 /* ================= assessment ================= */
@@ -688,12 +723,12 @@ $("btn-quit").addEventListener("click", () => {
 
 /* ================= hand-cursor dwell for menus ================= */
 const DWELL_MS = 1400;
-let dwellEl = null, dwellSince = 0;
+let dwellEl = null, dwellSince = 0, dwellWasClosed = false;
 function dwellLoop() {
   requestAnimationFrame(dwellLoop);
   const cursor = $("handcursor");
   const menuScreen = ["screen-select", "screen-between", "screen-collections"].includes(state.screen);
-  if (!menuScreen || !state.tracker?.trackingOk) { cursor.classList.add("hidden"); dwellEl = null; return; }
+  if (!menuScreen || !state.tracker?.trackingOk) { cursor.classList.add("hidden"); dwellEl = null; dwellWasClosed = false; return; }
 
   const p = store.getPatient(state.patient);
   cursor.classList.toggle("comet", p.equippedCursor === "comet");
@@ -702,6 +737,8 @@ function dwellLoop() {
   cursor.classList.remove("hidden");
   cursor.style.left = pos.x + "px";
   cursor.style.top = pos.y + "px";
+  const closed = state.tracker.handClosed(state.side);
+  cursor.classList.toggle("grasping", closed);
 
   const el = document.elementFromPoint(pos.x, pos.y)?.closest("[data-dwell]");
   if (el !== dwellEl) {
@@ -710,6 +747,17 @@ function dwellLoop() {
     dwellEl = el;
     dwellSince = performance.now();
   }
+  // squeeze on a card = choose it right away (dwell remains the fallback)
+  if (dwellEl && closed && !dwellWasClosed) {
+    const target = dwellEl;
+    dwellEl = null;
+    dwellWasClosed = closed;
+    target.classList.remove("dwelling");
+    target.querySelector?.(".dwell-fill")?.style.setProperty("transform", "scaleY(0)");
+    target.click();
+    return;
+  }
+  dwellWasClosed = closed;
   if (dwellEl) {
     const f = Math.min(1, (performance.now() - dwellSince) / DWELL_MS);
     dwellEl.classList.add("dwelling");
