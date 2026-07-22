@@ -7,9 +7,13 @@ import { audio } from "./audio.js";
 
 export const TAU = Math.PI * 2;
 // Reach center: all envelope-based targets (and the assessment circle) are
-// centered here — a little above the shoulder midpoint so the play space
-// sits higher on screen. SW units, y up.
+// centered here. SW units, y up. ADAPTIVE per patient: the assessment
+// captures the resting hand position at settle (limited-motion friendly —
+// nobody has to reach a preset spot) and stores it as profile.center;
+// GameBase.start() loads it so games and assessment always agree. The
+// values below are only the default for profiles that predate this.
 export const CENTER = { x: 0, y: 0.25 };
+const CENTER_DEFAULT = { x: 0, y: 0.25 };
 const BINS = 16;
 const MARGIN = 80;                 // px: no target may spawn closer to an edge
 const pickOne = arr => arr[Math.floor(Math.random() * arr.length)];
@@ -151,6 +155,9 @@ export class GameBase {
   start(onEnd) {
     this.onEnd = onEnd;
     this.active = true;
+    // adopt this patient's rest-anchored work center (see CENTER above)
+    CENTER.x = this.profile.center?.x ?? CENTER_DEFAULT.x;
+    CENTER.y = this.profile.center?.y ?? CENTER_DEFAULT.y;
     this.t.setBaseline();
     this.startT = performance.now();
     this.pausedMs = 0;

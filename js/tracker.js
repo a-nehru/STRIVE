@@ -273,6 +273,14 @@ export class Tracker {
     return { x: (w.x - this.frame.x) / this.frame.sw, y: -(w.y - this.frame.y) / this.frame.sw };
   }
 
+  // palm center in the same frame — where the FINGERS are, for pick-up
+  // interactions (the wrist sits noticeably behind a grasping hand)
+  palmRel(side) {
+    const p = this.palm(side);
+    if (!p || !this.frame) return null;
+    return { x: (p.x - this.frame.x) / this.frame.sw, y: -(p.y - this.frame.y) / this.frame.sw };
+  }
+
   // arm elevation angle in degrees vs trunk axis: 0 = arm along trunk (down),
   // 180 = straight overhead. Uses shoulder->wrist (whole-arm reach direction).
   armAngle(side) {

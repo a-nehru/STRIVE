@@ -245,6 +245,11 @@ export class Assessment {
           if (!this.still) this.still = now;
           if (now - this.still > 1500) {
             this.t.setBaseline();
+            // the resting hand IS the start position: the work area is
+            // measured around where the arm naturally lives, so limited
+            // motion never has to travel to a preset spot first
+            CENTER.x = Math.max(-0.8, Math.min(0.8, hand.x));
+            CENTER.y = Math.max(-0.7, Math.min(0.7, hand.y));
             this.state = "countdown"; this.stateT = now;
             this.count = null;
             this._prompt("Get ready…", "The circle starts in 3… 2… 1…");
@@ -393,6 +398,9 @@ export class Assessment {
     const profile = {
       arm: this.side,
       date: new Date().toISOString(),
+      // rest-anchored work center (captured at settle) — games load this so
+      // targets appear around the same point the envelope was measured from
+      center: { x: Math.round(CENTER.x * 1000) / 1000, y: Math.round(CENTER.y * 1000) / 1000 },
       envelope: this.envelope.map(v => Math.round(v * 1000) / 1000),
       covered: Math.round(this.covered * 100) / 100,
       arcMinDeg: arcMin,

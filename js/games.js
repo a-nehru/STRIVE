@@ -1076,6 +1076,10 @@ export class HarborCrates extends GameBase {
   setup() {
     this.roundSeconds = 60;
     this.boxes = 0;
+    // guided flow: practice (untimed, step-by-step voice) → 3-2-1 → test.
+    // The patient DOES one full transfer before the clock ever starts.
+    // Practice runs on round 1 only; later rounds go straight to the 3-2-1.
+    this.phase = this.opts.tellStory ? "practice" : "countdown";
     this.sign = this.side === "right" ? 1 : -1;   // source on trained-arm side
     // barrier top (rel y, SW above CENTER): the lift the carry must clear —
     // range demand scales with the DDA like everything else
@@ -1084,13 +1088,21 @@ export class HarborCrates extends GameBase {
     this.benchY = -0.5;
     this._newCrate();
     const wait = this.tellStory(STORIES.boxes);
-    if (!wait) {
-      this._prompt("Carry the crates across", "Squeeze to grab, lift it over the wall, open your hand to drop");
-      setTimeout(() => this._prompt(""), 3200);
+    if (this.phase === "practice") {
+      setTimeout(() => {
+        if (!this.active || this.phase !== "practice") return;
+        this._prompt("Let's practice one first", `Move your ${this.side} hand to the block and squeeze to pick it up`);
+        this._speak(`Let's practice one first. Move your ${this.side} hand to the bright block, and squeeze to pick it up.`);
+      }, wait ? 5400 : 400);
+    } else {
+      this.countStart = performance.now(); this._cd = null;
     }
     this.crate.born = performance.now() + wait;
   }
   extra() { return { boxes: this.boxes }; }
+  // interactions happen at the FINGERS (palm center), not the wrist — you
+  // pick a block up with your hand, so the hand must be at the block
+  _grabPoint() { return this.t.palmRel(this.side) || this.t.handRel(this.side); }
   _newCrate() {
     // like the real test, blocks sit ON the bench on the trained-arm side:
     // vary how far along the bench (reach demand), always inside the envelope
@@ -1111,42 +1123,84 @@ export class HarborCrates extends GameBase {
   }
   update(now) {
     const cr = this.crate;
-    if (now - cr.born > 20000) { this.miss(cr); this._newCrate(); return; }
+    if (this.phase !== "test") this.startT = now;   // the clock waits for the real test
+
+    if (this.phase === "countdown") {
+      const left = 3 - Math.floor((now - this.countStart) / 1000);
+      if (left !== this._cd && left > 0) { this._cd = left; audio.serveTick(false); }
+      if (left <= 0) {
+        this.phase = "test";
+        this.startT = now;
+        this.boxes = 0;
+        this._newCrate();
+        this._prompt("Go!", "As many blocks as you can");
+        this._speak("Go!");
+        setTimeout(() => { if (this.active) this._prompt(""); }, 1800);
+      }
+      return;
+    }
+
+    // clock tick: soft every second, brighter for the last five
+    if (this.phase === "test") {
+      const sec = Math.max(0, Math.ceil(this.roundSeconds - this.elapsed(now)));
+      if (sec !== this._lastSec) { this._lastSec = sec; if (sec > 0) (sec <= 5 ? audio.serveTick(false) : audio.bounce()); }
+      if (now - cr.born > 20000) { this.miss(cr); this._newCrate(); return; }
+    }
+
     const closed = this.t.handClosed(this.side);
+    const pm = this._grabPoint();
     if (cr.state === "waiting") {
       // a real grasp EVENT: arrive with an open hand, then close it on the
       // crate — a hand that was already closed on approach doesn't pick up
-      const near = this.handNear(cr, this.params.radius);
+      const near = pm && Math.hypot(pm.x - cr.x, pm.y - cr.y) < this.params.radius;
       if (near && !closed) cr.armed = true;
       if (near && closed && cr.armed) {
         cr.state = "carried"; cr.armed = false;
         audio.note(1);
+        if (this.phase === "practice" && !this._saidLift) {
+          this._saidLift = true;
+          this._prompt("Lovely!", "Now lift it up and over the wall");
+          this._speak("Lovely. Now lift it up, and carry it over the wall.");
+        }
       }
       if (!near) cr.armed = false;
     } else {
-      const h = this.t.handRel(this.side);
-      if (h) {
+      if (pm) {
         // the partition is solid: crossing its plane below the barrier top is
         // blocked — the crate bumps and presses against the wall until the
         // patient lifts it over (both directions, like the physical wall)
-        const overTop = h.y > this.barrierY;
-        const crossingPlane = Math.sign(h.x || 1) !== Math.sign(cr.x || this.sign);
+        const overTop = pm.y > this.barrierY;
+        const crossingPlane = Math.sign(pm.x || 1) !== Math.sign(cr.x || this.sign);
         if (!overTop && crossingPlane) {
           cr.x = Math.sign(cr.x || this.sign) * 0.05;
-          cr.y = Math.min(h.y, this.barrierY - 0.08);
+          cr.y = Math.min(pm.y, this.barrierY - 0.08);
           if (!cr.bumped) { cr.bumped = true; audio.serveTick(false); }
         } else {
-          cr.x = h.x; cr.y = h.y;
+          cr.x = pm.x; cr.y = pm.y;
           cr.bumped = false;
         }
       }
+      const crossed = Math.sign(cr.x) === -this.sign && Math.abs(cr.x) > 0.2;
+      if (this.phase === "practice" && crossed && !this._saidOpen) {
+        this._saidOpen = true;
+        this._prompt("Almost there", "Open your hand to set it down");
+        this._speak("Now open your hand to set it down.");
+      }
       if (!closed) {                     // open hand = release
-        const crossed = Math.sign(cr.x) === -this.sign && Math.abs(cr.x) > 0.2;
         if (crossed) {
-          this.boxes++;
-          this.hit(cr, this.boxes);
-          this.burst(cr, "#e8b98a");
-          this._newCrate();
+          if (this.phase === "practice") {
+            // practice transfer complete → count down into the real test
+            this.phase = "countdown"; this.countStart = now; this._cd = null;
+            audio.fanfare();
+            this.burst(cr, "#ffd98a");
+            this._prompt("Perfect, that's the idea!", "The real one starts in 3… 2… 1…");
+            this._speak("Perfect, you have the idea. Here we go.");
+          } else {
+            this.boxes++;
+            this.hit(cr, this.boxes);
+            this.burst(cr, "#ffd98a");
+            this._newCrate();
+          }
         } else {
           // dropped early — the crate stays put; pick it up again (no penalty)
           cr.state = "waiting";
@@ -1183,15 +1237,40 @@ export class HarborCrates extends GameBase {
     ctx.fillRect(wt.x - w / 2, wt.y, w, bp.y - wt.y);
     ctx.fillStyle = "rgba(244,236,221,0.85)";
     ctx.beginPath(); ctx.roundRect(wt.x - w / 2 - 3, wt.y - 6, w + 6, 8, 4); ctx.fill();
-    // one box on screen at a time — the big count is the only score
-    // (numbers allowed: the count IS the test)
+    // one ACTIVE box at a time, but delivered blocks stay visible on the far
+    // bench — the growing pile shows exactly how many made it across
     const deckX = wt.x - this.sign * c.width * 0.18;
+    for (let i = 0; i < this.boxes; i++) {
+      const col = Math.floor(i / 5), row = i % 5;
+      crateShape(ctx, deckX - this.sign * col * 44, bp.y - 20 - row * 34, 36, false);
+    }
+    // count beside the pile (numbers allowed: the count IS the test)
     ctx.fillStyle = "rgba(244,236,221,0.85)";
     ctx.font = `800 ${Math.round(c.height * 0.09)}px Nunito, sans-serif`;
     ctx.textAlign = "center";
-    ctx.fillText(this.boxes, deckX, c.height * 0.2);
+    ctx.fillText(this.boxes, deckX, c.height * 0.24);
+    // BIG timer, top middle — the minute is part of the test, keep it in view
+    if (this.phase === "test") {
+      const left = Math.max(0, Math.ceil(this.roundSeconds - this.elapsed(performance.now())));
+      const mm = Math.floor(left / 60), ss = String(left % 60).padStart(2, "0");
+      ctx.fillStyle = left <= 5 ? "#e8a86a" : "rgba(244,236,221,0.92)";
+      ctx.font = `800 ${Math.round(c.height * 0.12)}px Nunito, sans-serif`;
+      ctx.textAlign = "center";
+      ctx.fillText(`${mm}:${ss}`, c.width / 2, c.height * 0.14);
+    }
   }
   draw(ctx, c, now) {
+    if (this.phase === "countdown") {
+      const left = Math.max(1, 3 - Math.floor((now - this.countStart) / 1000));
+      ctx.save();
+      ctx.fillStyle = "rgba(244,236,221,0.95)";
+      ctx.shadowColor = "rgba(232,168,106,0.8)"; ctx.shadowBlur = 30;
+      ctx.font = `800 ${Math.round(c.height * 0.18)}px Nunito, sans-serif`;
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(left, c.width / 2, c.height * 0.42);
+      ctx.restore();
+      return;
+    }
     const cr = this.crate;
     const p = this.toPx(cr);
     crateShape(ctx, p.x, p.y, 44, cr.state === "carried");
@@ -1548,10 +1627,12 @@ function starShape(ctx, x, y, r, color) {
 }
 function crateShape(ctx, x, y, s, bright) {
   ctx.save();
+  // bright gold blocks: they must pop against the live camera feed
   const g = ctx.createLinearGradient(x - s / 2, y - s / 2, x + s / 2, y + s / 2);
-  g.addColorStop(0, bright ? "#e8b98a" : "#a8825c"); g.addColorStop(1, bright ? "#c77f4a" : "#7a5c3e");
+  g.addColorStop(0, bright ? "#ffe9a8" : "#ffcf72"); g.addColorStop(1, bright ? "#f7b24e" : "#e8973f");
   ctx.fillStyle = g;
-  if (bright) { ctx.shadowColor = "#e8a86a"; ctx.shadowBlur = 22; }
+  ctx.shadowColor = bright ? "#ffd98a" : "rgba(232,168,106,0.7)";
+  ctx.shadowBlur = bright ? 26 : 14;
   ctx.beginPath(); ctx.roundRect(x - s / 2, y - s / 2, s, s, 6); ctx.fill();
   ctx.shadowBlur = 0;
   ctx.strokeStyle = "rgba(27,27,58,0.4)"; ctx.lineWidth = 2;
