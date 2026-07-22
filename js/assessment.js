@@ -37,7 +37,7 @@ const ENV_CAP = 2.6;
 const GRASP_ANGLES = [150, 90, 30];      // degrees, y-up: upper-left, top, upper-right
 const GRASP_R = 0.32;                    // capture radius (SW)
 const GRASP_HOLD = 1600;                 // ms dwell = "grab" (v1 proxy for hand-close)
-const GRASP_TIMEOUT = 9000;
+const GRASP_TIMEOUT = 12000;             // generous: no one should feel rushed
 
 export class Assessment {
   constructor(tracker, canvas, side, coachSens, opts = {}) {
@@ -98,7 +98,7 @@ export class Assessment {
     try {
       speechSynthesis.cancel();
       const u = new SpeechSynthesisUtterance(text);
-      u.rate = 0.95;
+      u.rate = 0.9;                      // unhurried, for an older audience
       speechSynthesis.speak(u);
     } catch { /* optional */ }
   }
@@ -119,16 +119,16 @@ export class Assessment {
   // for 1.2 s is the fallback for patients who can't close that hand.
   _chooseTick(ctx, c, now) {
     const CHOOSE_HOLD = 1200;
-    const R = Math.max(56, c.height * 0.085);
-    const tiles = {
-      left: { x: c.width * 0.3, y: c.height * 0.45 },
-      right: { x: c.width * 0.7, y: c.height * 0.45 },
+    const R = Math.max(64, c.height * 0.095);
+    const tiles = {   // a little below center: reachable with a small, low lift
+      left: { x: c.width * 0.3, y: c.height * 0.52 },
+      right: { x: c.width * 0.7, y: c.height * 0.52 },
     };
     let hoverSide = null;
     for (const s of ["left", "right"]) {
       const hp = this.t.handPx(s, c);
       const closed = this.t.handClosed(s);
-      const inside = hp && Math.hypot(hp.x - tiles[s].x, hp.y - tiles[s].y) < R * 1.25;
+      const inside = hp && Math.hypot(hp.x - tiles[s].x, hp.y - tiles[s].y) < R * 1.4;   // forgiving capture
       // squeeze edge while on the light = instant choice
       if (inside && closed && !this.choosePrevClosed[s]) { this._chooseSide(s, now); return; }
       this.choosePrevClosed[s] = closed;
@@ -234,7 +234,7 @@ export class Assessment {
   _update(now, hand, speed) {
     switch (this.state) {
       case "settle": {
-        if (speed < 0.6) {
+        if (speed < 0.8) {   // tolerant of tremor: "still enough" is still
           if (!this.still) this.still = now;
           if (now - this.still > 1500) {
             this.t.setBaseline();

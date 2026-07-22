@@ -1183,13 +1183,9 @@ export class HarborCrates extends GameBase {
     ctx.fillRect(wt.x - w / 2, wt.y, w, bp.y - wt.y);
     ctx.fillStyle = "rgba(244,236,221,0.85)";
     ctx.beginPath(); ctx.roundRect(wt.x - w / 2 - 3, wt.y - 6, w + 6, 8, 4); ctx.fill();
-    // delivered stack ON the bench across the wall (the diegetic count)
+    // one box on screen at a time — the big count is the only score
+    // (numbers allowed: the count IS the test)
     const deckX = wt.x - this.sign * c.width * 0.18;
-    for (let i = 0; i < this.boxes; i++) {
-      const col = Math.floor(i / 5), row = i % 5;
-      crateShape(ctx, deckX - this.sign * col * 44, bp.y - 20 - row * 34, 36, false);
-    }
-    // big friendly count on the far side (numbers allowed: it IS the test)
     ctx.fillStyle = "rgba(244,236,221,0.85)";
     ctx.font = `800 ${Math.round(c.height * 0.09)}px Nunito, sans-serif`;
     ctx.textAlign = "center";

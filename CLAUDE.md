@@ -55,6 +55,7 @@ A game subclass supplies: `id` (class field, must match its entry in the `GAMES`
 - In-game UI is diegetic/no-HUD: no numbers except where the count IS the test (Harbor Crates). Feedback is glow, music, and spoken lines.
 - Calm night-harbor visual language; palette anchors: cream `#f4ecdd`, amber `#e8a86a`, sage `#9fc08a`, ink `#1b1b3a` (see DESIGN_BRIEF.md).
 - Patient-facing text is gentle and non-judgmental (misses are "soft"); it's aimed at an older stroke population.
+- **Gentle-pacing theme (applies to every page and interaction)**: users are older, with small, slow movements. Timings generous (long timeouts, no rush), capture radii forgiving, motion thresholds tremor-tolerant, speech unhurried (rate 0.9), text large, one thing asked at a time, flows linear with no dead ends. When tuning any threshold or delay, err on the slow/forgiving side.
 
 ### Persistence
 

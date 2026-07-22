@@ -177,7 +177,7 @@ export class GameBase {
     try {
       speechSynthesis.cancel();
       const u = new SpeechSynthesisUtterance(text);
-      u.rate = 0.95;
+      u.rate = 0.9;                      // unhurried, for an older audience
       speechSynthesis.speak(u);
     } catch { /* optional */ }
   }
