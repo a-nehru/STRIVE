@@ -1627,16 +1627,21 @@ function starShape(ctx, x, y, r, color) {
 }
 function crateShape(ctx, x, y, s, bright) {
   ctx.save();
-  // bright gold blocks: they must pop against the live camera feed
+  // vivid green blocks (like the physical BBT's colored blocks): high
+  // saturation + a dark outline stays visible on ANY camera background,
+  // bright room or dark — the carried block glows brighter still
   const g = ctx.createLinearGradient(x - s / 2, y - s / 2, x + s / 2, y + s / 2);
-  g.addColorStop(0, bright ? "#ffe9a8" : "#ffcf72"); g.addColorStop(1, bright ? "#f7b24e" : "#e8973f");
+  g.addColorStop(0, bright ? "#8ef07e" : "#5ed455"); g.addColorStop(1, bright ? "#3dbb45" : "#2e9e38");
   ctx.fillStyle = g;
-  ctx.shadowColor = bright ? "#ffd98a" : "rgba(232,168,106,0.7)";
-  ctx.shadowBlur = bright ? 26 : 14;
+  ctx.shadowColor = bright ? "rgba(120,240,110,0.95)" : "rgba(70,200,80,0.7)";
+  ctx.shadowBlur = bright ? 30 : 16;
   ctx.beginPath(); ctx.roundRect(x - s / 2, y - s / 2, s, s, 6); ctx.fill();
   ctx.shadowBlur = 0;
-  ctx.strokeStyle = "rgba(27,27,58,0.4)"; ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.moveTo(x - s / 2 + 4, y); ctx.lineTo(x + s / 2 - 4, y); ctx.stroke();
+  // dark outline + light top edge for contrast in both directions
+  ctx.strokeStyle = "rgba(15, 40, 20, 0.85)"; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.roundRect(x - s / 2, y - s / 2, s, s, 6); ctx.stroke();
+  ctx.strokeStyle = "rgba(255,255,255,0.55)"; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(x - s / 2 + 5, y - s / 2 + 3); ctx.lineTo(x + s / 2 - 5, y - s / 2 + 3); ctx.stroke();
   ctx.restore();
 }
 
