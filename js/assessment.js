@@ -3,31 +3,49 @@
 // (horizontal + vertical in one motion). Then 3 "squeeze to grab the light"
 // points on the traced circle record grasp + hold-stability.
 //
-// Measured: envelope[16] (max radial reach per direction, SW units),
-// arcMinDeg/arcMaxDeg (arm elevation vs trunk), path jitter (target-size
-// input), loop time (speed input), grasp/stability at 3 positions.
+// The backdrop is the real world: the mirrored camera feed with the tracked
+// skeleton drawn over the patient's own body, so the assessment reads as a
+// mirror, not an abstract game. It opens with a HAND CHOICE: two lights, one
+// per side — the patient holds the hand they want to assess on its light
+// (squeeze = instant, hold = fallback) and the whole assessment then runs for
+// that hand. The chosen arm is reported as profile.arm; main.js adopts it as
+// the session side.
+//
+// Measured: envelope[16] (max radial reach per direction, SW units; bins the
+// patient never reached stay at a conservative floor and `covered` records the
+// measured fraction), arcMinDeg/arcMaxDeg (arm elevation vs trunk), path
+// jitter (target-size input), loop time (speed input, from total swept angle
+// so boundary wobble can't inflate it), grasp/stability at 3 positions.
 // The grab is dwell-based (hold = ok) so everyone can complete it, but a real
 // hand-close (tracker.handClosed) during the hold is recorded as `squeeze` —
 // knowing whether the patient CAN grasp feeds game/goal selection.
+// Graceful-pause rule: tracking loss freezes every timer (trace window, grasp
+// timeout, dwell) so a blip never costs the patient anything; a relocation
+// (scooting/settling) re-baselines the frame instead of distorting geometry.
 
 import { Coach } from "./coach.js";
 import { audio } from "./audio.js";
-import { CENTER } from "./engine.js";
+import { CENTER, drawBody, drawVideoMirror } from "./engine.js";
 
 const BINS = 16;
 const TAU = Math.PI * 2;
 const binOf = th => Math.floor((((th % TAU) + TAU) % TAU) / TAU * BINS);
 
+const REC_R = 0.3;                       // min radius (SW) for a reach to count — low, so small envelopes still record
+const ENV_FLOOR = 0.45;                  // conservative floor for unmeasured/tiny bins (games need some space)
+const ENV_CAP = 2.6;
 const GRASP_ANGLES = [150, 90, 30];      // degrees, y-up: upper-left, top, upper-right
 const GRASP_R = 0.32;                    // capture radius (SW)
 const GRASP_HOLD = 1600;                 // ms dwell = "grab" (v1 proxy for hand-close)
 const GRASP_TIMEOUT = 9000;
 
 export class Assessment {
-  constructor(tracker, canvas, side, coachSens) {
+  constructor(tracker, canvas, side, coachSens, opts = {}) {
     this.t = tracker;
     this.canvas = canvas;
-    this.side = side;
+    this.side = side;                  // provisional until the chooser picks
+    this.opts = opts;
+    this.coachSens = coachSens;
     this.coach = new Coach(tracker, side, coachSens);
     this.active = false;
   }
@@ -35,29 +53,41 @@ export class Assessment {
   start(onDone) {
     this.onDone = onDone;
     this.active = true;
-    this.state = "settle";
+    this.state = "choose";
     this.stateT = performance.now();
     this.still = null;
     this.prev = null;
+    this.badSince = null;
+    this.noHandSince = null;
+    this.noHandWarned = false;
+    this.chooseDwell = null;           // { side, since }
+    this.choosePrevClosed = { left: false, right: false };
 
-    this.envelope = new Array(BINS).fill(0.45);
+    this.envelope = new Array(BINS).fill(0);   // 0 = not yet measured
     this.visited = new Array(BINS).fill(0);
-    this.loops = 0;
+    this.covered = 0;
+    this.swept = 0;                            // total angle traced (wrap-safe)
+    this.prevTh = null;
     this.lastBin = null;
-    this.angMin = 180, this.angMax = 0;
+    this.lastProgress = null;
+    this.angMin = 180; this.angMax = 0;
     this.jitterSum = 0; this.jitterN = 0;
-    this.traceStart = null;
+    this.smoothR = null;
 
     this.graspIdx = 0;
-    this.grasp = [];            // {ok, stability}
+    this.grasp = [];            // {ok, stability, squeeze}
     this.dwell = null;
 
-    this._prompt("Hold your hand still", "Rest it comfortably in front of you");
-    this._speak("Hold your hand still, comfortably in front of you.");
+    this._prompt("Which hand shall we assess?", "Hold that hand on its light, and squeeze");
+    this._speak("Which hand shall we assess? Hold that hand on its light, and squeeze it.");
     this._loop();
   }
 
   stop() { this.active = false; this._prompt(""); try { speechSynthesis.cancel(); } catch {} }
+
+  _promptSettle() {
+    this._prompt(`Hold your ${this.side} hand still`, "Rest it comfortably in front of you");
+  }
 
   _prompt(main, sub = "") {
     const el = document.getElementById("prompt");
@@ -73,6 +103,78 @@ export class Assessment {
     } catch { /* optional */ }
   }
 
+  // a pause must cost the patient nothing: slide every active clock forward
+  _shiftTimers(gap) {
+    this.stateT += gap;
+    if (this.still != null) this.still += gap;
+    if (this.lastProgress != null) this.lastProgress += gap;
+    if (this.dwell) { this.dwell.start += gap; if (this.dwell.since != null) this.dwell.since += gap; }
+    if (this.chooseDwell) this.chooseDwell.since += gap;
+    this.prev = null;   // don't let the gap read as a huge hand speed
+  }
+
+  // ---------- hand choice (first step) ----------
+  // Two lights, one per side of the mirror. The hand that rests on its own
+  // light is the hand that gets assessed: a squeeze picks instantly, holding
+  // for 1.2 s is the fallback for patients who can't close that hand.
+  _chooseTick(ctx, c, now) {
+    const CHOOSE_HOLD = 1200;
+    const R = Math.max(56, c.height * 0.085);
+    const tiles = {
+      left: { x: c.width * 0.3, y: c.height * 0.45 },
+      right: { x: c.width * 0.7, y: c.height * 0.45 },
+    };
+    let hoverSide = null;
+    for (const s of ["left", "right"]) {
+      const hp = this.t.handPx(s, c);
+      const closed = this.t.handClosed(s);
+      const inside = hp && Math.hypot(hp.x - tiles[s].x, hp.y - tiles[s].y) < R * 1.25;
+      // squeeze edge while on the light = instant choice
+      if (inside && closed && !this.choosePrevClosed[s]) { this._chooseSide(s, now); return; }
+      this.choosePrevClosed[s] = closed;
+      if (inside) hoverSide = s;
+    }
+    if (hoverSide !== this.chooseDwell?.side) this.chooseDwell = hoverSide ? { side: hoverSide, since: now } : null;
+    if (this.chooseDwell && now - this.chooseDwell.since > CHOOSE_HOLD) { this._chooseSide(this.chooseDwell.side, now); return; }
+
+    // draw the two lights + labels + dwell progress
+    for (const s of ["left", "right"]) {
+      const t = tiles[s];
+      const hover = this.chooseDwell?.side === s;
+      const pulse = Math.sin(now / 500 + (s === "left" ? 0 : 1.5)) * 0.5 + 0.5;
+      const og = ctx.createRadialGradient(t.x, t.y, 4, t.x, t.y, R);
+      og.addColorStop(0, "#fff6d8"); og.addColorStop(1, hover ? "#9fc08a" : "#e8a86a");
+      ctx.fillStyle = og;
+      ctx.globalAlpha = hover ? 0.95 : 0.7 + pulse * 0.15;
+      ctx.shadowColor = hover ? "rgba(159,192,138,0.9)" : "rgba(232,168,106,0.7)";
+      ctx.shadowBlur = 26 + pulse * 10;
+      ctx.beginPath(); ctx.arc(t.x, t.y, R * 0.55, 0, TAU); ctx.fill();
+      ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+      ctx.strokeStyle = "rgba(244,236,221,0.6)"; ctx.lineWidth = 3; ctx.setLineDash([8, 9]);
+      ctx.beginPath(); ctx.arc(t.x, t.y, R, 0, TAU); ctx.stroke();
+      ctx.setLineDash([]);
+      if (hover) {
+        const f = Math.min(1, (now - this.chooseDwell.since) / CHOOSE_HOLD);
+        ctx.strokeStyle = "#9fc08a"; ctx.lineWidth = 6;
+        ctx.beginPath(); ctx.arc(t.x, t.y, R + 10, -Math.PI / 2, -Math.PI / 2 + TAU * f); ctx.stroke();
+      }
+      ctx.fillStyle = "rgba(244,236,221,0.9)";
+      ctx.font = `800 ${Math.round(c.height * 0.034)}px Nunito, sans-serif`;
+      ctx.textAlign = "center";
+      ctx.fillText(s === "left" ? "Left hand" : "Right hand", t.x, t.y + R + 46);
+    }
+  }
+
+  _chooseSide(side, now) {
+    this.side = side;
+    this.coach = new Coach(this.t, side, this.coachSens);   // coach watches the chosen arm
+    audio.hit();
+    this.state = "settle"; this.stateT = now;
+    this.still = null; this.prev = null;
+    this._promptSettle();
+    this._speak(`${side === "left" ? "Left" : "Right"} hand. Hold it still, comfortably in front of you.`);
+  }
+
   _loop() {
     if (!this.active) return;
     requestAnimationFrame(() => this._loop());
@@ -80,19 +182,42 @@ export class Assessment {
     const ctx = this.canvas.getContext("2d");
     const c = this.canvas;
 
-    // dusk assessment backdrop (2a)
-    const g = ctx.createRadialGradient(c.width / 2, c.height * 0.42, 60, c.width / 2, c.height * 0.42, c.height);
-    g.addColorStop(0, "#3a3168"); g.addColorStop(0.55, "#20204a"); g.addColorStop(1, "#161636");
-    ctx.fillStyle = g; ctx.fillRect(0, 0, c.width, c.height);
+    // the real world behind the assessment: mirrored camera feed (soft ink
+    // veil) + the tracked skeleton, so the patient sees themselves moving
+    if (!drawVideoMirror(ctx, c, this.t)) {
+      const g = ctx.createRadialGradient(c.width / 2, c.height * 0.42, 60, c.width / 2, c.height * 0.42, c.height);
+      g.addColorStop(0, "#3a3168"); g.addColorStop(0.55, "#20204a"); g.addColorStop(1, "#161636");
+      ctx.fillStyle = g; ctx.fillRect(0, 0, c.width, c.height);
+    }
+    drawBody(ctx, c, this.t, { framed: !this.coach.dimming, hands: this.state === "choose" });
 
-    // sustained-loss pause only — brief blips never interrupt
-    if (!this.t.trackingOk) this.badSince ??= now; else this.badSince = null;
+    // sustained-loss pause only — brief blips never interrupt, and every
+    // pause freezes the clocks (graceful-pause rule)
+    if (!this.t.trackingOk) this.badSince ??= now;
+    else if (this.badSince) { this._shiftTimers(now - this.badSince); this.badSince = null; }
     const paused = this.badSince && now - this.badSince > 1200;
     document.getElementById("paused").classList.toggle("hidden", !paused);
     if (!this.t.trackingOk) return;
 
+    // scooting/settling in the chair: re-baseline instead of letting geometry drift
+    if (this.t.relocated()) this.t.setBaseline();
+
+    if (this.state === "choose") { this._chooseTick(ctx, c, now); return; }
+
     const hand = this.t.handRel(this.side);
-    if (!hand) return;
+    if (!hand) {
+      if (this.state === "settle") {
+        this.noHandSince ??= now;
+        if (now - this.noHandSince > 2500 && !this.noHandWarned) {
+          this.noHandWarned = true;
+          this._prompt(`Rest your ${this.side} hand in front of you`, `We can't see your ${this.side} hand yet`);
+          this._speak(`We can't see your ${this.side} hand yet. Bring it up in front of you.`);
+        }
+      }
+      return;
+    }
+    this.noHandSince = null;
+    if (this.noHandWarned) { this.noHandWarned = false; if (this.state === "settle") this._promptSettle(); }
 
     let speed = 0;
     if (this.prev) {
@@ -129,8 +254,8 @@ export class Assessment {
         }
         if (now - this.stateT >= 3000) {
           audio.serveTick(true);
-          this.traceStart = now;
           this.state = "trace"; this.stateT = now;
+          this.lastProgress = now;
           this.halfSaid = false;
           this._prompt("Draw the biggest circle you can", "Follow the glowing firefly, big and slow");
           this._speak("Now draw the biggest circle you can. Follow the glowing firefly. Big and slow.");
@@ -138,23 +263,37 @@ export class Assessment {
         break;
       }
       case "trace": {
-        const r = Math.hypot(hand.x - CENTER.x, hand.y - CENTER.y);
-        const th = Math.atan2(hand.y - CENTER.y, hand.x - CENTER.x);
-        const bin = binOf(th);
-        if (r > 0.5) {
-          this.envelope[bin] = Math.max(this.envelope[bin], Math.min(r, 2.6));
-          if (this.lastBin !== null && bin !== this.lastBin) {
-            this.visited[bin]++;
-            if (bin === 0 && this.lastBin === BINS - 1) this.loops++;
-            if (bin === BINS - 1 && this.lastBin === 0) this.loops++;
+        const dxc = hand.x - CENTER.x, dyc = hand.y - CENTER.y;
+        const r = Math.hypot(dxc, dyc);
+        const th = Math.atan2(dyc, dxc);
+        if (r > REC_R) {
+          const bin = binOf(th);
+          const rr = Math.min(r, ENV_CAP);
+          if (rr > this.envelope[bin] + 0.02) this.lastProgress = now;   // reach still growing
+          this.envelope[bin] = Math.max(this.envelope[bin], rr);
+          if (bin !== this.lastBin) {
+            if (this.lastBin !== null) {
+              if (this.visited[bin] < 2) this.lastProgress = now;        // new ground covered
+              this.visited[bin]++;
+            }
+            this.lastBin = bin;
           }
-          this.lastBin = bin;
+          // total swept angle (wrap-safe): honest loop counting — wobbling on
+          // a bin boundary can't inflate it the way crossing-counts could
+          if (this.prevTh != null) {
+            let d = th - this.prevTh;
+            if (d > Math.PI) d -= TAU; else if (d < -Math.PI) d += TAU;
+            this.swept += Math.abs(d);
+          }
+          this.prevTh = th;
           const a = this.t.armAngle(this.side);
           if (a != null) { this.angMin = Math.min(this.angMin, a); this.angMax = Math.max(this.angMax, a); }
           // jitter: radial noise vs a short smoothed radius
           if (this.smoothR == null) this.smoothR = r;
           this.smoothR += (r - this.smoothR) * 0.15;
           this.jitterSum += Math.abs(r - this.smoothR); this.jitterN++;
+        } else {
+          this.prevTh = null;   // near center the angle is meaningless — don't sweep across it
         }
         const covered = this.visited.filter(v => v >= 2).length;
         if (!this.halfSaid && covered >= BINS / 2) {
@@ -162,14 +301,13 @@ export class Assessment {
           this._prompt("Halfway there!", "Keep circling, nice and big");
           this._speak("Halfway there. Keep circling.");
         }
-        const done = (covered >= BINS - 2 && now - this.stateT > 10000) || now - this.stateT > 40000;
-        if (done) {
-          this.loopSeconds = Math.min(20, (now - this.stateT) / 1000 / Math.max(1, this.loops));
-          this.state = "grasp-move"; this.stateT = now;
-          audio.fanfare();
-          this._prompt("Beautiful!", "Now squeeze to grab the light");
-          this._speak("Beautiful! Now hold your hand on each light, and squeeze it if you can.");
-        }
+        // done when the circle is covered — or when reach stops growing for a
+        // while (a partial circle IS a complete measurement of a limited
+        // range; nobody should circle against a wall for the full 40 s)
+        const t = now - this.stateT;
+        const full = covered >= BINS - 2 && t > 10000;
+        const stalled = t > 12000 && now - this.lastProgress > 6000;
+        if (full || stalled || t > 40000) this._finishTrace(now);
         break;
       }
       case "grasp-move": {   // brief pause, then present the next grasp orb
@@ -178,7 +316,8 @@ export class Assessment {
           this.orb = this._orbPos(this.graspIdx);
           this.dwell = { since: null, samples: [], start: now };
           this.state = "grasp"; this.stateT = now;
-          this._prompt("Reach to the light and hold", "Squeeze gently if you can, like catching a firefly");
+          this._prompt(this.graspIdx ? "Reach to the next light and hold" : "Reach to the light and hold",
+            "Squeeze gently if you can, like catching a firefly");
         }
         break;
       }
@@ -201,16 +340,31 @@ export class Assessment {
           }
         } else {
           this.dwell.since = null;
+          this.dwell.samples = [];   // stability scores the successful hold only, not earlier approaches
         }
         if (now - this.dwell.start > GRASP_TIMEOUT) {
           this.grasp.push({ ok: false, stability: 0, squeeze: !!this.dwell.squeezed });
           this.graspIdx++;
           audio.miss();
+          if (this.graspIdx < GRASP_ANGLES.length) this._speak("That's okay. On to the next light.");
           this.state = "grasp-move"; this.stateT = now;
         }
         break;
       }
     }
+  }
+
+  _finishTrace(now) {
+    // honest coverage: record how much of the circle was actually measured;
+    // unreached directions get the conservative floor, never a fabricated reach
+    this.covered = this.envelope.filter(v => v > 0).length / BINS;
+    for (let i = 0; i < BINS; i++) this.envelope[i] = Math.max(this.envelope[i], ENV_FLOOR);
+    const loops = this.swept / TAU;
+    this.loopSeconds = Math.min(20, (now - this.stateT) / 1000 / Math.max(1, loops));
+    this.state = "grasp-move"; this.stateT = now;
+    audio.fanfare();
+    this._prompt("Beautiful!", "Now squeeze to grab the light");
+    this._speak("Beautiful! Now hold your hand on each light, and squeeze it if you can.");
   }
 
   _orbPos(i) {
@@ -223,12 +377,20 @@ export class Assessment {
   _finish() {
     this.active = false;
     this._prompt("");
+    this._speak("All done. Wonderful work.");
+    // arc guard: if the arm angle was never sampled the min/max are still at
+    // their sentinels — export a safe default arc instead of nonsense
+    let arcMin = Math.round(this.angMin), arcMax = Math.round(this.angMax);
+    const arcMeasured = this.angMax > this.angMin;
+    if (!arcMeasured) { arcMin = 20; arcMax = 100; }
     const profile = {
       arm: this.side,
       date: new Date().toISOString(),
       envelope: this.envelope.map(v => Math.round(v * 1000) / 1000),
-      arcMinDeg: Math.round(this.angMin),
-      arcMaxDeg: Math.round(this.angMax),
+      covered: Math.round(this.covered * 100) / 100,
+      arcMinDeg: arcMin,
+      arcMaxDeg: arcMax,
+      arcMeasured,
       jitter: this.jitterN ? this.jitterSum / this.jitterN : 0.1,
       loopSeconds: this.loopSeconds ?? 12,
       grasp: this.grasp.map((g, i) => ({ deg: GRASP_ANGLES[i], ok: g.ok, stability: Math.round(g.stability * 100) / 100, squeeze: !!g.squeeze })),
@@ -240,14 +402,6 @@ export class Assessment {
   // ---------- drawing ----------
   _draw(ctx, c, hand, now) {
     const sw = this.t.pxPerSW(c);
-
-    // ambient stars
-    ctx.fillStyle = "rgba(255,255,255,0.8)";
-    for (const [fx, fy, ph] of [[0.1, 0.12, 0], [0.86, 0.16, 1.3], [0.5, 0.07, 2.1], [0.7, 0.2, 3]]) {
-      ctx.globalAlpha = 0.25 + 0.5 * (Math.sin(now / 900 + ph) * 0.5 + 0.5);
-      ctx.beginPath(); ctx.arc(c.width * fx, c.height * fy, 2.6, 0, TAU); ctx.fill();
-    }
-    ctx.globalAlpha = 1;
 
     if (this.state !== "settle") {
       // guide circle (dashed)
@@ -299,7 +453,8 @@ export class Assessment {
       }
       ctx.restore();
 
-      // painted ROM shape (amber, glowing) through envelope points
+      // painted ROM shape (amber, glowing) through envelope points — grows
+      // outward from the center as the patient traces each direction
       ctx.save();
       ctx.strokeStyle = "rgba(232,168,106,0.75)"; ctx.lineWidth = 7;
       ctx.shadowColor = "rgba(232,168,106,0.6)"; ctx.shadowBlur = 26;

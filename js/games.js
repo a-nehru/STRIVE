@@ -5,7 +5,7 @@
 //  - targets only inside the assessed envelope × rangeScale, clamped on-screen
 // "Grab" is dwell-based in v1 (hand-close detection is the M3 upgrade).
 
-import { GameBase, TAU, CENTER } from "./engine.js";
+import { GameBase, TAU, CENTER, drawBody, drawVideoMirror } from "./engine.js";
 import { audio } from "./audio.js";
 import { songById } from "./songs.js";
 
@@ -1062,38 +1062,46 @@ function hexA(hex, a) {
   return `rgba(${r},${g},${b},${a})`;
 }
 
-/* ==================== G7 Harbor Crates — virtual Box & Block Test ==================== */
-// One crate at a time: SQUEEZE (close the hand) on the crate to grab, carry
-// ACROSS the midline, OPEN the hand on the far side to release. Opening early
-// drops the crate where it is — pick it up again. 60 s; the stack on the far
-// side IS the score — classic BBT count.
+/* ==================== G7 Harbor Crates — AR Box & Block Test ==================== */
+// Played over the live mirrored camera feed (AR): the patient sees their own
+// body carrying virtual blocks, like the real bench test. One crate at a time
+// starts low on the trained-arm side; SQUEEZE (close the hand) on the crate to
+// grab, lift it OVER the barrier partition in the middle (crossing below the
+// barrier top bumps the crate against the wall, exactly like the physical
+// test), OPEN the hand on the far side to release. Opening early drops the
+// crate where it is — pick it up again. 60 s; the stack on the far side IS
+// the score — classic BBT count.
 export class HarborCrates extends GameBase {
   id = "boxes";
   setup() {
     this.roundSeconds = 60;
     this.boxes = 0;
-    this.carried = false;
     this.sign = this.side === "right" ? 1 : -1;   // source on trained-arm side
+    // barrier top (rel y, SW above CENTER): the lift the carry must clear —
+    // range demand scales with the DDA like everything else
+    this.barrierY = 0.05 + 0.3 * this.params.rangeScale;
     this._newCrate();
     const wait = this.tellStory(STORIES.boxes);
     if (!wait) {
-      this._prompt("Carry the crates across", "Squeeze to grab, open your hand on the far side to drop");
+      this._prompt("Carry the crates across", "Squeeze to grab, lift it over the wall, open your hand to drop");
       setTimeout(() => this._prompt(""), 3200);
     }
     this.crate.born = performance.now() + wait;
   }
   extra() { return { boxes: this.boxes }; }
   _newCrate() {
-    // random spot in the source half, within the envelope
+    // like the real test, blocks start LOW on the source side (on the bench):
+    // sample the lower quadrant of the trained-arm half, inside the envelope
     for (let i = 0; i < 12; i++) {
-      const th = Math.random() * TAU;
+      const d = -75 + Math.random() * 90;                       // degrees below/near horizontal
+      const th = this.sign === 1 ? deg(d) : deg(180 - d);
       const pos = this.samplePos({ theta: th });
       if (Math.sign(pos.x || this.sign) === this.sign && Math.abs(pos.x) > 0.25) {
-        this.crate = { ...pos, state: "waiting", dwell: null, born: performance.now() };
+        this.crate = { ...pos, state: "waiting", born: performance.now() };
         return;
       }
     }
-    this.crate = { x: this.sign * 0.8, y: 0.2, state: "waiting", dwell: null, born: performance.now(), reachFrac: 0.6, isFar: false };
+    this.crate = { x: this.sign * 0.8, y: -0.2, state: "waiting", born: performance.now(), reachFrac: 0.6, isFar: false };
   }
   update(now) {
     const cr = this.crate;
@@ -1111,7 +1119,21 @@ export class HarborCrates extends GameBase {
       if (!near) cr.armed = false;
     } else {
       const h = this.t.handRel(this.side);
-      if (h) { cr.x = h.x; cr.y = h.y; }
+      if (h) {
+        // the partition is solid: crossing its plane below the barrier top is
+        // blocked — the crate bumps and presses against the wall until the
+        // patient lifts it over (both directions, like the physical wall)
+        const overTop = h.y > this.barrierY;
+        const crossingPlane = Math.sign(h.x || 1) !== Math.sign(cr.x || this.sign);
+        if (!overTop && crossingPlane) {
+          cr.x = Math.sign(cr.x || this.sign) * 0.05;
+          cr.y = Math.min(h.y, this.barrierY - 0.08);
+          if (!cr.bumped) { cr.bumped = true; audio.serveTick(false); }
+        } else {
+          cr.x = h.x; cr.y = h.y;
+          cr.bumped = false;
+        }
+      }
       if (!closed) {                     // open hand = release
         const crossed = Math.sign(cr.x) === -this.sign && Math.abs(cr.x) > 0.2;
         if (crossed) {
@@ -1123,23 +1145,32 @@ export class HarborCrates extends GameBase {
           // dropped early — the crate stays put; pick it up again (no penalty)
           cr.state = "waiting";
           cr.born = now;
+          cr.bumped = false;
           audio.miss();
         }
       }
     }
   }
   drawBg(ctx, c, now) {
-    const g = ctx.createLinearGradient(0, 0, 0, c.height);
-    g.addColorStop(0, "#26324e"); g.addColorStop(0.65, "#1d2740"); g.addColorStop(1, "#141b30");
-    ctx.fillStyle = g; ctx.fillRect(0, 0, c.width, c.height);
-    // midline divider — the "partition" of the BBT
-    const mid = this.toPx({ x: 0, y: 0 }).x;
-    ctx.strokeStyle = "rgba(244,236,221,0.35)";
-    ctx.lineWidth = 4; ctx.setLineDash([12, 12]);
-    ctx.beginPath(); ctx.moveTo(mid, c.height * 0.1); ctx.lineTo(mid, c.height * 0.95); ctx.stroke();
-    ctx.setLineDash([]);
+    // AR: the real world behind the test — mirrored camera feed + skeleton
+    if (!drawVideoMirror(ctx, c, this.t, 0.3)) {
+      const g = ctx.createLinearGradient(0, 0, 0, c.height);
+      g.addColorStop(0, "#26324e"); g.addColorStop(0.65, "#1d2740"); g.addColorStop(1, "#141b30");
+      ctx.fillStyle = g; ctx.fillRect(0, 0, c.width, c.height);
+    }
+    drawBody(ctx, c, this.t, { framed: !this.coach.dimming, hands: false });
+    // the barrier partition of the BBT: a solid wall rising from the bottom
+    // to the barrier top — carries must clear it
+    const wt = this.toPx({ x: 0, y: this.barrierY });
+    const w = 18;
+    const wg = ctx.createLinearGradient(wt.x - w, 0, wt.x + w, 0);
+    wg.addColorStop(0, "rgba(27,27,58,0.35)"); wg.addColorStop(0.5, "rgba(27,27,58,0.7)"); wg.addColorStop(1, "rgba(27,27,58,0.35)");
+    ctx.fillStyle = wg;
+    ctx.fillRect(wt.x - w / 2, wt.y, w, c.height - wt.y);
+    ctx.fillStyle = "rgba(244,236,221,0.85)";
+    ctx.beginPath(); ctx.roundRect(wt.x - w / 2 - 3, wt.y - 6, w + 6, 8, 4); ctx.fill();
     // delivered stack on the far deck (the diegetic count)
-    const deckX = mid - this.sign * c.width * 0.18;
+    const deckX = wt.x - this.sign * c.width * 0.18;
     for (let i = 0; i < this.boxes; i++) {
       const col = Math.floor(i / 5), row = i % 5;
       crateShape(ctx, deckX - this.sign * col * 44, c.height * 0.88 - row * 34, 36, false);
@@ -1172,14 +1203,18 @@ export class HarborCrates extends GameBase {
     }
     if (cr.state === "carried") {
       const crossed = Math.sign(cr.x) === -this.sign && Math.abs(cr.x) > 0.2;
-      if (crossed) hint("Open your hand ✋", p.y - this.params.radius * this.sw() - 16);
-      // arrow toward the delivery side
-      const mid = this.toPx({ x: 0, y: 0 }).x;
+      if (cr.bumped) hint("Lift it over the wall", p.y - this.params.radius * this.sw() - 16);
+      else if (crossed) hint("Open your hand ✋", p.y - this.params.radius * this.sw() - 16);
+      // guide arc up and over the wall toward the delivery side
+      const wt = this.toPx({ x: 0, y: this.barrierY });
       const dir = -this.sign;
       ctx.strokeStyle = "rgba(159,192,138,0.6)"; ctx.lineWidth = 4; ctx.lineCap = "round";
-      const ax = mid + dir * 60, ay = c.height * 0.14;
-      ctx.beginPath(); ctx.moveTo(mid - dir * 10, ay); ctx.lineTo(ax, ay); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(ax - dir * 14, ay - 9); ctx.moveTo(ax, ay); ctx.lineTo(ax - dir * 14, ay + 9); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(wt.x - dir * 70, wt.y - 20);
+      ctx.quadraticCurveTo(wt.x, wt.y - 90, wt.x + dir * 70, wt.y - 20);
+      ctx.stroke();
+      const ax = wt.x + dir * 70, ay = wt.y - 20;
+      ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(ax - dir * 6, ay - 15); ctx.moveTo(ax, ay); ctx.lineTo(ax - dir * 16, ay - 4); ctx.stroke();
     }
     this.drawTimerWhisper(ctx, c, now);
   }

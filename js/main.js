@@ -3,6 +3,7 @@ import { Assessment } from "./assessment.js";
 import { GAMES } from "./games.js";
 import { SONGS } from "./songs.js";
 import { initialParams, adjust } from "./dda.js";
+import { drawBody } from "./engine.js";
 import { store } from "./storage.js";
 import { audio } from "./audio.js";
 
@@ -66,58 +67,8 @@ function framingMessage(t) {
 }
 
 const TAU2 = Math.PI * 2;
-
-// live mirror: draw the tracked upper body + both hands so the patient SEES
-// what the camera sees (sage when framed well, amber while adjusting)
-function drawWelcomeBody(ctx, c, t, framed) {
-  const p = t.pts;
-  if (!p?.shL || !p?.shR) return;
-  const P = pt => t._videoToPx(pt.x, pt.y, c);
-  ctx.save();
-  ctx.lineCap = "round";
-  ctx.strokeStyle = framed ? "rgba(159,192,138,0.55)" : "rgba(232,168,106,0.5)";
-  ctx.lineWidth = 6;
-  const seg = (a, b) => { const A = P(a), B = P(b); ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(B.x, B.y); ctx.stroke(); };
-  seg(p.shL, p.shR);
-  const shMid = { x: (p.shL.x + p.shR.x) / 2, y: (p.shL.y + p.shR.y) / 2 };
-  if (p.hipL && p.hipR) {
-    seg(p.hipL, p.hipR);
-    seg(shMid, { x: (p.hipL.x + p.hipR.x) / 2, y: (p.hipL.y + p.hipR.y) / 2 });
-  }
-  for (const s of ["left", "right"]) {
-    const sh = t.shoulder(s), el = t.elbow(s), wr = t.wrist(s);
-    if (sh && el?.ok) {
-      seg(sh, el);
-      if (wr?.ok) {
-        seg(el, wr);
-        const pm = t.palm(s);
-        if (pm) seg(wr, pm);
-      }
-    }
-  }
-  const ear = p.earL && p.earR ? { x: (p.earL.x + p.earR.x) / 2, y: (p.earL.y + p.earR.y) / 2 } : (p.earL || p.earR);
-  if (ear) {
-    const E = P(ear);
-    ctx.beginPath(); ctx.arc(E.x, E.y, 0.34 * t.pxPerSW(c), 0, TAU2); ctx.stroke();
-  }
-  // hands: glowing dots, ring tightens and turns sage on a squeeze
-  for (const s of ["left", "right"]) {
-    const hp = t.handPx(s, c);
-    if (!hp) continue;
-    const closed = t.handClosed(s);
-    ctx.shadowColor = closed ? "rgba(159,192,138,0.9)" : "rgba(232,168,106,0.8)";
-    ctx.shadowBlur = closed ? 26 : 18;
-    ctx.fillStyle = closed ? "#9fc08a" : "#e8a86a";
-    ctx.beginPath(); ctx.arc(hp.x, hp.y, 11, 0, TAU2); ctx.fill();
-    ctx.shadowBlur = 0;
-    ctx.strokeStyle = closed ? "#9fc08a" : "rgba(244,236,221,0.55)";
-    ctx.lineWidth = closed ? 4 : 2.5;
-    if (!closed) ctx.setLineDash([6, 7]);
-    ctx.beginPath(); ctx.arc(hp.x, hp.y, closed ? 16 : 24, 0, TAU2); ctx.stroke();
-    ctx.setLineDash([]);
-  }
-  ctx.restore();
-}
+// (the live-mirror body drawing moved to engine.js drawBody — shared with the
+// assessment's camera view)
 
 function watchWelcome() {
   let raisedSince = null, closedSince = null, framedSince = null, squeezeSeen = false;
@@ -146,7 +97,7 @@ function watchWelcome() {
 
     const msg = framingMessage(t);
     const framed = !msg;
-    if (t.trackingOk) drawWelcomeBody(ctx, c, t, framed);
+    if (t.trackingOk) drawBody(ctx, c, t, { framed });
 
     if (msg) {
       framedSince = null; raisedSince = null; closedSince = null;
@@ -314,6 +265,8 @@ function renderPongModes() {
 }
 
 /* ================= assessment ================= */
+// The assessment opens with its own hand choice (two lights over the mirror);
+// the chosen arm becomes the session side and gets the full assessment.
 function startAssessment() {
   if (!state.tracker) return;
   show("stage");
@@ -323,7 +276,9 @@ function startAssessment() {
   a.start(profile => {
     audio.stopBgm();
     profile.params = initialParams(profile);
-    store.saveProfile(state.patient, state.side, profile);
+    state.side = profile.arm;               // the chooser's pick drives the session
+    $("in-arm").value = profile.arm;        // keep the staff drawer in sync
+    store.saveProfile(state.patient, profile.arm, profile);
     audio.fanfare();
     renderSelect();
     show("screen-select");

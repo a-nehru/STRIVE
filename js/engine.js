@@ -14,6 +14,82 @@ const BINS = 16;
 const MARGIN = 80;                 // px: no target may spawn closer to an edge
 const pickOne = arr => arr[Math.floor(Math.random() * arr.length)];
 
+// Live mirror body: the tracked upper body + both hands drawn so the patient
+// SEES what the camera sees. Shared by the welcome screen and the assessment.
+// opts.framed  — sage skeleton (settled) vs amber (still adjusting)
+// opts.hands   — pass false to skip the glowing hand dots (for screens that
+//                draw their own hand cursor)
+export function drawBody(ctx, c, t, opts = {}) {
+  const p = t.pts;
+  if (!p?.shL || !p?.shR) return;
+  const framed = opts.framed !== false;
+  const P = pt => t._videoToPx(pt.x, pt.y, c);
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.strokeStyle = framed ? "rgba(159,192,138,0.55)" : "rgba(232,168,106,0.5)";
+  ctx.lineWidth = 6;
+  const seg = (a, b) => { const A = P(a), B = P(b); ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(B.x, B.y); ctx.stroke(); };
+  seg(p.shL, p.shR);
+  const shMid = { x: (p.shL.x + p.shR.x) / 2, y: (p.shL.y + p.shR.y) / 2 };
+  if (p.hipL && p.hipR) {
+    seg(p.hipL, p.hipR);
+    seg(shMid, { x: (p.hipL.x + p.hipR.x) / 2, y: (p.hipL.y + p.hipR.y) / 2 });
+  }
+  for (const s of ["left", "right"]) {
+    const sh = t.shoulder(s), el = t.elbow(s), wr = t.wrist(s);
+    if (sh && el?.ok) {
+      seg(sh, el);
+      if (wr?.ok) {
+        seg(el, wr);
+        const pm = t.palm(s);
+        if (pm) seg(wr, pm);
+      }
+    }
+  }
+  const ear = p.earL && p.earR ? { x: (p.earL.x + p.earR.x) / 2, y: (p.earL.y + p.earR.y) / 2 } : (p.earL || p.earR);
+  if (ear) {
+    const E = P(ear);
+    ctx.beginPath(); ctx.arc(E.x, E.y, 0.34 * t.pxPerSW(c), 0, TAU); ctx.stroke();
+  }
+  // hands: glowing dots, ring tightens and turns sage on a squeeze
+  if (opts.hands !== false) {
+    for (const s of ["left", "right"]) {
+      const hp = t.handPx(s, c);
+      if (!hp) continue;
+      const closed = t.handClosed(s);
+      ctx.shadowColor = closed ? "rgba(159,192,138,0.9)" : "rgba(232,168,106,0.8)";
+      ctx.shadowBlur = closed ? 26 : 18;
+      ctx.fillStyle = closed ? "#9fc08a" : "#e8a86a";
+      ctx.beginPath(); ctx.arc(hp.x, hp.y, 11, 0, TAU); ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = closed ? "#9fc08a" : "rgba(244,236,221,0.55)";
+      ctx.lineWidth = closed ? 4 : 2.5;
+      if (!closed) ctx.setLineDash([6, 7]);
+      ctx.beginPath(); ctx.arc(hp.x, hp.y, closed ? 16 : 24, 0, TAU); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  }
+  ctx.restore();
+}
+
+// Mirrored camera feed, cover-fit to the canvas exactly like _videoToPx maps
+// coordinates, so overlays land on the real body. Returns false if the video
+// has no frame yet (caller keeps its painted backdrop as the fallback).
+export function drawVideoMirror(ctx, c, t, tint = 0.38) {
+  const v = t.video;
+  if (!v || v.readyState < 2) return false;
+  const scale = Math.max(c.width / v.videoWidth, c.height / v.videoHeight);
+  const dw = v.videoWidth * scale, dh = v.videoHeight * scale;
+  const dx = (c.width - dw) / 2, dy = (c.height - dh) / 2;
+  ctx.save();
+  ctx.translate(c.width, 0); ctx.scale(-1, 1);
+  ctx.drawImage(v, dx, dy, dw, dh);   // centered, so the mirrored x equals dx
+  ctx.restore();
+  // soft ink veil so the glowing overlays stay readable on the video
+  if (tint > 0) { ctx.fillStyle = `rgba(22,22,54,${tint})`; ctx.fillRect(0, 0, c.width, c.height); }
+  return true;
+}
+
 export class GameBase {
   constructor(tracker, canvas, side, profile, params, opts = {}) {
     this.t = tracker;
