@@ -107,8 +107,8 @@ button { font-family: inherit; cursor: pointer; }
   box-shadow: 0 10px 34px rgba(10, 10, 30, 0.5);
   transition: transform 0.3s;
 }
-.gcard:hover, .gcard.dwelling { transform: translateY(-6px); }
-.gcard:focus-visible { outline: 3px solid var(--amber); outline-offset: 3px; }
+.gcard:hover, .gcard.dwelling, .gcard.kbd-focus { transform: translateY(-6px); }
+.gcard:focus-visible, .gcard.kbd-focus { outline: 3px solid var(--amber); outline-offset: 3px; }
 .gcard .art { position: absolute; inset: 0; }
 .gcard .title {
   position: absolute; left: 0; right: 0; bottom: 22px;
@@ -166,6 +166,9 @@ button { font-family: inherit; cursor: pointer; }
 }
 #btn-quit:hover { background: rgba(244,236,221,0.28); }
 
+/* keyboard menu navigation: arrow keys move this highlight, Enter selects */
+.kbd-focus { outline: 3px solid var(--amber); outline-offset: 3px; }
+
 /* ---------- floating hand cursor for menu dwell ---------- */
 #handcursor {
   position: fixed; width: 26px; height: 26px; border-radius: 50%;
@@ -192,8 +195,8 @@ button { font-family: inherit; cursor: pointer; }
 .rc-ask { margin-top: 24px; font-weight: 700; font-size: 17px; text-align: center; }
 .faces { display: flex; justify-content: center; gap: 24px; margin-top: 14px; }
 .face { background: none; border: none; text-align: center; transition: transform 0.25s; }
-.face:hover, .face.dwelling { transform: scale(1.12); }
-.face:focus-visible { outline: 3px solid var(--amber); border-radius: 14px; }
+.face:hover, .face.dwelling, .face.kbd-focus { transform: scale(1.12); }
+.face:focus-visible, .face.kbd-focus { outline: 3px solid var(--amber); border-radius: 14px; }
 .face .disc {
   width: 86px; height: 86px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center; margin: 0 auto;

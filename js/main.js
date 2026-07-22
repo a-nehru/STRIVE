@@ -71,7 +71,9 @@ const TAU2 = Math.PI * 2;
 // assessment's camera view)
 
 function watchWelcome() {
-  let raisedSince = null, closedSince = null, framedSince = null, squeezeSeen = false;
+  const raisedSince = { left: null, right: null }, closedSince = { left: null, right: null };
+  let framedSince = null, squeezeSeen = false;
+  const resetGesture = () => { raisedSince.left = raisedSince.right = null; closedSince.left = closedSince.right = null; };
   const head = document.querySelector("#screen-welcome .headline");
   const sub = document.querySelector("#screen-welcome .subline");
   const trackEl = $("welcome-track");
@@ -89,8 +91,8 @@ function watchWelcome() {
     const now = performance.now();
 
     // tracking + feature status (so staff can see the whole chain is alive)
-    if (t.handClosed(state.side)) squeezeSeen = true;
-    const handFresh = t._handPts(state.side) != null;
+    if (t.handClosed("left") || t.handClosed("right")) squeezeSeen = true;
+    const handFresh = t._handPts("left") != null || t._handPts("right") != null;
     setText(trackEl, t.trackingOk
       ? `Tracking: body ✓ · hand ${handFresh ? "✓" : "…"} · squeeze ${squeezeSeen ? "✓" : "… try closing your fist"}`
       : "Tracking: looking for you …");
@@ -100,7 +102,7 @@ function watchWelcome() {
     if (t.trackingOk) drawBody(ctx, c, t, { framed });
 
     if (msg) {
-      framedSince = null; raisedSince = null; closedSince = null;
+      framedSince = null; resetGesture();
       setText(head, "Let's get you settled");
       setText(sub, msg);
       return;
@@ -112,22 +114,35 @@ function watchWelcome() {
       return;
     }
     setText(head, "Ready when you are");
-    setText(sub, "Lift your hand and squeeze to begin");
+    setText(sub, "Lift the hand you want to train, and squeeze to begin");
 
-    // start gesture: lift + squeeze (fast), or just hold the hand up (fallback)
-    const rel = t.handRel(state.side);
-    let prog = 0;
-    if (rel && rel.y > 0.15) {
-      raisedSince ??= now;
-      if (t.handClosed(state.side)) closedSince ??= now; else closedSince = null;
-      prog = Math.max((now - raisedSince) / 3500, closedSince ? (now - closedSince) / 700 : 0);
-      const hp = t.handPx(state.side, c);
-      if (hp) {
-        ctx.strokeStyle = "#fff2c2"; ctx.lineWidth = 5;
-        ctx.beginPath(); ctx.arc(hp.x, hp.y, 32, -Math.PI / 2, -Math.PI / 2 + TAU2 * Math.min(1, prog)); ctx.stroke();
-      }
-      if (prog >= 1) { raisedSince = null; closedSince = null; enterSelect(); }
-    } else { raisedSince = null; closedSince = null; }
+    // start gesture doubles as the LEFT/RIGHT choice: whichever hand is
+    // lifted + squeezed (fast) or just held up (fallback) becomes the
+    // session side — its label shows by the progress ring
+    for (const s of ["left", "right"]) {
+      const rel = t.handRel(s);
+      if (rel && rel.y > 0.15) {
+        raisedSince[s] ??= now;
+        if (t.handClosed(s)) closedSince[s] ??= now; else closedSince[s] = null;
+        const prog = Math.max((now - raisedSince[s]) / 3500, closedSince[s] ? (now - closedSince[s]) / 700 : 0);
+        const hp = t.handPx(s, c);
+        if (hp) {
+          ctx.strokeStyle = "#fff2c2"; ctx.lineWidth = 5;
+          ctx.beginPath(); ctx.arc(hp.x, hp.y, 32, -Math.PI / 2, -Math.PI / 2 + TAU2 * Math.min(1, prog)); ctx.stroke();
+          ctx.fillStyle = "rgba(244,236,221,0.9)";
+          ctx.font = `800 ${Math.round(c.height * 0.026)}px Nunito, sans-serif`;
+          ctx.textAlign = "center";
+          ctx.fillText(s === "left" ? "Left hand" : "Right hand", hp.x, hp.y - 48);
+        }
+        if (prog >= 1) {
+          resetGesture();
+          state.side = s;                 // the lifted hand is the trained hand
+          $("in-arm").value = s;          // keep the staff drawer in sync
+          enterSelect();
+          return;
+        }
+      } else { raisedSince[s] = null; closedSince[s] = null; }
+    }
   }
   loop();
   $("screen-welcome").addEventListener("click", enterSelect);
@@ -676,58 +691,31 @@ $("btn-quit").addEventListener("click", () => {
   show("screen-select");
 });
 
-/* ================= hand-cursor dwell for menus ================= */
-const DWELL_MS = 1400;
-let dwellEl = null, dwellSince = 0, dwellWasClosed = false;
-function dwellLoop() {
-  requestAnimationFrame(dwellLoop);
-  const cursor = $("handcursor");
-  const menuScreen = ["screen-select", "screen-between", "screen-collections"].includes(state.screen);
-  if (!menuScreen || !state.tracker?.trackingOk) { cursor.classList.add("hidden"); dwellEl = null; dwellWasClosed = false; return; }
-
-  const p = store.getPatient(state.patient);
-  cursor.classList.toggle("comet", p.equippedCursor === "comet");
-  const pos = state.tracker.handPx(state.side, { width: innerWidth, height: innerHeight });
-  if (!pos) { cursor.classList.add("hidden"); return; }
-  cursor.classList.remove("hidden");
-  cursor.style.left = pos.x + "px";
-  cursor.style.top = pos.y + "px";
-  const closed = state.tracker.handClosed(state.side);
-  cursor.classList.toggle("grasping", closed);
-
-  const el = document.elementFromPoint(pos.x, pos.y)?.closest("[data-dwell]");
-  if (el !== dwellEl) {
-    dwellEl?.classList.remove("dwelling");
-    dwellEl?.querySelector?.(".dwell-fill")?.style.setProperty("transform", "scaleY(0)");
-    dwellEl = el;
-    dwellSince = performance.now();
-  }
-  // squeeze on a card = choose it right away (dwell remains the fallback)
-  if (dwellEl && closed && !dwellWasClosed) {
-    const target = dwellEl;
-    dwellEl = null;
-    dwellWasClosed = closed;
-    target.classList.remove("dwelling");
-    target.querySelector?.(".dwell-fill")?.style.setProperty("transform", "scaleY(0)");
-    target.click();
-    return;
-  }
-  dwellWasClosed = closed;
-  if (dwellEl) {
-    const f = Math.min(1, (performance.now() - dwellSince) / DWELL_MS);
-    dwellEl.classList.add("dwelling");
-    const fill = dwellEl.querySelector(".dwell-fill");
-    if (fill) { fill.style.transition = "none"; fill.style.transform = `scaleY(${f})`; }
-    if (f >= 1) {
-      const target = dwellEl;
-      dwellEl = null;
-      target.classList.remove("dwelling");
-      target.click();
-    }
-  }
+/* ================= menu keyboard navigation ================= */
+// Menus are mouse + keyboard driven (hand-cursor dwell selection removed by
+// request): arrow keys move the highlight through the [data-dwell] elements
+// of the current menu screen, Enter or Space selects, mouse clicks work as
+// always. Right/Down = next, Left/Up = previous, wrapping around.
+function kbdTargets() {
+  return [...$(state.screen).querySelectorAll("[data-dwell]")]
+    .filter(el => el.offsetParent !== null);   // visible only
 }
+addEventListener("keydown", e => {
+  if (!["screen-select", "screen-between", "screen-collections"].includes(state.screen)) return;
+  const els = kbdTargets();
+  if (!els.length) return;
+  const cur = els.findIndex(el => el.classList.contains("kbd-focus"));
+  let nx;
+  if (e.key === "ArrowRight" || e.key === "ArrowDown") nx = (cur + 1) % els.length;
+  else if (e.key === "ArrowLeft" || e.key === "ArrowUp") nx = cur <= 0 ? els.length - 1 : cur - 1;
+  else if ((e.key === "Enter" || e.key === " ") && cur >= 0) { e.preventDefault(); els[cur].click(); return; }
+  else return;
+  e.preventDefault();
+  els.forEach(el => el.classList.remove("kbd-focus"));
+  els[nx].classList.add("kbd-focus");
+  els[nx].scrollIntoView?.({ block: "nearest" });
+});
 
 /* ================= boot ================= */
 show("screen-welcome");
 boot().then(watchWelcome);
-dwellLoop();

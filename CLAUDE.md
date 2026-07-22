@@ -50,8 +50,8 @@ A game subclass supplies: `id` (class field, must match its entry in the `GAMES`
 
 ### UI conventions
 
-- Menus are operable without a mouse: elements with `data-dwell="1"` are clicked by **squeezing** (hand-close edge, instant) or by holding the hand cursor over them for 1.4 s (`dwellLoop` in `main.js`). The grasp click needs a fresh open→close, so a held fist can't chain-select across screens.
-- The welcome screen is a setup gate (`watchWelcome` in `main.js`): it draws a live skeleton mirror on `#welcome-canvas` (amber → sage when framed), shows a tracking/feature status line, guides the patient to sit centered at the right distance (`framingMessage`), and starts on lift+squeeze (fast), lift-hold (fallback), the Start button, or a click.
+- Menus are **mouse + keyboard** driven (hand-cursor dwell/squeeze selection was removed by request): arrow keys move a `.kbd-focus` highlight through the `data-dwell="1"` elements of the current menu screen, Enter/Space selects (keydown handler at the bottom of `main.js`). `data-dwell` now just marks keyboard-navigable elements.
+- The welcome screen is a setup gate (`watchWelcome` in `main.js`): it draws a live skeleton mirror on `#welcome-canvas` (amber → sage when framed), shows a tracking/feature status line, guides the patient to sit centered at the right distance (`framingMessage`), and starts on lift+squeeze (fast), lift-hold (fallback), the Start button, or a click. Both hands are watched: **the lifted hand chooses the session side** (`state.side`, synced to the drawer's arm select); the button/click paths keep the current side.
 - In-game UI is diegetic/no-HUD: no numbers except where the count IS the test (Harbor Crates). Feedback is glow, music, and spoken lines.
 - Calm night-harbor visual language; palette anchors: cream `#f4ecdd`, amber `#e8a86a`, sage `#9fc08a`, ink `#1b1b3a` (see DESIGN_BRIEF.md).
 - Patient-facing text is gentle and non-judgmental (misses are "soft"); it's aimed at an older stroke population.
