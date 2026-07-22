@@ -59,4 +59,4 @@ A game subclass supplies: `id` (class field, must match its entry in the `GAMES`
 
 ### Persistence
 
-`storage.js`: single localStorage key `rehabsuite-v1`, per-patient records (per-arm profiles + assessment history, session rounds capped at 400, stars/unlocks, fatigue answers). Round records are appended by `main.js#onRoundEnd`; the therapist profile screen and JSON export read from here. Bump/migrate carefully — clinician data lives only in the browser.
+`storage.js`: single localStorage key `rehabsuite-v1`, per-patient records (per-arm profiles + assessment history, session rounds capped at 400, stars/unlocks, fatigue answers, `shoulderCm` = therapist tape-measured shoulder width entered once in the staff drawer — everything internal stays in SW units; `SW × shoulderCm` converts to real cm for the profile screen and export). Round records are appended by `main.js#onRoundEnd`; the therapist profile screen and JSON export read from here. Bump/migrate carefully — clinician data lives only in the browser.

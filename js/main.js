@@ -559,11 +559,19 @@ function renderProfile() {
     <text x="350" y="226" font-size="12" font-weight="700" fill="rgba(27,27,58,.55)" font-family="Nunito">180°</text>`;
   $("prof-arc").innerHTML = svg;
 
+  // real-world reach: SW × therapist-measured shoulder width (staff drawer)
+  const maxEnv = prof ? Math.max(...prof.envelope) : null;
+  const reachLg = maxEnv
+    ? `<div class="lg"><span class="dot" style="background:#9fc08a"></span>Longest reach
+         <span class="val" style="color:#4a7a3a;margin-left:6px">${p.shoulderCm
+           ? Math.round(maxEnv * p.shoulderCm) + " cm"
+           : maxEnv.toFixed(2) + " SW <small style='font-weight:600;opacity:.7'>(set shoulder cm in Staff for cm)</small>"}</span></div>`
+    : "";
   $("prof-arc-legend").innerHTML =
     `<div class="lg"><span class="dot" style="background:#e8a86a"></span>Trained (${state.side[0].toUpperCase()})
        <span class="val" style="color:#c77f4a;margin-left:6px">${prof ? prof.arcMinDeg + "°–" + prof.arcMaxDeg + "°" : "—"}</span></div>
      <div class="lg"><span class="dot" style="background:rgba(27,27,58,.35)"></span>Other (${other[0].toUpperCase()})
-       <span class="val" style="color:rgba(27,27,58,.6);margin-left:6px">${oProf ? oProf.arcMinDeg + "°–" + oProf.arcMaxDeg + "°" : "—"}</span></div>`;
+       <span class="val" style="color:rgba(27,27,58,.6);margin-left:6px">${oProf ? oProf.arcMinDeg + "°–" + oProf.arcMaxDeg + "°" : "—"}</span></div>` + reachLg;
 
   // --- grasp map ---
   let gsvg = `<path d="${arcPath(200, 212, 150, prof ? prof.arcMinDeg : 20, prof ? prof.arcMaxDeg : 160)}" fill="none" stroke="rgba(232,168,106,.5)" stroke-width="4"/>`;
@@ -644,6 +652,7 @@ function updateDrawer() {
     const disabled = GAMES.find(g => g.id === d.dataset.for)?.disabled;
     d.classList.toggle("hidden", disabled || (!!active && d.dataset.for !== active));
   });
+  $("in-shoulder").value = store.getPatient(state.patient).shoulderCm ?? "";
 }
 $("btn-staff").addEventListener("click", () => { updateDrawer(); $("drawer").classList.toggle("hidden"); });
 
@@ -665,7 +674,11 @@ setInterval(() => {
   $("camstate").className = "ok";
 }, 250);
 $("btn-drawer-close").addEventListener("click", () => $("drawer").classList.add("hidden"));
-$("in-patient").addEventListener("input", e => { state.patient = (e.target.value || "guest").trim(); });
+$("in-patient").addEventListener("input", e => {
+  state.patient = (e.target.value || "guest").trim();
+  $("in-shoulder").value = store.getPatient(state.patient).shoulderCm ?? "";
+});
+$("in-shoulder").addEventListener("change", e => store.setShoulderCm(state.patient, parseFloat(e.target.value)));
 $("in-arm").addEventListener("change", e => { state.side = e.target.value; });
 $("in-coach").addEventListener("change", e => { state.coachSens = e.target.value; });
 $("in-pong").addEventListener("change", e => { state.pongMode = e.target.value; });

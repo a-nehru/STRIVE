@@ -21,6 +21,7 @@ function patient(db, name) {
       lanterns: 0,
       unlocks: { cursor: ["firefly"], decor: [], creatures: [] },
       equippedCursor: "firefly",
+      shoulderCm: null,        // tape-measured biacromial width; converts SW units to cm
     };
   }
   return db.patients[name];
@@ -79,6 +80,15 @@ export const store = {
   equipCursor(name, id) {
     const db = load(); const p = patient(db, name);
     if (p.unlocks.cursor.includes(id)) { p.equippedCursor = id; save(db); }
+  },
+
+  // One-time real-world scale: therapist-measured shoulder width in cm.
+  // Everything internal stays in SW units; this only converts for display
+  // and export (SW × shoulderCm = cm).
+  setShoulderCm(name, cm) {
+    const db = load(); const p = patient(db, name);
+    p.shoulderCm = (cm && cm > 0) ? cm : null;
+    save(db);
   },
 
   // Pong skill progression: 1 = basic rally, 2 = +grip shot, 3 = +spin shot
