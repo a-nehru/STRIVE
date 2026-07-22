@@ -25,7 +25,7 @@
 
 import { Coach } from "./coach.js";
 import { audio } from "./audio.js";
-import { CENTER, drawBody, drawVideoMirror } from "./engine.js";
+import { CENTER, drawBody, drawHand, drawVideoMirror } from "./engine.js";
 
 const BINS = 16;
 const TAU = Math.PI * 2;
@@ -513,10 +513,13 @@ export class Assessment {
       }
     }
 
-    // firefly hand cursor + always-on grasp feedback: the ring closes with
-    // the hand (dashed & wide = open, snug sage & solid = squeezing)
+    // the assessed hand, drawn as a real hand: the 21-point skeleton curls
+    // and turns sage as it closes — intuitive grasp feedback. Fallback when
+    // the hand model has no detection: the classic firefly dot + ring
+    // (dashed & wide = open, snug sage & solid = squeezing)
+    const handDrawn = drawHand(ctx, c, this.t, this.side, { fallback: false });
     const hp = this.t.handPx(this.side, c);
-    if (hp) {
+    if (hp && !handDrawn) {
       const closed = this.t.handClosed(this.side);
       const fg = ctx.createRadialGradient(hp.x, hp.y, 2, hp.x, hp.y, 16);
       fg.addColorStop(0, "#fff2c2"); fg.addColorStop(1, closed ? "#9fc08a" : "#e8a86a");
@@ -530,6 +533,10 @@ export class Assessment {
       if (!closed) ctx.setLineDash([6, 7]);
       ctx.beginPath(); ctx.arc(hp.x, hp.y, closed ? 18 : 26, 0, TAU); ctx.stroke();
       ctx.setLineDash([]);
+    } else if (hp && handDrawn) {
+      // small cream point marking the exact interaction spot
+      ctx.fillStyle = "rgba(255,242,194,0.85)";
+      ctx.beginPath(); ctx.arc(hp.x, hp.y, 5, 0, TAU); ctx.fill();
     }
 
     // coach + world dim

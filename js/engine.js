@@ -51,25 +51,69 @@ export function drawBody(ctx, c, t, opts = {}) {
     const E = P(ear);
     ctx.beginPath(); ctx.arc(E.x, E.y, 0.34 * t.pxPerSW(c), 0, TAU); ctx.stroke();
   }
-  // hands: glowing dots, ring tightens and turns sage on a squeeze
+  // hands: real hand skeletons (glow-dot fallback inside drawHand)
   if (opts.hands !== false) {
-    for (const s of ["left", "right"]) {
-      const hp = t.handPx(s, c);
-      if (!hp) continue;
-      const closed = t.handClosed(s);
-      ctx.shadowColor = closed ? "rgba(159,192,138,0.9)" : "rgba(232,168,106,0.8)";
-      ctx.shadowBlur = closed ? 26 : 18;
-      ctx.fillStyle = closed ? "#9fc08a" : "#e8a86a";
-      ctx.beginPath(); ctx.arc(hp.x, hp.y, 11, 0, TAU); ctx.fill();
-      ctx.shadowBlur = 0;
-      ctx.strokeStyle = closed ? "#9fc08a" : "rgba(244,236,221,0.55)";
-      ctx.lineWidth = closed ? 4 : 2.5;
-      if (!closed) ctx.setLineDash([6, 7]);
-      ctx.beginPath(); ctx.arc(hp.x, hp.y, closed ? 16 : 24, 0, TAU); ctx.stroke();
-      ctx.setLineDash([]);
-    }
+    for (const s of ["left", "right"]) drawHand(ctx, c, t, s);
   }
   ctx.restore();
+}
+
+// Real hand rendering: the 21-point hand skeleton drawn over the patient's
+// actual hand — translucent palm web + five finger chains that visibly curl
+// and close as the hand does (amber open, sage closed). When the hand model
+// has no fresh detection, falls back to the classic glow dot + open/closed
+// ring (or nothing, with opts.fallback === false, for callers that draw
+// their own cursor). Returns true if a hand skeleton was drawn.
+const FINGER_CHAINS = [[0, 1, 2, 3, 4], [0, 5, 6, 7, 8], [0, 9, 10, 11, 12], [0, 13, 14, 15, 16], [0, 17, 18, 19, 20]];
+export function drawHand(ctx, c, t, side, opts = {}) {
+  const pts = t._handPts(side);
+  const closed = t.handClosed(side);
+  if (pts) {
+    const P = pts.map(p => t._videoToPx(p.x, p.y, c));
+    const palmW = Math.hypot(P[5].x - P[17].x, P[5].y - P[17].y);
+    const lw = Math.max(3, palmW * 0.16);
+    ctx.save();
+    ctx.lineCap = "round"; ctx.lineJoin = "round";
+    ctx.shadowColor = closed ? "rgba(159,192,138,0.8)" : "rgba(232,168,106,0.7)";
+    ctx.shadowBlur = 14;
+    // palm web
+    ctx.fillStyle = closed ? "rgba(159,192,138,0.3)" : "rgba(232,168,106,0.26)";
+    ctx.beginPath();
+    [0, 1, 5, 9, 13, 17].forEach((idx, i) => { const p = P[idx]; i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y); });
+    ctx.closePath(); ctx.fill();
+    // fingers
+    ctx.strokeStyle = closed ? "#9fc08a" : "#e8a86a";
+    ctx.lineWidth = lw;
+    for (const chain of FINGER_CHAINS) {
+      ctx.beginPath();
+      chain.forEach((idx, i) => { const p = P[idx]; i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y); });
+      ctx.stroke();
+    }
+    // fingertips
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = "#fff6d8";
+    for (const idx of [4, 8, 12, 16, 20]) {
+      ctx.beginPath(); ctx.arc(P[idx].x, P[idx].y, lw * 0.55, 0, TAU); ctx.fill();
+    }
+    ctx.restore();
+    return true;
+  }
+  if (opts.fallback === false) return false;
+  const hp = t.handPx(side, c);
+  if (!hp) return false;
+  ctx.save();
+  ctx.shadowColor = closed ? "rgba(159,192,138,0.9)" : "rgba(232,168,106,0.8)";
+  ctx.shadowBlur = closed ? 26 : 18;
+  ctx.fillStyle = closed ? "#9fc08a" : "#e8a86a";
+  ctx.beginPath(); ctx.arc(hp.x, hp.y, 11, 0, TAU); ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = closed ? "#9fc08a" : "rgba(244,236,221,0.55)";
+  ctx.lineWidth = closed ? 4 : 2.5;
+  if (!closed) ctx.setLineDash([6, 7]);
+  ctx.beginPath(); ctx.arc(hp.x, hp.y, closed ? 16 : 24, 0, TAU); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.restore();
+  return false;
 }
 
 // Mirrored camera feed, cover-fit to the canvas exactly like _videoToPx maps
@@ -373,20 +417,24 @@ export class GameBase {
         ctx.beginPath(); ctx.moveTo(ps.x, ps.y); ctx.lineTo(pe.x, pe.y); ctx.lineTo(pw.x, pw.y); ctx.stroke();
         ctx.restore();
       }
-      // palm: wrist → hand line, with a disc that fills while the hand is closed
-      const pm = this.t.palm(side);
-      if (wr?.ok && pm) {
-        const pw = P(wr), pp = P(pm);
-        ctx.save();
-        ctx.lineCap = "round";
-        ctx.strokeStyle = primary ? "rgba(255,246,216,0.5)" : "rgba(200,230,235,0.4)";
-        ctx.lineWidth = 3.5;
-        ctx.beginPath(); ctx.moveTo(pw.x, pw.y); ctx.lineTo(pp.x, pp.y); ctx.stroke();
-        ctx.lineWidth = 2.5;
-        ctx.beginPath(); ctx.arc(pp.x, pp.y, 7, 0, TAU);
-        if (this.t.handClosed(side)) { ctx.fillStyle = primary ? "#e8a86a" : "#9fc0c8"; ctx.fill(); }
-        else ctx.stroke();
-        ctx.restore();
+      // the real hand: 21-point skeleton that curls and closes live (KP
+      // feedback made literal); when unavailable, a wrist→palm line + disc
+      const handDrawn = drawHand(ctx, c, this.t, side, { fallback: false });
+      if (!handDrawn) {
+        const pm = this.t.palm(side);
+        if (wr?.ok && pm) {
+          const pw = P(wr), pp = P(pm);
+          ctx.save();
+          ctx.lineCap = "round";
+          ctx.strokeStyle = primary ? "rgba(255,246,216,0.5)" : "rgba(200,230,235,0.4)";
+          ctx.lineWidth = 3.5;
+          ctx.beginPath(); ctx.moveTo(pw.x, pw.y); ctx.lineTo(pp.x, pp.y); ctx.stroke();
+          ctx.lineWidth = 2.5;
+          ctx.beginPath(); ctx.arc(pp.x, pp.y, 7, 0, TAU);
+          if (this.t.handClosed(side)) { ctx.fillStyle = primary ? "#e8a86a" : "#9fc0c8"; ctx.fill(); }
+          else ctx.stroke();
+          ctx.restore();
+        }
       }
       const hp = this.t.handPx(side, c);
       if (!hp) continue;

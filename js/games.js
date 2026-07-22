@@ -1080,6 +1080,8 @@ export class HarborCrates extends GameBase {
     // barrier top (rel y, SW above CENTER): the lift the carry must clear —
     // range demand scales with the DDA like everything else
     this.barrierY = 0.05 + 0.3 * this.params.rangeScale;
+    // the bench the blocks, wall, and delivered stack all sit on (rel y)
+    this.benchY = -0.5;
     this._newCrate();
     const wait = this.tellStory(STORIES.boxes);
     if (!wait) {
@@ -1090,18 +1092,22 @@ export class HarborCrates extends GameBase {
   }
   extra() { return { boxes: this.boxes }; }
   _newCrate() {
-    // like the real test, blocks start LOW on the source side (on the bench):
-    // sample the lower quadrant of the trained-arm half, inside the envelope
+    // like the real test, blocks sit ON the bench on the trained-arm side:
+    // vary how far along the bench (reach demand), always inside the envelope
+    const y = this.benchY + 0.1;                                // block center resting on the bench
     for (let i = 0; i < 12; i++) {
-      const d = -75 + Math.random() * 90;                       // degrees below/near horizontal
-      const th = this.sign === 1 ? deg(d) : deg(180 - d);
-      const pos = this.samplePos({ theta: th });
-      if (Math.sign(pos.x || this.sign) === this.sign && Math.abs(pos.x) > 0.25) {
-        this.crate = { ...pos, state: "waiting", born: performance.now() };
+      const x = this.sign * (0.3 + Math.random() * 1.1);
+      const th = Math.atan2(y - CENTER.y, x - CENTER.x);
+      const env = this.envAt(th);
+      const r = Math.hypot(x - CENTER.x, y - CENTER.y);
+      const px = this.toPx({ x, y });
+      const onScreen = px.x > 80 && px.x < this.canvas.width - 80 && px.y > 80 && px.y < this.canvas.height - 60;
+      if (onScreen && r < 0.95 * this.params.rangeScale * env) {
+        this.crate = { x, y, state: "waiting", born: performance.now(), reachFrac: r / env, isFar: r > 0.7 * this.params.rangeScale * env };
         return;
       }
     }
-    this.crate = { x: this.sign * 0.8, y: -0.2, state: "waiting", born: performance.now(), reachFrac: 0.6, isFar: false };
+    this.crate = { x: this.sign * 0.35, y, state: "waiting", born: performance.now(), reachFrac: 0.5, isFar: false };
   }
   update(now) {
     const cr = this.crate;
@@ -1159,21 +1165,29 @@ export class HarborCrates extends GameBase {
       ctx.fillStyle = g; ctx.fillRect(0, 0, c.width, c.height);
     }
     drawBody(ctx, c, this.t, { framed: !this.coach.dimming, hands: false });
-    // the barrier partition of the BBT: a solid wall rising from the bottom
-    // to the barrier top — carries must clear it
+    // the bench: the platform blocks, wall, and stack all rest on (like the
+    // physical test's table) — translucent so the real world shows through
+    const bp = this.toPx({ x: 0, y: this.benchY });
+    const bh = Math.max(20, c.height * 0.03);
+    ctx.fillStyle = "rgba(122,92,62,0.5)";
+    ctx.beginPath(); ctx.roundRect(c.width * 0.05, bp.y, c.width * 0.9, bh, 10); ctx.fill();
+    ctx.fillStyle = "rgba(244,236,221,0.3)";
+    ctx.beginPath(); ctx.roundRect(c.width * 0.05, bp.y, c.width * 0.9, 5, 3); ctx.fill();
+    // the barrier partition of the BBT: a solid wall standing on the bench,
+    // up to the barrier top — carries must clear it
     const wt = this.toPx({ x: 0, y: this.barrierY });
     const w = 18;
     const wg = ctx.createLinearGradient(wt.x - w, 0, wt.x + w, 0);
     wg.addColorStop(0, "rgba(27,27,58,0.35)"); wg.addColorStop(0.5, "rgba(27,27,58,0.7)"); wg.addColorStop(1, "rgba(27,27,58,0.35)");
     ctx.fillStyle = wg;
-    ctx.fillRect(wt.x - w / 2, wt.y, w, c.height - wt.y);
+    ctx.fillRect(wt.x - w / 2, wt.y, w, bp.y - wt.y);
     ctx.fillStyle = "rgba(244,236,221,0.85)";
     ctx.beginPath(); ctx.roundRect(wt.x - w / 2 - 3, wt.y - 6, w + 6, 8, 4); ctx.fill();
-    // delivered stack on the far deck (the diegetic count)
+    // delivered stack ON the bench across the wall (the diegetic count)
     const deckX = wt.x - this.sign * c.width * 0.18;
     for (let i = 0; i < this.boxes; i++) {
       const col = Math.floor(i / 5), row = i % 5;
-      crateShape(ctx, deckX - this.sign * col * 44, c.height * 0.88 - row * 34, 36, false);
+      crateShape(ctx, deckX - this.sign * col * 44, bp.y - 20 - row * 34, 36, false);
     }
     // big friendly count on the far side (numbers allowed: it IS the test)
     ctx.fillStyle = "rgba(244,236,221,0.85)";
