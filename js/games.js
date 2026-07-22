@@ -1640,14 +1640,16 @@ function crateShape(ctx, x, y, s, bright) {
   ctx.restore();
 }
 
+// Focused set for now: Harbor Crates + Arc Pong + Echo Reach (plus the
+// circle assessment). The rest stay implemented but hidden via `disabled`.
 export const GAMES = [
-  { id: "constellations", name: "Constellations", cls: Constellations },
-  { id: "drift", name: "Drift", cls: Drift },
-  { id: "ember", name: "Ember Watch", cls: EmberWatch },
-  { id: "lantern", name: "Lantern Release", cls: LanternRelease },
+  { id: "constellations", name: "Constellations", cls: Constellations, disabled: true },
+  { id: "drift", name: "Drift", cls: Drift, disabled: true },
+  { id: "ember", name: "Ember Watch", cls: EmberWatch, disabled: true },
+  { id: "lantern", name: "Lantern Release", cls: LanternRelease, disabled: true },
   { id: "pong", name: "Arc Pong", cls: ArcPong },
-  { id: "rhythm", name: "Melody Tiles", cls: MelodyTiles, disabled: true },   // disabled for now
+  { id: "rhythm", name: "Melody Tiles", cls: MelodyTiles, disabled: true },
   { id: "boxes", name: "Harbor Crates", cls: HarborCrates },
-  { id: "compass", name: "Compass Rose", cls: CompassRose },
+  { id: "compass", name: "Compass Rose", cls: CompassRose, disabled: true },
   { id: "echo", name: "Echo Reach", cls: EchoReach },
 ];

@@ -21,6 +21,12 @@ const SLOW = 0.04, FAST = 0.35, HAND = 0.5;
 const GRIP_CLOSE = 0.28, GRIP_OPEN = 0.36;
 const GRIP_CAL_MIN_RANGE = 0.10;   // observed hi−lo needed to trust calibration
 const GRIP_CAL_DECAY = 0.0004;     // envelope forget rate per frame
+// hand-model curl calibration: fixed thresholds (~1.25 close / 1.55 open on
+// a ~1.0 fist … ~2.0 open scale) until the per-person envelope has seen
+// enough range — then "closed" means 35% into THEIR OWN range, so a hand
+// that can only partially close still registers its squeeze
+const CURL_CLOSE = 1.25, CURL_OPEN = 1.55;
+const CURL_CAL_MIN_RANGE = 0.35;
 
 export class Tracker {
   constructor() {
@@ -39,6 +45,7 @@ export class Tracker {
     this.baseline = null;      // round-start posture baseline
     this.gripClosed = { left: false, right: false };
     this.gripCal = { left: null, right: null };   // per-hand {lo, hi} envelope (pose fallback)
+    this.curlCal = { left: null, right: null };   // per-hand {lo, hi} envelope (hand model)
     // 21-point Hand Landmarker results, matched to pose wrists by proximity.
     // Grasp prefers these (real finger curl); pose fingertips are the fallback.
     this.hands = { left: null, right: null };     // { pts:[21 mirrored], at }
@@ -154,8 +161,16 @@ export class Tracker {
     for (const s of ["left", "right"]) {
       const curl = this.handCurl(s);
       if (curl != null) {
-        if (this.gripClosed[s]) { if (curl > 1.55) this.gripClosed[s] = false; }
-        else if (curl < 1.25) this.gripClosed[s] = true;
+        // self-calibrating per-person thresholds (see CURL_* above)
+        let ccal = this.curlCal[s];
+        if (!ccal) ccal = this.curlCal[s] = { lo: curl, hi: curl };
+        ccal.lo = Math.min(curl, ccal.lo + GRIP_CAL_DECAY);
+        ccal.hi = Math.max(curl, ccal.hi - GRIP_CAL_DECAY);
+        const crange = ccal.hi - ccal.lo;
+        const cclose = crange > CURL_CAL_MIN_RANGE ? ccal.lo + crange * 0.35 : CURL_CLOSE;
+        const copen = crange > CURL_CAL_MIN_RANGE ? ccal.lo + crange * 0.6 : CURL_OPEN;
+        if (this.gripClosed[s]) { if (curl > copen) this.gripClosed[s] = false; }
+        else if (curl < cclose) this.gripClosed[s] = true;
         continue;
       }
       const g = this.grip(s);
