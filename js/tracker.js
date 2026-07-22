@@ -161,14 +161,23 @@ export class Tracker {
     for (const s of ["left", "right"]) {
       const curl = this.handCurl(s);
       if (curl != null) {
-        // self-calibrating per-person thresholds (see CURL_* above)
+        // per-person thresholds: an explicit calibration (assessment's
+        // "open… squeeze" step, `set: true`) is trusted whatever its size —
+        // partial closers included; otherwise the passive envelope must see
+        // enough range before replacing the fixed defaults
         let ccal = this.curlCal[s];
         if (!ccal) ccal = this.curlCal[s] = { lo: curl, hi: curl };
-        ccal.lo = Math.min(curl, ccal.lo + GRIP_CAL_DECAY);
-        ccal.hi = Math.max(curl, ccal.hi - GRIP_CAL_DECAY);
+        if (ccal.set) {
+          ccal.lo = Math.min(ccal.lo, curl);
+          ccal.hi = Math.max(ccal.hi, curl);
+        } else {
+          ccal.lo = Math.min(curl, ccal.lo + GRIP_CAL_DECAY);
+          ccal.hi = Math.max(curl, ccal.hi - GRIP_CAL_DECAY);
+        }
         const crange = ccal.hi - ccal.lo;
-        const cclose = crange > CURL_CAL_MIN_RANGE ? ccal.lo + crange * 0.35 : CURL_CLOSE;
-        const copen = crange > CURL_CAL_MIN_RANGE ? ccal.lo + crange * 0.6 : CURL_OPEN;
+        const trusted = ccal.set || crange > CURL_CAL_MIN_RANGE;
+        const cclose = trusted ? ccal.lo + crange * 0.35 : CURL_CLOSE;
+        const copen = trusted ? ccal.lo + crange * 0.6 : CURL_OPEN;
         if (this.gripClosed[s]) { if (curl > copen) this.gripClosed[s] = false; }
         else if (curl < cclose) this.gripClosed[s] = true;
         continue;
@@ -294,6 +303,20 @@ export class Tracker {
     const p = this.palm(side);
     if (!p || !this.frame) return null;
     return { x: (p.x - this.frame.x) / this.frame.sw, y: -(p.y - this.frame.y) / this.frame.sw };
+  }
+
+  // palm center in canvas pixels (wrist fallback) — the cursor sits here
+  palmPx(side, canvas) {
+    const p = this.palm(side) || this.wrist(side);
+    return p ? this._videoToPx(p.x, p.y, canvas) : null;
+  }
+
+  // explicit per-person squeeze calibration from the assessment's
+  // "open wide… now squeeze" step — trusted whatever the range, so a hand
+  // that can never fully close still gets working squeeze detection
+  setCurlCal(side, lo, hi) {
+    if (lo == null || hi == null || hi - lo < 0.08) return;
+    this.curlCal[side] = { lo, hi, set: true };
   }
 
   // arm elevation angle in degrees vs trunk axis: 0 = arm along trunk (down),

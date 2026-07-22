@@ -103,7 +103,7 @@ export function drawHand(ctx, c, t, side, opts = {}) {
     return true;
   }
   if (opts.fallback === false) return false;
-  const hp = t.handPx(side, c);
+  const hp = t.palmPx(side, c);
   if (!hp) return false;
   ctx.save();
   ctx.shadowColor = closed ? "rgba(159,192,138,0.9)" : "rgba(232,168,106,0.8)";
@@ -158,6 +158,8 @@ export class GameBase {
     // adopt this patient's rest-anchored work center (see CENTER above)
     CENTER.x = this.profile.center?.x ?? CENTER_DEFAULT.x;
     CENTER.y = this.profile.center?.y ?? CENTER_DEFAULT.y;
+    // and their measured squeeze range from the assessment's calibration step
+    if (this.profile.curlCal) this.t.setCurlCal(this.side, this.profile.curlCal.lo, this.profile.curlCal.hi);
     this.t.setBaseline();
     this.startT = performance.now();
     this.pausedMs = 0;
@@ -356,19 +358,21 @@ export class GameBase {
     }
   }
 
+  // all interaction happens at the PALM CENTER (wrist fallback) — you touch
+  // things with your hand, not your wrist
   handNear(pos, radius) {
-    const h = this.t.handRel(this.side);
+    const h = this.t.palmRel(this.side) || this.t.handRel(this.side);
     if (!h) return false;
     return Math.hypot(h.x - pos.x, h.y - pos.y) < radius;
   }
   // per-side variant for bimanual games
   handNearFor(side, pos, radius) {
-    const h = this.t.handRel(side);
+    const h = this.t.palmRel(side) || this.t.handRel(side);
     if (!h) return false;
     return Math.hypot(h.x - pos.x, h.y - pos.y) < radius;
   }
   handDist(pos) {
-    const h = this.t.handRel(this.side);
+    const h = this.t.palmRel(this.side) || this.t.handRel(this.side);
     return h ? Math.hypot(h.x - pos.x, h.y - pos.y) : Infinity;
   }
 
@@ -443,7 +447,7 @@ export class GameBase {
           ctx.restore();
         }
       }
-      const hp = this.t.handPx(side, c);
+      const hp = this.t.palmPx(side, c);   // cursor rides the palm center
       if (!hp) continue;
       ctx.strokeStyle = primary ? "rgba(244,236,221,0.22)" : "rgba(200,230,235,0.18)";
       ctx.lineWidth = 2;

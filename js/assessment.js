@@ -133,7 +133,7 @@ export class Assessment {
     };
     let hoverSide = null;
     for (const s of ["left", "right"]) {
-      const hp = this.t.handPx(s, c);
+      const hp = this.t.palmPx(s, c);
       const closed = this.t.handClosed(s);
       const inside = hp && Math.hypot(hp.x - tiles[s].x, hp.y - tiles[s].y) < R * 1.4;   // forgiving capture
       // squeeze edge while on the light = instant choice
@@ -211,7 +211,7 @@ export class Assessment {
 
     if (this.state === "choose") { this._chooseTick(ctx, c, now); return; }
 
-    const hand = this.t.handRel(this.side);
+    const hand = this.t.palmRel(this.side) || this.t.handRel(this.side);
     if (!hand) {
       if (this.state === "settle") {
         this.noHandSince ??= now;
@@ -250,12 +250,42 @@ export class Assessment {
             // to a start spot (only a wild-tracking sanity clamp)
             CENTER.x = Math.max(-1.4, Math.min(1.4, hand.x));
             CENTER.y = Math.max(-1.4, Math.min(1.4, hand.y));
-            this.state = "countdown"; this.stateT = now;
-            this.count = null;
-            this._prompt("Get ready…", "The circle starts in 3… 2… 1…");
-            this._speak("Get ready.");
+            this.state = "grip-open"; this.stateT = now;
+            this.calHi = null; this.calLo = null;
+            this._prompt("Open your hand wide", "As wide as feels comfortable");
+            this._speak("First, open your hand wide. As wide as feels comfortable.");
           }
         } else this.still = null;
+        break;
+      }
+      // squeeze calibration: capture THIS hand's own open and closed curl,
+      // so squeeze detection works even for a hand that can't fully close.
+      // No hand-model detection? It simply passes through — the pose
+      // fallback self-calibrates on its own.
+      case "grip-open": {
+        const curl = this.t.handCurl(this.side);
+        if (curl != null) this.calHi = Math.max(this.calHi ?? curl, curl);
+        if (now - this.stateT > 2600) {
+          this.state = "grip-close"; this.stateT = now;
+          this._prompt("Now squeeze", "Close your hand as much as you can");
+          this._speak("Now squeeze. Close your hand as much as you can.");
+        }
+        break;
+      }
+      case "grip-close": {
+        const curl = this.t.handCurl(this.side);
+        if (curl != null) this.calLo = Math.min(this.calLo ?? curl, curl);
+        if (now - this.stateT > 2800) {
+          if (this.calLo != null && this.calHi != null && this.calHi - this.calLo > 0.08) {
+            this.t.setCurlCal(this.side, this.calLo, this.calHi);
+            this.curlCalResult = { lo: Math.round(this.calLo * 100) / 100, hi: Math.round(this.calHi * 100) / 100 };
+            audio.note(3);
+          }
+          this.state = "countdown"; this.stateT = now;
+          this.count = null;
+          this._prompt("Get ready…", "The circle starts in 3… 2… 1…");
+          this._speak("Lovely. Now get ready.");
+        }
         break;
       }
       case "countdown": {
@@ -401,6 +431,7 @@ export class Assessment {
       // rest-anchored work center (captured at settle) — games load this so
       // targets appear around the same point the envelope was measured from
       center: { x: Math.round(CENTER.x * 1000) / 1000, y: Math.round(CENTER.y * 1000) / 1000 },
+      curlCal: this.curlCalResult ?? null,   // this hand's measured open/close curl range
       envelope: this.envelope.map(v => Math.round(v * 1000) / 1000),
       covered: Math.round(this.covered * 100) / 100,
       arcMinDeg: arcMin,
@@ -489,7 +520,7 @@ export class Assessment {
     }
 
     if (this.state === "settle") {
-      const hp = this.t.handPx(this.side, c);
+      const hp = this.t.palmPx(this.side, c);
       if (hp) {
         ctx.save();
         ctx.strokeStyle = "rgba(244,236,221,0.7)"; ctx.lineWidth = 4; ctx.setLineDash([8, 9]);
@@ -537,7 +568,7 @@ export class Assessment {
     // the hand model has no detection: the classic firefly dot + ring
     // (dashed & wide = open, snug sage & solid = squeezing)
     const handDrawn = drawHand(ctx, c, this.t, this.side, { fallback: false });
-    const hp = this.t.handPx(this.side, c);
+    const hp = this.t.palmPx(this.side, c);
     if (hp && !handDrawn) {
       const closed = this.t.handClosed(this.side);
       const fg = ctx.createRadialGradient(hp.x, hp.y, 2, hp.x, hp.y, 16);

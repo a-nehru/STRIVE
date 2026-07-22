@@ -149,7 +149,7 @@ function watchWelcome() {
         raisedSince[s] ??= now;
         if (t.handClosed(s)) closedSince[s] ??= now; else closedSince[s] = null;
         const prog = Math.max((now - raisedSince[s]) / 3500, closedSince[s] ? (now - closedSince[s]) / 700 : 0);
-        const hp = t.handPx(s, c);
+        const hp = t.palmPx(s, c);
         if (hp) {
           ctx.strokeStyle = "#fff2c2"; ctx.lineWidth = 5;
           ctx.beginPath(); ctx.arc(hp.x, hp.y, 32, -Math.PI / 2, -Math.PI / 2 + TAU2 * Math.min(1, prog)); ctx.stroke();
