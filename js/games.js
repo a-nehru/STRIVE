@@ -570,6 +570,13 @@ export class ArcPong extends GameBase {
     this.skillFlash = null;
     this.court = { top: 0.16, bottom: 0.9, left: 0.1, right: 0.9 };
     this.paddleH = 0.17;
+    // contained lane: hard walls pulled INSIDE the court to match the arc
+    // span the DDA currently demands (rangeScale) — the ball can never go
+    // where the paddle can't, so a small arc still gets a fully playable,
+    // rebounding lane; walls widen as rangeScale grows between rounds
+    const half = Math.min(1, this.params.rangeScale) * (this.court.bottom - this.court.top) / 2 + this.paddleH / 2;
+    this.wallTop = Math.max(this.court.top, 0.5 - half);
+    this.wallBottom = Math.min(this.court.bottom, 0.5 + half);
     this.aiY = 0.5; this.keysY = 0.5; this.keys = { up: false, down: false };
     this.aiLagY = 0.5;                       // AI reacts with a lag — it CAN miss
     this.trail = [];
@@ -627,16 +634,18 @@ export class ArcPong extends GameBase {
     this.ball = null;
   }
   _launch(now) {
-    const span = this.params.rangeScale;
-    const ty = 0.5 + (Math.random() - 0.5) * span * (this.court.bottom - this.court.top);
+    // serve inside the walled lane, aimed gently (see _capVy)
+    const laneMid = (this.wallTop + this.wallBottom) / 2;
+    const ty = laneMid + (Math.random() - 0.5) * 0.7 * (this.wallBottom - this.wallTop - this.paddleH);
     const speedup = 1 + Math.min(0.5, this.rally * 0.05);
     const vx0 = (this.court.right - this.court.left) / this.params.lifetime * speedup;
     const fromLeft = this.patientRight;
     this.ball = {
       x: fromLeft ? this.court.left + 0.06 : this.court.right - 0.06,
-      y: 0.5, tx: ty, vx: fromLeft ? vx0 : -vx0, born: now,
+      y: laneMid, tx: ty, vx: fromLeft ? vx0 : -vx0, born: now,
     };
-    this.ball.vy = (ty - 0.5) / ((this.court.right - this.court.left - 0.12) / vx0);
+    this.ball.vy = (ty - laneMid) / ((this.court.right - this.court.left - 0.12) / vx0);
+    this._capVy(this.ball);
   }
   _angleToY(arm, prof) {
     const a = this.t.armAngle(arm);
@@ -644,14 +653,22 @@ export class ArcPong extends GameBase {
     const lo = prof?.arcMinDeg ?? this.profile.arcMinDeg;
     const hi = prof?.arcMaxDeg ?? this.profile.arcMaxDeg;
     const f = Math.max(0, Math.min(1, (a - lo) / Math.max(10, hi - lo)));
-    return this.court.bottom - f * (this.court.bottom - this.court.top) - this.paddleH / 2;
+    // whole assessed arc maps onto the walled lane: paddle stays flush inside
+    const cLo = this.wallTop + this.paddleH / 2, cHi = this.wallBottom - this.paddleH / 2;
+    return cHi - f * (cHi - cLo) - this.paddleH / 2;
   }
   _keysPaddle(dt) {
     const v = 0.5 * dt / 1000;
     if (this.keys.up) this.keysY -= v;
     if (this.keys.down) this.keysY += v;
-    this.keysY = Math.max(this.court.top, Math.min(this.court.bottom - this.paddleH, this.keysY));
+    this.keysY = Math.max(this.wallTop, Math.min(this.wallBottom - this.paddleH, this.keysY));
     return this.keysY;
+  }
+  // flat-flight rule: vertical speed never exceeds 55% of horizontal, so
+  // rallies cross the field instead of ricocheting between the walls
+  _capVy(b) {
+    const m = 0.55 * Math.abs(b.vx);
+    if (Math.abs(b.vy) > m) b.vy = Math.sign(b.vy) * m;
   }
   // paddles: {leftY, rightY, leftY2?, rightY2?} — the 2s are teammate paddles
   _paddles(now, dt) {
@@ -668,6 +685,7 @@ export class ArcPong extends GameBase {
       const s = dt / 1000;
       this.aiLagY += (this.ball.y - this.aiLagY) * Math.min(1, 3 * s);
       this.aiY += Math.max(-0.24 * s, Math.min(0.24 * s, this.aiLagY - this.aiY));
+      this.aiY = Math.max(this.wallTop + this.paddleH / 2, Math.min(this.wallBottom - this.paddleH / 2, this.aiY));
     }
     const aiPad = this.aiY - this.paddleH / 2;
     if (this.patientRight) {
@@ -714,6 +732,7 @@ export class ArcPong extends GameBase {
         const dir = this.caught.edge === "right" ? -1 : 1;
         b.vx = dir * (this.caught.vx0 || 0.25) * 1.35;      // fired back faster
         b.vy = (Math.random() - 0.5) * 0.22;
+        this._capVy(b);
         this.gripShots++;
         this.stats.stars += 5;
         this.burstAtPx(b.x * this.canvas.width, b.y * this.canvas.height, "#9fc08a");
@@ -729,12 +748,14 @@ export class ArcPong extends GameBase {
     if (b.spin) b.vy += b.spin * s;                          // spin curves the flight
     this.trail.push({ x: b.x, y: b.y, t: now });
     this.trail = this.trail.filter(p => now - p.t < 260);
-    if (b.y < this.court.top || b.y > this.court.bottom) { b.vy *= -1; audio.bounce(); }
+    // rebound off the lane walls (position clamped so it can't tunnel out)
+    if (b.y < this.wallTop) { b.y = this.wallTop; b.vy = Math.abs(b.vy); audio.bounce(); }
+    else if (b.y > this.wallBottom) { b.y = this.wallBottom; b.vy = -Math.abs(b.vy); audio.bounce(); }
 
     const patRight = this.patientRight;
     const returnBall = (dir, py, isPlayerSide) => {
       b.vx = dir * Math.abs(b.vx) * 1.05;
-      b.vy += ((b.y - (py + this.paddleH / 2)) / this.paddleH) * 0.28;
+      b.vy += ((b.y - (py + this.paddleH / 2)) / this.paddleH) * 0.18;   // gentler deflection: flatter rallies
       b.spin = 0;
       if (isPlayerSide) {
         this.rally++; this.bestRally = Math.max(this.bestRally, this.rally);
@@ -755,12 +776,13 @@ export class ArcPong extends GameBase {
         }
       } else {
         audio.note(0);
-        if (this.hasAI) {   // AI aims within the patient's arc demand
-          const span = this.params.rangeScale;
-          b.tx = 0.5 + (Math.random() - 0.5) * span * (this.court.bottom - this.court.top);
-          b.vy = (b.tx - b.y) / ((this.court.right - this.court.left) / Math.abs(b.vx)) + (Math.random() - 0.5) * 0.05;
+        if (this.hasAI) {   // AI aims inside the walled lane
+          const laneMid = (this.wallTop + this.wallBottom) / 2;
+          b.tx = laneMid + (Math.random() - 0.5) * 0.7 * (this.wallBottom - this.wallTop - this.paddleH);
+          b.vy = (b.tx - b.y) / ((this.court.right - this.court.left) / Math.abs(b.vx)) + (Math.random() - 0.5) * 0.04;
         }
       }
+      this._capVy(b);
     };
 
     // right edge
@@ -813,11 +835,20 @@ export class ArcPong extends GameBase {
     const X = f => f * c.width, Y = f => f * c.height;
     ctx.strokeStyle = "rgba(244,236,221,0.16)"; ctx.lineWidth = 2; ctx.setLineDash([5, 7]);
     for (const side of [this.court.left - 0.015, this.court.right + 0.015]) {
-      ctx.beginPath(); ctx.moveTo(X(side), Y(this.court.top));
-      ctx.quadraticCurveTo(X(side + (side < 0.5 ? -0.04 : 0.04)), Y(0.53), X(side), Y(this.court.bottom));
+      ctx.beginPath(); ctx.moveTo(X(side), Y(this.wallTop));
+      ctx.quadraticCurveTo(X(side + (side < 0.5 ? -0.04 : 0.04)), Y((this.wallTop + this.wallBottom) / 2), X(side), Y(this.wallBottom));
       ctx.stroke();
     }
     ctx.setLineDash([]);
+    // the lane walls: solid glowing rails the ball rebounds off — the whole
+    // game visibly lives where the paddle can reach
+    ctx.save();
+    ctx.strokeStyle = "rgba(244,236,221,0.4)"; ctx.lineWidth = 4; ctx.lineCap = "round";
+    ctx.shadowColor = "rgba(232,168,106,0.5)"; ctx.shadowBlur = 10;
+    for (const wy of [this.wallTop, this.wallBottom]) {
+      ctx.beginPath(); ctx.moveTo(X(this.court.left - 0.015), Y(wy)); ctx.lineTo(X(this.court.right + 0.015), Y(wy)); ctx.stroke();
+    }
+    ctx.restore();
 
     // scoreboard: suns (you) vs moons (AI) — only in vs-AI modes
     if (this.hasAI) {
@@ -856,7 +887,7 @@ export class ArcPong extends GameBase {
       const t = (now - this.serving.start) / 550;
       const beat = Math.floor(t), f = t - beat;
       if (beat >= 0 && beat < 3) {
-        const p = { x: X(this.patientRight ? this.court.left + 0.06 : this.court.right - 0.06), y: Y(0.5) };
+        const p = { x: X(this.patientRight ? this.court.left + 0.06 : this.court.right - 0.06), y: Y((this.wallTop + this.wallBottom) / 2) };
         ctx.strokeStyle = `rgba(244,236,221,${0.7 * (1 - f)})`;
         ctx.lineWidth = 4;
         ctx.beginPath(); ctx.arc(p.x, p.y, 16 + f * 44, 0, TAU); ctx.stroke();
