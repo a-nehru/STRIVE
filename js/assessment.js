@@ -245,11 +245,11 @@ export class Assessment {
           if (!this.still) this.still = now;
           if (now - this.still > 1500) {
             this.t.setBaseline();
-            // the resting hand IS the start position: the work area is
-            // measured around where the arm naturally lives, so limited
-            // motion never has to travel to a preset spot first
-            CENTER.x = Math.max(-0.8, Math.min(0.8, hand.x));
-            CENTER.y = Math.max(-0.7, Math.min(0.7, hand.y));
+            // the resting hand IS zero: the circle is measured relative to
+            // exactly where the hand rested — no preset center, no travel
+            // to a start spot (only a wild-tracking sanity clamp)
+            CENTER.x = Math.max(-1.4, Math.min(1.4, hand.x));
+            CENTER.y = Math.max(-1.4, Math.min(1.4, hand.y));
             this.state = "countdown"; this.stateT = now;
             this.count = null;
             this._prompt("Get ready…", "The circle starts in 3… 2… 1…");
@@ -419,13 +419,14 @@ export class Assessment {
     const sw = this.t.pxPerSW(c);
 
     if (this.state !== "settle") {
-      // guide circle (dashed)
-      const guide = 1.1;
+      // NO preset circle: the start point (where the hand rested) is zero,
+      // marked with a soft dot — everything else is drawn by the patient
       ctx.save();
-      ctx.strokeStyle = "rgba(244,236,221,0.28)"; ctx.lineWidth = 3; ctx.setLineDash([10, 12]);
       const gp = this.t.relToPx(CENTER, c);
-      ctx.beginPath(); ctx.arc(gp.x, gp.y, guide * sw, 0, TAU); ctx.stroke();
-      ctx.setLineDash([]);
+      ctx.fillStyle = "rgba(244,236,221,0.55)";
+      ctx.shadowColor = "rgba(244,236,221,0.5)"; ctx.shadowBlur = 12;
+      ctx.beginPath(); ctx.arc(gp.x, gp.y, 7, 0, TAU); ctx.fill();
+      ctx.shadowBlur = 0;
 
       if (this.state === "countdown") {
         const left = Math.max(1, 3 - Math.floor((now - this.stateT) / 1000));
@@ -439,24 +440,27 @@ export class Assessment {
       }
 
       if (this.state === "trace") {
-        // progress dots: one per direction, lit once that direction is drawn
+        // direction dots hug the patient's OWN traced shape (just outside
+        // each bin's measured reach — never a preset ring), lit once drawn
         for (let i = 0; i < BINS; i++) {
           const th = (i + 0.5) / BINS * TAU;
-          const p = this.t.relToPx({ x: CENTER.x + Math.cos(th) * guide * 1.16, y: CENTER.y + Math.sin(th) * guide * 1.16 }, c);
+          const r = Math.max(0.5, this.envelope[i] + 0.22);
+          const p = this.t.relToPx({ x: CENTER.x + Math.cos(th) * r, y: CENTER.y + Math.sin(th) * r }, c);
           const done = this.visited[i] >= 2;
           ctx.fillStyle = done ? "#e8a86a" : "rgba(244,236,221,0.25)";
           if (done) { ctx.shadowColor = "rgba(232,168,106,.8)"; ctx.shadowBlur = 10; }
           ctx.beginPath(); ctx.arc(p.x, p.y, done ? 6 : 4, 0, TAU); ctx.fill();
           ctx.shadowBlur = 0;
         }
-        // demo firefly orbiting the guide — "follow me" — fades once they're going
+        // demo firefly circling the start point — "go around, like me" —
+        // fades once they're going (shows the motion, not a required size)
         const covered = this.visited.filter(v => v >= 2).length;
         if (covered < 6) {
           const a = now / 1400;                        // slow orbit
           const alpha = covered < 3 ? 0.9 : 0.9 * (1 - (covered - 3) / 3);
           for (let k = 0; k < 5; k++) {                // trail
             const ta = a - k * 0.09;
-            const p = this.t.relToPx({ x: CENTER.x + Math.cos(ta) * guide, y: CENTER.y + Math.sin(ta) * guide }, c);
+            const p = this.t.relToPx({ x: CENTER.x + Math.cos(ta) * 0.8, y: CENTER.y + Math.sin(ta) * 0.8 }, c);
             ctx.globalAlpha = alpha * (1 - k / 5);
             const dg = ctx.createRadialGradient(p.x, p.y, 1, p.x, p.y, 14 - k * 2);
             dg.addColorStop(0, "#fff6d8"); dg.addColorStop(1, "rgba(159,192,138,0.9)");
