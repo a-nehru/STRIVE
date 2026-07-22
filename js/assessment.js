@@ -53,7 +53,9 @@ export class Assessment {
   start(onDone) {
     this.onDone = onDone;
     this.active = true;
-    this.state = "choose";
+    // one decision, once: skip the chooser when the hand was already picked
+    // (welcome lift or staff drawer) — main.js passes chooseHand: false
+    this.state = this.opts.chooseHand === false ? "settle" : "choose";
     this.stateT = performance.now();
     this.still = null;
     this.prev = null;
@@ -78,8 +80,13 @@ export class Assessment {
     this.grasp = [];            // {ok, stability, squeeze}
     this.dwell = null;
 
-    this._prompt("Which hand shall we assess?", "Hold that hand on its light, and squeeze");
-    this._speak("Which hand shall we assess? Hold that hand on its light, and squeeze it.");
+    if (this.state === "settle") {
+      this._promptSettle();
+      this._speak(`${this.side === "left" ? "Left" : "Right"} hand today. Hold it still, comfortably in front of you.`);
+    } else {
+      this._prompt("Which hand shall we assess?", "Hold that hand on its light, and squeeze");
+      this._speak("Which hand shall we assess? Hold that hand on its light, and squeeze it.");
+    }
     this._loop();
   }
 

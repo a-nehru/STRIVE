@@ -42,7 +42,9 @@ button { font-family: inherit; cursor: pointer; }
   position: fixed; inset: 0;
   display: flex; flex-direction: column;
   align-items: center; justify-content: center;
+  animation: screenfade 0.5s ease;   /* gentle cross-screen flow, no hard cuts */
 }
+@keyframes screenfade { from { opacity: 0; } to { opacity: 1; } }
 
 /* P1 welcome — option 1a */
 #screen-welcome { background: linear-gradient(165deg, #1b1b3a 0%, #3a3168 46%, #8f76b0 100%); }
@@ -119,6 +121,15 @@ button { font-family: inherit; cursor: pointer; }
   position: absolute; inset: 0;
   background: linear-gradient(to top, rgba(232,168,106,.55), rgba(232,168,106,.15));
   transform: scaleY(0); transform-origin: bottom;
+  pointer-events: none;
+}
+/* default-first: the recommended card wears this chip and starts pre-focused */
+.gcard .suggest {
+  position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
+  background: var(--amber); color: #1b1b3a;
+  padding: 6px 16px; border-radius: 999px;
+  font-weight: 800; font-size: 14px; letter-spacing: 0.3px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
   pointer-events: none;
 }
 .gcard .lock {

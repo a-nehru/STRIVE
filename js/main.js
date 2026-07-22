@@ -13,6 +13,7 @@ const SCREENS = ["screen-welcome", "screen-select", "stage", "screen-between", "
 const state = {
   tracker: null,
   side: "right",
+  sideChosen: false,   // true once the patient (welcome lift) or staff (drawer) picked a hand — asked once, never re-asked
   patient: "guest",
   coachSens: "gentle",
   pongMode: "solo",
@@ -33,6 +34,17 @@ function show(id) {
 
 function resize() { const c = $("canvas"); c.width = innerWidth; c.height = innerHeight; }
 addEventListener("resize", resize); resize();
+
+// spoken guidance outside game/assessment classes (welcome, menus) — the
+// suite speaks everything important (RGS auto audio instructions)
+function speak(text) {
+  try {
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.rate = 0.9;
+    speechSynthesis.speak(u);
+  } catch { /* optional */ }
+}
 
 /* ================= tracker boot ================= */
 async function boot() {
@@ -73,7 +85,14 @@ const TAU2 = Math.PI * 2;
 function watchWelcome() {
   const raisedSince = { left: null, right: null }, closedSince = { left: null, right: null };
   let framedSince = null, squeezeSeen = false;
+  let lastSpoken = "", lastSpokenAt = 0, inviteSaid = false;
   const resetGesture = () => { raisedSince.left = raisedSince.right = null; closedSince.left = closedSince.right = null; };
+  // spoken framing guidance, throttled so it never nags
+  const guide = (text, now) => {
+    if (text === lastSpoken || now - lastSpokenAt < 7000) return;
+    lastSpoken = text; lastSpokenAt = now;
+    speak(text);
+  };
   const head = document.querySelector("#screen-welcome .headline");
   const sub = document.querySelector("#screen-welcome .subline");
   const trackEl = $("welcome-track");
@@ -105,6 +124,7 @@ function watchWelcome() {
       framedSince = null; resetGesture();
       setText(head, "Let's get you settled");
       setText(sub, msg);
+      guide(msg, now);
       return;
     }
     framedSince ??= now;
@@ -115,6 +135,10 @@ function watchWelcome() {
     }
     setText(head, "Ready when you are");
     setText(sub, "Lift the hand you want to train, and squeeze to begin");
+    if (!inviteSaid) {
+      inviteSaid = true;
+      speak("Ready when you are. Lift the hand you want to train, and give it a squeeze.");
+    }
 
     // start gesture doubles as the LEFT/RIGHT choice: whichever hand is
     // lifted + squeezed (fast) or just held up (fallback) becomes the
@@ -137,6 +161,7 @@ function watchWelcome() {
         if (prog >= 1) {
           resetGesture();
           state.side = s;                 // the lifted hand is the trained hand
+          state.sideChosen = true;        // asked once — the assessment won't re-ask
           $("in-arm").value = s;          // keep the staff drawer in sync
           enterSelect();
           return;
@@ -151,8 +176,13 @@ function watchWelcome() {
 
 function enterSelect() {
   if (state.screen !== "screen-welcome" && state.screen !== "screen-profile") return;
+  const fromWelcome = state.screen === "screen-welcome";
   renderSelect();
   show("screen-select");
+  if (fromWelcome) {
+    const prof = store.getProfile(state.patient, state.side);
+    speak(prof ? "What shall we play today?" : "Let's draw your circle first, so the games fit you.");
+  }
 }
 
 /* ================= game select (P3, cards 1g) ================= */
@@ -239,12 +269,22 @@ function renderSelect() {
       (locked ? `<div class="lock">🔒<span>Draw your circle first</span></div>` : "");
     if (!locked) b.addEventListener("click", onClick);
     wrap.appendChild(b);
+    return b;
   };
 
-  mk("assess", prof ? "Your circle" : "Draw your circle", false, startAssessment);
+  const assessBtn = mk("assess", prof ? "Your circle" : "Draw your circle", false, startAssessment);
+  const gameBtns = {};
   for (const g of GAMES) {
     if (g.disabled) continue;
-    mk(g.id, g.name, !prof, g.id === "pong" ? renderPongModes : () => startGame(g.id, true));
+    gameBtns[g.id] = mk(g.id, g.name, !prof, g.id === "pong" ? renderPongModes : () => startGame(g.id, true));
+  }
+  // default-first: one clearly recommended card, pre-focused so a single
+  // Enter continues the flow (no assessment yet → assess; else last played
+  // game; else the first game)
+  const suggested = !prof ? assessBtn : (gameBtns[state.lastGameId] || Object.values(gameBtns)[0]);
+  if (suggested) {
+    suggested.classList.add("kbd-focus");
+    suggested.insertAdjacentHTML("beforeend", `<div class="suggest">Start here</div>`);
   }
 }
 
@@ -268,30 +308,36 @@ function renderPongModes() {
     b.innerHTML = CARD_ART.pong + `<div class="dwell-fill"></div><div class="title">${label}<small>${sub}</small></div>`;
     b.addEventListener("click", onClick);
     wrap.appendChild(b);
+    return b;
   };
+  let focusBtn = null;
   for (const [id, label, sub] of PONG_MODES) {
-    mk(label, sub, () => {
+    const b = mk(label, sub, () => {
       state.pongMode = id;
       $("in-pong").value = id;
       startGame("pong", true);
     });
+    if (id === state.pongMode || (!focusBtn && id === "solo")) focusBtn = b;
   }
   mk("↩ Back", "All games", renderSelect);
+  focusBtn?.classList.add("kbd-focus");   // current mode pre-focused: Enter just plays
 }
 
 /* ================= assessment ================= */
-// The assessment opens with its own hand choice (two lights over the mirror);
-// the chosen arm becomes the session side and gets the full assessment.
+// One decision, once: if the hand was already chosen (welcome lift or staff
+// drawer) the assessment starts straight at "hold still" — its own two-light
+// chooser only appears when no choice has been made yet.
 function startAssessment() {
   if (!state.tracker) return;
   show("stage");
   audio.startBgm("assessment");
-  const a = new Assessment(state.tracker, $("canvas"), state.side, state.coachSens);
+  const a = new Assessment(state.tracker, $("canvas"), state.side, state.coachSens, { chooseHand: !state.sideChosen });
   state.current = a;
   a.start(profile => {
     audio.stopBgm();
     profile.params = initialParams(profile);
-    state.side = profile.arm;               // the chooser's pick drives the session
+    state.side = profile.arm;               // the assessed arm drives the session
+    state.sideChosen = true;
     $("in-arm").value = profile.arm;        // keep the staff drawer in sync
     store.saveProfile(state.patient, profile.arm, profile);
     audio.fanfare();
@@ -381,6 +427,9 @@ function onRoundEnd(round) {
 
   renderBetween(round, result.note);
   show("screen-between");
+  // default-first: Enter continues the session without hunting for a button
+  document.querySelectorAll("#screen-between .kbd-focus").forEach(el => el.classList.remove("kbd-focus"));
+  $("btn-next-round").classList.add("kbd-focus");
 }
 
 /* ================= P5 between rounds ================= */
@@ -679,7 +728,7 @@ $("in-patient").addEventListener("input", e => {
   $("in-shoulder").value = store.getPatient(state.patient).shoulderCm ?? "";
 });
 $("in-shoulder").addEventListener("change", e => store.setShoulderCm(state.patient, parseFloat(e.target.value)));
-$("in-arm").addEventListener("change", e => { state.side = e.target.value; });
+$("in-arm").addEventListener("change", e => { state.side = e.target.value; state.sideChosen = true; });
 $("in-coach").addEventListener("change", e => { state.coachSens = e.target.value; });
 $("in-pong").addEventListener("change", e => { state.pongMode = e.target.value; });
 $("in-pongskills").addEventListener("change", e => { state.pongSkills = e.target.value; });
