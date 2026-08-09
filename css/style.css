@@ -89,6 +89,51 @@ button { font-family: inherit; cursor: pointer; }
   text-shadow: 0 0 14px rgba(232, 168, 106, 0.35);
 }
 
+/* ---------- P0 participant login ---------- */
+#screen-login { background: linear-gradient(165deg, #1b1b3a 0%, #3a3168 46%, #8f76b0 100%); }
+.login-card {
+  position: relative; z-index: 2;
+  width: min(620px, 90vw);
+  background: rgba(27, 27, 58, 0.45);
+  border: 1px solid rgba(244, 236, 221, 0.14);
+  border-radius: 26px;
+  padding: 6vh 5vw;
+  text-align: center;
+  box-shadow: 0 18px 60px rgba(10, 10, 30, 0.45);
+  backdrop-filter: blur(6px);
+}
+.login-head { font-weight: 800; font-size: clamp(28px, 3.2vw, 44px); color: var(--cream); }
+.login-sub { margin-top: 10px; font-weight: 600; font-size: clamp(16px, 1.6vw, 21px); color: rgba(244, 236, 221, 0.8); }
+.login-actions { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; margin-top: 4vh; }
+.btn.big { font-size: clamp(17px, 1.7vw, 22px); padding: 18px 34px; border-radius: 14px; }
+.login-skip {
+  margin-top: 3vh; background: none; border: none;
+  font-weight: 700; font-size: 15px; color: rgba(244, 236, 221, 0.55);
+  text-decoration: underline; text-underline-offset: 4px;
+}
+.login-skip:hover { color: rgba(244, 236, 221, 0.85); }
+.login-people {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px; margin-top: 3.5vh; max-height: 42vh; overflow-y: auto; padding: 4px;
+}
+.login-person {
+  border: 2px solid rgba(244, 236, 221, 0.25); border-radius: 16px;
+  background: rgba(244, 236, 221, 0.08); color: var(--cream);
+  padding: 18px 16px; text-align: center;
+}
+.login-person:hover, .login-person:focus-visible { border-color: var(--amber); background: rgba(232, 168, 106, 0.16); }
+.login-person .nm { display: block; font-weight: 800; font-size: clamp(18px, 1.8vw, 24px); }
+.login-person .meta { display: block; margin-top: 6px; font-weight: 600; font-size: 13px; color: rgba(244, 236, 221, 0.6); }
+#login-name {
+  margin-top: 3.5vh; width: min(380px, 80%);
+  padding: 16px 20px; border-radius: 14px;
+  border: 2px solid rgba(244, 236, 221, 0.3);
+  background: rgba(244, 236, 221, 0.1); color: var(--cream);
+  font-family: inherit; font-weight: 700; font-size: clamp(18px, 1.8vw, 23px); text-align: center;
+}
+#login-name::placeholder { color: rgba(244, 236, 221, 0.4); font-weight: 600; }
+#login-name:focus { outline: none; border-color: var(--amber); }
+
 /* the ambient firefly on welcome */
 #welcome-firefly {
   position: absolute; width: 30px; height: 30px; border-radius: 50%;
@@ -116,6 +161,14 @@ button { font-family: inherit; cursor: pointer; }
   position: absolute; left: 0; right: 0; bottom: 22px;
   font-weight: 800; font-size: clamp(18px, 1.7vw, 28px);
   text-shadow: 0 2px 8px rgba(0,0,0,.5);
+}
+/* the movement each game trains — therapists prescribe by movement */
+.gcard .trains {
+  position: absolute; top: 10px; left: 10px;
+  padding: 5px 12px; border-radius: 20px;
+  background: rgba(20, 16, 40, 0.72); border: 1px solid rgba(244,236,221,.25);
+  font-weight: 700; font-size: 12px; color: var(--cream);
+  letter-spacing: 0.02em;
 }
 .gcard .dwell-fill {
   position: absolute; inset: 0;
@@ -162,6 +215,29 @@ button { font-family: inherit; cursor: pointer; }
   pointer-events: none;
 }
 #cue::before { content: ""; width: 12px; height: 12px; border-radius: 50%; background: var(--green); box-shadow: 0 0 10px var(--green); }
+
+/* ---------- accessibility ---------- */
+/* captions for every spoken line: high-contrast cream on ink, short lines,
+   slow fade — sized for older readers at a distance */
+#caption {
+  position: fixed; left: 50%; bottom: 12vh; transform: translateX(-50%);
+  max-width: min(860px, 88vw); z-index: 70;
+  padding: 14px 30px; border-radius: 18px;
+  background: rgba(20, 16, 40, 0.88); border: 1px solid rgba(244,236,221,.25);
+  font-weight: 700; font-size: clamp(20px, 2vw, 32px); line-height: 1.35;
+  color: var(--cream); text-align: center;
+  pointer-events: none;
+  transition: opacity .5s;
+}
+#caption.hidden { display: block; opacity: 0; visibility: hidden; }
+
+/* text-size setting: scales the reading surfaces, not the play canvas */
+body.t125 :is(#prompt, #cue, #caption, .headline, .subline, .select-sub, .login-head, .login-sub, .rc-text, .rc-ask, .rc-note) { zoom: 1.25; }
+body.t150 :is(#prompt, #cue, #caption, .headline, .subline, .select-sub, .login-head, .login-sub, .rc-text, .rc-ask, .rc-note) { zoom: 1.5; }
+
+/* high-contrast mode: stronger text shadows + solid caption backing */
+body.hc #prompt, body.hc .headline, body.hc .subline { text-shadow: 0 2px 4px #000, 0 0 18px rgba(0,0,0,.9); }
+body.hc #caption { background: rgba(8, 6, 18, 0.97); border-color: rgba(244,236,221,.5); }
 
 #paused {
   position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
@@ -320,6 +396,8 @@ table.log td { padding: 7px 4px; font-size: 13px; font-weight: 700; border-top: 
 }
 #drawer .row { display: flex; gap: 10px; }
 #drawer .btn { font-size: 14px; padding: 11px 16px; }
+#drawer .dwr-sub { margin-top: 6px; padding-top: 12px; border-top: 1px solid rgba(244,236,221,.15); font-size: 16px; }
+#drawer input[type=range] { accent-color: var(--amber); }
 #camstate { font-weight: 700; font-size: 13px; }
 #camstate.ok { color: var(--green); }
 #camstate.bad { color: #ff9d8a; }

@@ -4,11 +4,56 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>STRIVE</title>
-<link rel="stylesheet" href="css/style.css?v=17">
+<link rel="stylesheet" href="css/style.css?v=19">
 </head>
 <body>
 
 <video id="video" autoplay playsinline muted></video>
+
+<!-- P0 participant login -->
+<div id="screen-login" class="screen">
+  <div class="blob b1"></div><div class="blob b2"></div>
+  <div class="star-tw" style="left:10vw;top:12vh;width:6px;height:6px"></div>
+  <div class="star-tw" style="left:82vw;top:18vh;width:5px;height:5px;animation-delay:.8s"></div>
+  <div class="star-tw" style="left:44vw;top:8vh;width:4px;height:4px;animation-delay:1.4s"></div>
+  <div class="brand-title">STRIVE</div>
+
+  <div class="login-card">
+    <!-- step 1: choose -->
+    <div id="login-choice">
+      <h1 class="login-head">Welcome</h1>
+      <p class="login-sub">Who is playing today?</p>
+      <div class="login-actions">
+        <button class="btn big" id="btn-login-existing">I have played before</button>
+        <button class="btn big ghost-light" id="btn-login-new">I am new here</button>
+      </div>
+      <button class="login-skip" id="btn-login-guest">Skip for now</button>
+    </div>
+
+    <!-- step 2a: pick your name -->
+    <div id="login-list" class="hidden">
+      <h1 class="login-head">Welcome back</h1>
+      <p class="login-sub">Choose your name</p>
+      <div class="login-people" id="login-people"></div>
+      <div class="login-actions">
+        <button class="btn ghost-light" id="btn-login-back1">Back</button>
+      </div>
+    </div>
+
+    <!-- step 2b: create -->
+    <div id="login-create" class="hidden">
+      <h1 class="login-head">Nice to meet you</h1>
+      <p class="login-sub">Type your name or ID</p>
+      <input type="text" id="login-name" maxlength="24" placeholder="e.g. Mary or RH-0428" autocomplete="off" spellcheck="false">
+      <div class="login-actions">
+        <button class="btn big" id="btn-login-create">Continue</button>
+        <button class="btn ghost-light" id="btn-login-back2">Back</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="brand-foot">Developed by Synapse Lab · Shirley Ryan AbilityLab</div>
+</div>
 
 <!-- P1 welcome -->
 <div id="screen-welcome" class="screen">
@@ -165,6 +210,22 @@
       </select>
     </label>
   </div>
+  <div class="dwr-game" data-for="oars">
+    <label>Ferry Oars pattern
+      <select id="in-oars">
+        <option value="together">Together (both hands rise as one)</option>
+        <option value="bailing">Bailing (one up while one down)</option>
+      </select>
+    </label>
+  </div>
+  <div class="dwr-game" data-for="ferry">
+    <label>Night Ferry wheel
+      <select id="in-ferry">
+        <option value="solo">One hand steers</option>
+        <option value="wheel">Both hands on the wheel</option>
+      </select>
+    </label>
+  </div>
   <div class="dwr-game" data-for="rhythm">
     <label>Melody Tiles song
       <select id="in-song"></select>
@@ -173,15 +234,56 @@
       <select id="in-tiles"><option value="one">One arm</option><option value="bimanual">Both arms (piano-style)</option></select>
     </label>
   </div>
+  <h2 class="dwr-sub">Comfort</h2>
+  <label>Captions
+    <select id="in-captions"><option value="on">On</option><option value="off">Off</option></select>
+  </label>
+  <label>Hold-to-choose time
+    <select id="in-dwell">
+      <option value="1000">Quick (1 s)</option>
+      <option value="1400">Normal (1.4 s)</option>
+      <option value="2000">Relaxed (2 s)</option>
+      <option value="3000">Very relaxed (3 s)</option>
+    </select>
+  </label>
+  <label>Target forgiveness
+    <select id="in-radius"><option value="1">Normal</option><option value="1.3">Bigger</option><option value="1.6">Biggest</option></select>
+  </label>
+  <label>Squeeze effort
+    <select id="in-squeeze"><option value="easy">Light touch</option><option value="normal">Normal</option><option value="firm">Firm</option></select>
+  </label>
+  <label>High contrast
+    <select id="in-contrast"><option value="off">Off</option><option value="on">On</option></select>
+  </label>
+  <label>Calm motion
+    <select id="in-calm"><option value="off">Off</option><option value="on">On</option></select>
+  </label>
+  <label>Text size
+    <select id="in-tscale"><option value="1">Normal</option><option value="1.25">Large</option><option value="1.5">Largest</option></select>
+  </label>
+  <label>Practice mode (nothing counts)
+    <select id="in-practice"><option value="off">Off</option><option value="on">On</option></select>
+  </label>
+  <label>Visual field
+    <select id="in-field"><option value="none">Full field</option><option value="left">Left side cut</option><option value="right">Right side cut</option></select>
+  </label>
+  <label>Field targets
+    <select id="in-fieldmode"><option value="comfort">Comfort (where they see)</option><option value="scan">Scanning training</option></select>
+  </label>
+  <label>Voice volume <input type="range" id="in-volvoice" min="0" max="1" step="0.1"></label>
+  <label>Music volume <input type="range" id="in-volmusic" min="0" max="1" step="0.1"></label>
+  <label>Sounds volume <input type="range" id="in-volfx" min="0" max="1" step="0.1"></label>
   <div id="camstate">Camera: not started</div>
   <div class="row"><button class="btn" id="btn-drawer-assess">Assessment</button><button class="btn ghost-light" id="btn-drawer-profile">Profile</button></div>
   <div class="row"><button class="btn ghost-light" id="btn-drawer-collections">Collections</button><button class="btn ghost-light" id="btn-drawer-close">Close</button></div>
 </div>
 
+<div id="caption" class="hidden" aria-live="polite"></div>
+
 <div id="handcursor" class="hidden"></div>
 
 <div id="loading" class="hidden"><div class="spinner"></div><div id="loading-text">Waking up the camera&hellip;</div></div>
 
-<script type="module" src="js/main.js?v=17"></script>
+<script type="module" src="js/main.js?v=19"></script>
 </body>
 </html>

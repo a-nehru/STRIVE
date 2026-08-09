@@ -47,6 +47,11 @@ class GameAudio {
       this.lp = ctx.createBiquadFilter();
       this.lp.type = "lowpass"; this.lp.frequency.value = 2800; this.lp.Q.value = 0.4;
       this.master.connect(this.lp).connect(ctx.destination);
+      // per-bus volume (accessibility): music and feedback sounds separately
+      this.musicBus = ctx.createGain(); this.musicBus.gain.value = this._volMusic ?? 1;
+      this.fxBus = ctx.createGain(); this.fxBus.gain.value = this._volFx ?? 1;
+      this.musicBus.connect(this.master);
+      this.fxBus.connect(this.master);
       // tape-style delay bus for chimes
       this.delay = ctx.createDelay(1);
       this.delay.delayTime.value = 0.29;
@@ -65,7 +70,7 @@ class GameAudio {
     this.stopBgm();
     this.playing = true;
     const el = new Audio(`assets/music/${gameId}.mp3`);
-    el.loop = true; el.volume = 0.45;
+    el.loop = true; el.volume = 0.45 * (this._volMusic ?? 1);
     el.addEventListener("canplaythrough", () => {
       if (this.playing && !this.generativeOn) { this.fileEl = el; el.play().catch(() => this._startGenerative(gameId)); }
     }, { once: true });
@@ -129,7 +134,7 @@ class GameAudio {
       // chords/bass from the chart
       for (const [cb, notesArr] of this.song.chords) {
         if (Math.abs(cb - local) < 0.01) {
-          this._tone(midi(notesArr[0]) / 1, t, spb * 3.5, "sine", 0.045, 0.03);          // bass root
+          this._tone(midi(notesArr[0]) / 1, t, spb * 3.5, "sine", 0.045, 0.03, false, this.musicBus);   // bass root
           notesArr.forEach((m, i) => this._rhodes(midi(m) * 2, t + i * 0.03, spb * 7, 0.035));
         }
       }
@@ -159,7 +164,7 @@ class GameAudio {
     src.buffer = buf; src.loop = true;
     const f = ctx.createBiquadFilter(); f.type = "lowpass"; f.frequency.value = 3200;
     const g = ctx.createGain(); g.gain.value = 0.016;
-    src.connect(f).connect(g).connect(this.master);
+    src.connect(f).connect(g).connect(this.musicBus);
     src.start();
     this.vinylSrc = src;
   }
@@ -185,11 +190,11 @@ class GameAudio {
       this._hat(t + swing, s % 8 === 4 ? m.hatGain * 1.4 : m.hatGain);
     }
     // bass: root, soft, on 0 and the and-of-2
-    if (s === 0 || s === 7) this._tone(this.prog[this.bar][0] / 2, t, spb * 6, "sine", m.bassGain, 0.03);
+    if (s === 0 || s === 7) this._tone(this.prog[this.bar][0] / 2, t, spb * 6, "sine", m.bassGain, 0.03, false, this.musicBus);
     // Rhodes chord: bar start, gentle roll
     if (s === 0) this.prog[this.bar].forEach((f, i) => this._rhodes(f, t + i * 0.035, spb * 14, m.padGain));
     // occasional soft melody sparkle on the and-of-3
-    if (s === 11 && this.bar % 2 === 1) this._tone(PENTA[(this.bar + 1) % 5] / 2, t, 0.7, "sine", 0.018, 0.05);
+    if (s === 11 && this.bar % 2 === 1) this._tone(PENTA[(this.bar + 1) % 5] / 2, t, 0.7, "sine", 0.018, 0.05, false, this.musicBus);
   }
 
   _rhodes(freq, t, dur, gain) {
@@ -202,7 +207,7 @@ class GameAudio {
       g.gain.setValueAtTime(0, t);
       g.gain.linearRampToValueAtTime(gain * (det ? 0.5 : 1), t + 0.02);
       g.gain.setTargetAtTime(0.0001, t + 0.1, dur / 4);
-      o.connect(g).connect(this.master);
+      o.connect(g).connect(this.musicBus);
       o.start(t); o.stop(t + dur);
     }
   }
@@ -214,7 +219,7 @@ class GameAudio {
     o.frequency.exponentialRampToValueAtTime(40, t + 0.12);
     g.gain.setValueAtTime(0.13, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + 0.26);
-    o.connect(g).connect(this.master);
+    o.connect(g).connect(this.musicBus);
     o.start(t); o.stop(t + 0.3);
   }
   _noise(t, dur, freq, q, gain, dest = null) {
@@ -229,19 +234,26 @@ class GameAudio {
     src.connect(f).connect(g).connect(dest || this.master);
     src.start(t);
   }
-  _hat(t, gain) { this._noise(t, 0.04, 9000, 1.4, gain); }
-  _rim(t) { this._noise(t, 0.08, 1700, 2.5, 0.045); this._noise(t, 0.05, 4200, 1, 0.02); }
+  _hat(t, gain) { this._noise(t, 0.04, 9000, 1.4, gain, this.musicBus); }
+  _rim(t) { this._noise(t, 0.08, 1700, 2.5, 0.045, this.musicBus); this._noise(t, 0.05, 4200, 1, 0.02, this.musicBus); }
 
-  _tone(freq, t, dur, type = "sine", gain = 0.1, attack = 0.015, echo = false) {
+  // music scheduling routes through musicBus; one-shot feedback through fxBus
+  _tone(freq, t, dur, type = "sine", gain = 0.1, attack = 0.015, echo = false, dest = null) {
     const o = this.ctx.createOscillator(), g = this.ctx.createGain();
     o.type = type; o.frequency.value = freq;
     g.gain.setValueAtTime(0, t);
     g.gain.linearRampToValueAtTime(gain, t + attack);
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
     o.connect(g);
-    g.connect(this.master);
+    g.connect(dest || this.fxBus);
     if (echo && this.delay) g.connect(this.delay);
     o.start(t); o.stop(t + dur + 0.05);
+  }
+
+  // per-bus volume from the patient's saved settings
+  setVolumes({ music, fx } = {}) {
+    if (music != null) { this._volMusic = music; if (this.musicBus) this.musicBus.gain.value = music; if (this.fileEl) this.fileEl.volume = 0.45 * music; }
+    if (fx != null) { this._volFx = fx; if (this.fxBus) this.fxBus.gain.value = fx; }
   }
 
   /* ================= feedback ================= */

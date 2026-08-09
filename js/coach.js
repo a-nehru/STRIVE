@@ -5,6 +5,7 @@
 // shows the corrected posture, the world dims, one spoken cue plays.
 
 import { audio } from "./audio.js";
+import { speakLine } from "./a11y.js";
 
 const CUES = {
   lean: "Sit tall, reach with your arm",
@@ -58,14 +59,8 @@ export class Coach {
 
   get dimming() { return this.state === "alert" ? 0.15 : 0; }
 
-  _speak(text) {
-    try {
-      speechSynthesis.cancel();
-      const u = new SpeechSynthesisUtterance(text);
-      u.rate = 0.95;
-      speechSynthesis.speak(u);
-    } catch { /* voice optional */ }
-  }
+  // caption false: the cue pill already shows the text on screen
+  _speak(text) { speakLine(text, 0.95, false); }
   _cuePill(text, show) {
     const el = document.getElementById("cue");
     if (!el) return;

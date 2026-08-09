@@ -51,6 +51,17 @@ export class Tracker {
     this.hands = { left: null, right: null };     // { pts:[21 mirrored], at }
     this.handLandmarker = null;
     this._handFrameToggle = false;
+    // squeeze-ease accessibility bias: where "closed" sits inside the
+    // patient's own curl range (setSqueezeEase adjusts both thresholds)
+    this.closeFrac = 0.35; this.openFrac = 0.6;
+    // pronation/supination state (palmFacing): per-side auto-cal + hysteresis
+    this.rollCal = { left: null, right: null };
+    this.rollState = { left: "flat", right: "flat" };
+    // pincer state (thumb-index pinch, distinct from whole-hand grasp)
+    this.pinchState = { left: false, right: false };
+    // smoothed hand velocity (SW/s) for ballistic-swipe games
+    this._vel = { left: null, right: null };
+    this._velPrev = { left: null, right: null };
     // Stable render/interaction frame: the world is drawn (and hands measured)
     // against this instead of the live anchor, so sway, reaches, and tracker
     // jitter never move the scene. Locked for the whole round; re-snapped
@@ -176,8 +187,8 @@ export class Tracker {
         }
         const crange = ccal.hi - ccal.lo;
         const trusted = ccal.set || crange > CURL_CAL_MIN_RANGE;
-        const cclose = trusted ? ccal.lo + crange * 0.35 : CURL_CLOSE;
-        const copen = trusted ? ccal.lo + crange * 0.6 : CURL_OPEN;
+        const cclose = trusted ? ccal.lo + crange * this.closeFrac : CURL_CLOSE;
+        const copen = trusted ? ccal.lo + crange * this.openFrac : CURL_OPEN;
         if (this.gripClosed[s]) { if (curl > copen) this.gripClosed[s] = false; }
         else if (curl < cclose) this.gripClosed[s] = true;
         continue;
@@ -189,10 +200,27 @@ export class Tracker {
       cal.lo = Math.min(g, cal.lo + GRIP_CAL_DECAY);
       cal.hi = Math.max(g, cal.hi - GRIP_CAL_DECAY);
       const range = cal.hi - cal.lo;
-      const close = range > GRIP_CAL_MIN_RANGE ? cal.lo + range * 0.35 : GRIP_CLOSE;
-      const open = range > GRIP_CAL_MIN_RANGE ? cal.lo + range * 0.6 : GRIP_OPEN;
+      const close = range > GRIP_CAL_MIN_RANGE ? cal.lo + range * this.closeFrac : GRIP_CLOSE;
+      const open = range > GRIP_CAL_MIN_RANGE ? cal.lo + range * this.openFrac : GRIP_OPEN;
       if (this.gripClosed[s]) { if (g > open) this.gripClosed[s] = false; }
       else if (g < close) this.gripClosed[s] = true;
+    }
+
+    // smoothed hand velocity (SW/s, y up) for swipe/ballistic mechanics
+    for (const s of ["left", "right"]) {
+      const w = this.wrist(s);
+      if (!w || !this.shoulderW) { this._vel[s] = null; this._velPrev[s] = null; continue; }
+      const prev = this._velPrev[s];
+      if (prev) {
+        const dt = (now - prev.at) / 1000;
+        if (dt > 0.001) {
+          const vx = (w.x - prev.x) / this.shoulderW / dt;
+          const vy = -(w.y - prev.y) / this.shoulderW / dt;
+          const sm = this._vel[s] || { x: vx, y: vy };
+          this._vel[s] = { x: sm.x + (vx - sm.x) * 0.5, y: sm.y + (vy - sm.y) * 0.5 };
+        }
+      }
+      this._velPrev[s] = { x: w.x, y: w.y, at: now };
     }
 
     // fresh per-frame visibility (pts.ok is sticky; this is not) for framing checks
@@ -317,6 +345,73 @@ export class Tracker {
   setCurlCal(side, lo, hi) {
     if (lo == null || hi == null || hi - lo < 0.08) return;
     this.curlCal[side] = { lo, hi, set: true };
+  }
+
+  // accessibility: how far into the patient's curl range "closed" sits.
+  // easy = a light partial squeeze registers; firm = a deliberate full close.
+  setSqueezeEase(mode) {
+    if (mode === "easy") { this.closeFrac = 0.45; this.openFrac = 0.68; }
+    else if (mode === "firm") { this.closeFrac = 0.25; this.openFrac = 0.5; }
+    else { this.closeFrac = 0.35; this.openFrac = 0.6; }
+  }
+
+  // smoothed hand velocity in SW/s (y up) — null until two frames seen
+  handVel(side) {
+    const v = this._vel[side];
+    return v ? { x: v.x, y: v.y, mag: Math.hypot(v.x, v.y) } : null;
+  }
+
+  // 3-state pronation/supination from forearmRoll, self-calibrating like the
+  // grasp envelopes: "up" (supinated) / "flat" / "down" (pronated), with
+  // hysteresis so tremor can't flicker the state. Returns null when the hand
+  // isn't tracked, "flat" until enough rotation range has been seen.
+  palmFacing(side) {
+    const roll = this.forearmRoll(side);
+    if (roll == null) return null;
+    let cal = this.rollCal[side];
+    if (!cal) cal = this.rollCal[side] = { lo: roll, hi: roll };
+    cal.lo = Math.min(roll, cal.lo + GRIP_CAL_DECAY);
+    cal.hi = Math.max(roll, cal.hi - GRIP_CAL_DECAY);
+    const range = cal.hi - cal.lo;
+    if (range < 0.22) return "flat";
+    const f = (roll - cal.lo) / range;   // 0 = most pronated seen, 1 = most supinated
+    const st = this.rollState[side];
+    if (st === "up") { if (f < 0.62) this.rollState[side] = f < 0.25 ? "down" : "flat"; }
+    else if (st === "down") { if (f > 0.38) this.rollState[side] = f > 0.75 ? "up" : "flat"; }
+    else { if (f > 0.75) this.rollState[side] = "up"; else if (f < 0.25) this.rollState[side] = "down"; }
+    return this.rollState[side];
+  }
+  // continuous rotation fraction 0..1 within the patient's own seen range
+  rollFrac(side) {
+    const roll = this.forearmRoll(side);
+    const cal = this.rollCal[side];
+    if (roll == null || !cal || cal.hi - cal.lo < 0.22) return null;
+    return Math.max(0, Math.min(1, (roll - cal.lo) / (cal.hi - cal.lo)));
+  }
+
+  // pincer grip: thumb-tip ↔ index-tip gap over palm size (hand model only)
+  pinch(side) {
+    const p = this._handPts(side);
+    if (!p) return null;
+    const palm = Math.hypot(p[9].x - p[0].x, p[9].y - p[0].y) || 1e-6;
+    return Math.hypot(p[4].x - p[8].x, p[4].y - p[8].y) / palm;
+  }
+  pinchClosed(side) {
+    const v = this.pinch(side);
+    if (v == null) return false;
+    if (this.pinchState[side]) { if (v > 0.52) this.pinchState[side] = false; }
+    else if (v < 0.32) this.pinchState[side] = true;
+    return this.pinchState[side];
+  }
+  // true pincer (not a fist): pinch closed while ring+pinky stay long
+  pinchOnly(side) {
+    if (!this.pinchClosed(side)) return false;
+    const p = this._handPts(side);
+    if (!p) return false;
+    const w = p[0];
+    const palm = Math.hypot(p[9].x - w.x, p[9].y - w.y) || 1e-6;
+    const rest = (Math.hypot(p[16].x - w.x, p[16].y - w.y) + Math.hypot(p[20].x - w.x, p[20].y - w.y)) / 2 / palm;
+    return rest > 1.35;
   }
 
   // arm elevation angle in degrees vs trunk axis: 0 = arm along trunk (down),

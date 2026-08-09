@@ -30,6 +30,31 @@ function patient(db, name) {
 export const store = {
   getPatient(name) { return patient(load(), name); },
 
+  // Login screen: existing participants, most recently seen first.
+  listPatients() {
+    const db = load();
+    return Object.entries(db.patients || {})
+      .map(([name, p]) => ({
+        name,
+        created: p.created,
+        lastLogin: p.lastLogin || p.created,
+        sessions: (p.sessions || []).length,
+      }))
+      .sort((a, b) => b.lastLogin.localeCompare(a.lastLogin));
+  },
+
+  hasPatient(name) { return !!load().patients?.[name]; },
+
+  // Create (if needed) and stamp a login; the record persists immediately so
+  // the participant appears on the login screen next time.
+  login(name) {
+    const db = load();
+    const p = patient(db, name);
+    p.lastLogin = new Date().toISOString();
+    save(db);
+    return p;
+  },
+
   getProfile(name, arm) { return patient(load(), name).profiles[arm] || null; },
 
   saveProfile(name, arm, profile) {
@@ -101,4 +126,28 @@ export const store = {
   },
 
   exportPatient(name) { return JSON.stringify(patient(load(), name), null, 2); },
+
+  // Per-patient accessibility & comfort settings (GAG/WCAG pass, Aug 2026).
+  // Everything the staff tunes for one patient persists with that patient.
+  getSettings(name) {
+    return {
+      captions: true,        // on-screen captions for every spoken line
+      dwellMs: 1400,         // in-game dwell time (sticky dwell tolerates exits)
+      radiusScale: 1,        // capture-radius multiplier (bigger = more forgiving)
+      squeezeEase: "normal", // easy | normal | firm — hand-close threshold bias
+      contrast: false,       // high-contrast target outlines + dimmer scenery
+      calm: false,           // reduced motion: soft glows instead of bursts
+      textScale: 1,          // 1 / 1.25 / 1.5 on patient-facing text
+      practice: false,       // no-miss free play: nothing logged, DDA held
+      field: "none",         // visual field cut: none | left | right
+      fieldMode: "comfort",  // comfort = bias spawns to intact side | scan = train the cut side
+      volVoice: 1, volMusic: 1, volFx: 1,
+      ...patient(load(), name).settings,
+    };
+  },
+  saveSettings(name, patch) {
+    const db = load(); const p = patient(db, name);
+    p.settings = { ...p.settings, ...patch };
+    save(db);
+  },
 };

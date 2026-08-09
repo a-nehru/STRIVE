@@ -8,6 +8,7 @@
 import { GameBase, TAU, CENTER, drawBody, drawVideoMirror } from "./engine.js";
 import { audio } from "./audio.js";
 import { songById } from "./songs.js";
+import { A11Y } from "./a11y.js";
 
 const CREATURES = ["The Crane", "The Fox", "The Hare", "The Whale", "The Owl", "The Deer"];
 const pick = arr => arr[Math.floor(Math.random() * arr.length)];
@@ -27,6 +28,21 @@ const STORIES = {
   boxes: { title: "The last ferry", text: "The harbor crates must cross before the ferry leaves. Carry them over, one by one." },
   compass: { title: "The compass rose", text: "From the heart of the compass, light every point, and always return home." },
   echo: { title: "The star's echo", text: "A star leaves an invisible echo where it shone. Remember the spot, and find it again." },
+  lens: { title: "The lighthouse lens", text: "Sea fog has settled on the great lens. Wipe it clear, so the light reaches the boats." },
+  crane: { title: "The night crane", text: "Hold the crane high and steady. Squeeze to catch each crate as it passes." },
+  feather: { title: "The feather lantern", text: "Lift the lantern to its hook. Then lower it, slow as a feather." },
+  buoys: { title: "The two lights", text: "Two buoys blink in the dark. Touch one, then the other. Find your rhythm." },
+  oars: { title: "The ferry oars", text: "Both hands row together tonight. The boat loves an even stroke." },
+  ferry: { title: "The night ferry", text: "Steer between the buoys and bring her gently into the berth." },
+  stars: { title: "Falling stars", text: "Stars are streaking down the sky. Sweep your hand through them and they bloom." },
+  flare: { title: "The signal flare", text: "Pull the flare line back, hold it steady, and open your hand to light the sky." },
+  shelf: { title: "The pantry shelves", text: "The jars go up tonight. Each shelf a little higher than the last." },
+  windows: { title: "Light every window", text: "The town sleeps dark. Light every window before the dawn." },
+  sorting: { title: "The harbor lights", text: "Catch only tonight's lanterns. Listen for the chime, the rule may change." },
+  teapot: { title: "The teapot turn", text: "Palm up catches the honey. Palm down pours the tea." },
+  glide: { title: "The firefly glide", text: "Squeeze gently and the firefly rises. Relax, and she drifts down." },
+  bloom: { title: "The night blooms", text: "Open your hand wide for the big flowers, halfway for the small. Arrive ready." },
+  pinch: { title: "The firefly pinch", text: "Catch fireflies with just two fingertips. A whole fist frightens them." },
 };
 
 /* ==================== G1 Constellations ==================== */
@@ -1621,6 +1637,1653 @@ export class EchoReach extends GameBase {
   }
 }
 
+/* ==================== G10 Lighthouse Lens (wipe-to-reveal) ==================== */
+// Area-coverage training: sweeping the open hand clears sea fog off the
+// lighthouse lens. Forces sweeps across the WHOLE envelope, not point visits
+// (the wiping exercise recurs in Jintronix / Armeo / VirtualRehab catalogs).
+export class LighthouseLens extends GameBase {
+  id = "lens";
+  setup() {
+    this.tips = {
+      objective: "Wipe the fog away with your hand.",
+      miss: "Long slow sweeps, like polishing a window.",
+    };
+    this.cell = 0.13;                       // fog cell size, SW
+    this.pane = 0;
+    this._newPane();
+    this.clearedTotal = 0;
+    this.cellCount = this.fog.length;
+    this._chunk = 0;
+    this.tellStory(STORIES.lens);
+  }
+  _newPane() {
+    // fog cells covering the reachable window around CENTER
+    this.fog = [];
+    const R = 1.05 * this.params.rangeScale;
+    for (let gx = -8; gx <= 8; gx++) for (let gy = -8; gy <= 8; gy++) {
+      const x = gx * this.cell, y = gy * this.cell;
+      const th = Math.atan2(y, x);
+      const r = Math.hypot(x, y);
+      if (r > R * this.envAt(th)) continue;
+      const pos = { x: CENTER.x + x, y: CENTER.y + y };
+      const px = this.toPx(pos);
+      if (px.x < 40 || px.x > this.canvas.width - 40 || px.y < 40 || px.y > this.canvas.height - 40) continue;
+      this.fog.push({ ...pos, a: 1, jit: Math.random() });
+    }
+    this.pane++;
+  }
+  update(now, dt) {
+    const h = this.t.palmRel(this.side) || this.t.handRel(this.side);
+    if (!h) return;
+    const wipeR = Math.max(0.16, this.params.radius * 1.1);
+    let cleared = 0, remaining = 0;
+    for (const f of this.fog) {
+      if (f.a <= 0) { cleared++; continue; }
+      remaining++;
+      if (Math.hypot(h.x - f.x, h.y - f.y) < wipeR) {
+        f.a -= dt / 420;                    // ~half a second of contact clears a cell
+        if (f.a <= 0) {
+          f.a = 0;
+          this.clearedTotal++;
+          if (++this._chunk >= 6) {         // one chime + star per handful of fog
+            this._chunk = 0;
+            this.hit({ reachFrac: Math.hypot(f.x - CENTER.x, f.y - CENTER.y) / (this.envAt(Math.atan2(f.y - CENTER.y, f.x - CENTER.x)) || 1) });
+            this.burst({ x: f.x, y: f.y }, "#cfe6f0");
+          }
+        }
+      }
+    }
+    if (remaining === 0 && this.fog.length) {
+      this.say("The light is shining through. Here comes more fog.");
+      this._newPane();
+    }
+  }
+  drawBg(ctx, c) {
+    const g = ctx.createRadialGradient(c.width / 2, c.height * 0.45, 60, c.width / 2, c.height * 0.45, c.height * 0.9);
+    g.addColorStop(0, "#3d3a68"); g.addColorStop(1, "#171736");
+    ctx.fillStyle = g; ctx.fillRect(0, 0, c.width, c.height);
+    // the picture behind the fog: the great lamp, seen through the lens
+    const cp = this.toPx(CENTER);
+    const lamp = ctx.createRadialGradient(cp.x, cp.y, 4, cp.x, cp.y, this.sw() * 1.1);
+    lamp.addColorStop(0, "rgba(255,246,216,0.95)");
+    lamp.addColorStop(0.35, "rgba(232,168,106,0.55)");
+    lamp.addColorStop(1, "rgba(232,168,106,0)");
+    ctx.fillStyle = lamp;
+    ctx.fillRect(0, 0, c.width, c.height);
+    // beam rays
+    ctx.save();
+    ctx.translate(cp.x, cp.y);
+    ctx.rotate(performance.now() / 9000);
+    ctx.fillStyle = "rgba(255,246,216,0.06)";
+    for (let i = 0; i < 4; i++) {
+      ctx.rotate(Math.PI / 2);
+      ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(c.width, -c.width * 0.09); ctx.lineTo(c.width, c.width * 0.09); ctx.closePath(); ctx.fill();
+    }
+    ctx.restore();
+    twinkles(ctx, c);
+  }
+  draw(ctx, c, now) {
+    const s = this.cell * this.sw();
+    for (const f of this.fog) {
+      if (f.a <= 0) continue;
+      const p = this.toPx(f);
+      ctx.globalAlpha = f.a * (0.82 + 0.08 * Math.sin(now / 900 + f.jit * 6));
+      ctx.fillStyle = "#9aa6c0";
+      ctx.beginPath(); ctx.roundRect(p.x - s * 0.62, p.y - s * 0.62, s * 1.24, s * 1.24, s * 0.4); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    this.drawTimerWhisper(ctx, c, now);
+  }
+  extra() {
+    return { coverage: this.cellCount ? Math.min(1, this.clearedTotal / this.cellCount) : 0, panes: this.pane };
+  }
+}
+
+/* ==================== G11 Crane Keeper (hold high + squeeze) ==================== */
+// Progressive abduction loading made playful: keep the arm inside a raised
+// band (the crane stays up) and, while holding, squeeze to catch passing
+// crates — proximal stabilization + distal action in one loop.
+export class CraneKeeper extends GameBase {
+  id = "crane";
+  setup() {
+    this.tips = {
+      objective: "Keep your arm up, and squeeze when a crate is under the hook.",
+      miss: "Rest a moment, then lift back into the glow.",
+    };
+    const top = this.profile.arcMaxDeg ?? 120;
+    this.band = { lo: Math.max(35, top * 0.45), hi: Math.max(65, top * 0.8) };
+    this.inBand = false;
+    this.bandMs = 0; this.playMs = 0;
+    this.crates = [];
+    this.carried = null;
+    this.nextCrate = 0;
+    this.wasClosed = false;
+    this.delivered = 0;
+    this.tellStory(STORIES.crane);
+  }
+  update(now, dt) {
+    this.playMs += dt;
+    const ang = this.t.armAngle(this.side);
+    this.inBand = ang != null && ang >= this.band.lo && ang <= this.band.hi;
+    if (this.inBand) this.bandMs += dt;
+
+    // crates drift across the water lane near the bottom of the reach space
+    if (now > this.nextCrate && this.crates.length < 2) {
+      const fromLeft = this.side === "right";
+      this.crates.push({
+        x: fromLeft ? -1.4 : 1.4,
+        y: CENTER.y - 0.55,
+        vx: (fromLeft ? 1 : -1) * (0.00022 + Math.random() * 0.0001),   // SW per ms
+        held: false,
+      });
+      this.nextCrate = now + (this.params.lifetime * 1000) + Math.random() * 1500;
+    }
+
+    const closed = this.t.handClosed(this.side);
+    const squeezeEdge = closed && !this.wasClosed;
+    this.wasClosed = closed;
+
+    for (const cr of this.crates) {
+      if (cr.held) continue;
+      cr.x += cr.vx * dt;
+      if (Math.abs(cr.x) > 1.5) { cr.gone = true; this.miss(); }
+    }
+    this.crates = this.crates.filter(cr => !cr.gone);
+
+    // the hook hangs under the claw: only live while the arm holds the band
+    if (this.inBand && !this.carried && squeezeEdge) {
+      const hook = { x: 0, y: CENTER.y - 0.15 };
+      for (const cr of this.crates) {
+        if (Math.abs(cr.x - hook.x) < 0.3 && !cr.held) {
+          cr.held = true; this.carried = cr;
+          audio.note(3);
+          this.say("Got it! Now let it settle on the barge.");
+          break;
+        }
+      }
+    }
+    // carried crate rises to the claw, then an open hand lowers it onto the barge
+    if (this.carried) {
+      const cr = this.carried;
+      cr.x += (0 - cr.x) * 0.06;
+      cr.y += ((CENTER.y - 0.05) - cr.y) * 0.06;
+      if (!closed) {
+        this.delivered++;
+        this.hit({ reachFrac: 0.8 });
+        this.burst({ x: cr.x, y: cr.y }, "#9fc08a");
+        cr.gone = true; this.carried = null;
+        this.crates = this.crates.filter(k => !k.gone);
+      }
+    }
+  }
+  drawBg(ctx, c) {
+    const g = ctx.createLinearGradient(0, 0, 0, c.height);
+    g.addColorStop(0, "#1c2440"); g.addColorStop(0.62, "#25314e"); g.addColorStop(1, "#101a2e");
+    ctx.fillStyle = g; ctx.fillRect(0, 0, c.width, c.height);
+    twinkles(ctx, c);
+    // water line + barge
+    const wl = this.toPx({ x: 0, y: CENTER.y - 0.62 });
+    ctx.fillStyle = "rgba(18, 40, 52, 0.55)";
+    ctx.fillRect(0, wl.y, c.width, c.height - wl.y);
+  }
+  draw(ctx, c, now) {
+    const sw = this.sw();
+    // elevation band arc around the shoulder: the "keep the crane up" zone
+    const sh = this.t.shoulder(this.side);
+    if (sh) {
+      const sp = this.t._videoToPx(sh.x, sh.y, c);
+      // canvas angle: PI/2 = straight down; elevation rotates outward on the
+      // trained side (screen-right for the right arm in the mirror view)
+      const mirror = this.side === "left" ? -1 : 1;
+      ctx.save();
+      ctx.lineWidth = 16; ctx.lineCap = "round";
+      ctx.strokeStyle = this.inBand ? "rgba(159,192,138,0.5)" : "rgba(232,168,106,0.3)";
+      if (!this.inBand) ctx.setLineDash([14, 10]);
+      const a0 = Math.PI / 2 - mirror * (this.band.lo * Math.PI / 180);
+      const a1 = Math.PI / 2 - mirror * (this.band.hi * Math.PI / 180);
+      ctx.beginPath(); ctx.arc(sp.x, sp.y, sw * 0.9, Math.min(a0, a1), Math.max(a0, a1)); ctx.stroke();
+      ctx.restore();
+    }
+    // claw + cable at top center of the work area
+    const claw = this.toPx({ x: 0, y: CENTER.y + 0.55 });
+    const hook = this.toPx({ x: 0, y: CENTER.y - 0.15 });
+    ctx.strokeStyle = this.inBand ? "#e8b98a" : "rgba(232,185,138,0.35)";
+    ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.moveTo(claw.x, claw.y - sw * 0.3); ctx.lineTo(hook.x, this.inBand ? hook.y : hook.y + sw * 0.35); ctx.stroke();
+    this.glow(ctx, hook.x, this.inBand ? hook.y : hook.y + sw * 0.35, 12, "#fff6d8", this.inBand ? "#e8a86a" : "#5a5f80", 18);
+    // crates
+    for (const cr of this.crates) {
+      const p = this.toPx(cr);
+      crateShape(ctx, p.x, p.y, sw * 0.24, cr.held);
+    }
+    // barge (delivery spot) with the delivered stack — the count IS the test
+    const barge = this.toPx({ x: this.side === "right" ? 0.65 : -0.65, y: CENTER.y - 0.68 });
+    roundedRect(ctx, barge.x - sw * 0.4, barge.y, sw * 0.8, sw * 0.16, 6, "#3a3552", "#262242");
+    for (let i = 0; i < this.delivered; i++) {
+      crateShape(ctx, barge.x - sw * 0.28 + (i % 4) * sw * 0.19, barge.y - sw * 0.12 - Math.floor(i / 4) * sw * 0.2, sw * 0.15, false);
+    }
+    this.drawTimerWhisper(ctx, c, now);
+  }
+  extra() {
+    return { holdFrac: this.playMs ? this.bandMs / this.playMs : 0, delivered: this.delivered };
+  }
+}
+
+/* ==================== G12 Feather Lantern (eccentric lowering) ==================== */
+// Controlled lowering against gravity — the movement-quality deficit the
+// hit/miss economy can't see. Lift briskly to the hook, then descend inside
+// a gentle speed band; too fast and the flame gutters.
+export class FeatherLantern extends GameBase {
+  id = "feather";
+  setup() {
+    this.tips = {
+      objective: "Lift the lantern up to its hook, then lower it slowly.",
+      miss: "Let it drift down slow as a feather.",
+    };
+    this.phase = "lift";                    // lift → lower → (hit) → lift
+    this.topY = CENTER.y + 0.55 * this.params.rangeScale;
+    this.botY = CENTER.y - 0.5 * this.params.rangeScale;
+    this.speedBand = 0.55;                  // max downward SW/s that keeps the flame
+    this.inBandMs = 0; this.lowerMs = 0;
+    this.cycles = 0;
+    this.flame = 1;
+    this.tellStory(STORIES.feather);
+  }
+  update(now, dt) {
+    const h = this.t.palmRel(this.side) || this.t.handRel(this.side);
+    if (!h) return;
+    this.lanternY = h.y;
+    if (this.phase === "lift") {
+      if (h.y >= this.topY) {
+        this.phase = "lower";
+        this.flame = 1;
+        audio.note(4);
+        this.say("Lovely. Now lower it, slow and steady.");
+      }
+    } else {
+      const v = this.t.handVel(this.side);
+      const down = v ? -v.y : 0;            // positive when descending
+      this.lowerMs += dt;
+      if (down < this.speedBand) {
+        this.inBandMs += dt;
+        this.flame = Math.min(1, this.flame + dt / 900);
+      } else {
+        this.flame -= dt / 500;             // dropping too fast: the flame gutters
+        if (this.flame <= 0) {
+          this.miss();
+          this.say(this.tips.miss);
+          this.phase = "lift";
+          this.flame = 1;
+          return;
+        }
+      }
+      if (h.y <= this.botY) {
+        this.cycles++;
+        this.hit({ reachFrac: 0.9 });
+        this.burst({ x: h.x, y: h.y }, "#ffd98a");
+        this.phase = "lift";
+      }
+    }
+  }
+  drawBg(ctx, c) {
+    const g = ctx.createLinearGradient(0, 0, 0, c.height);
+    g.addColorStop(0, "#241f45"); g.addColorStop(1, "#131228");
+    ctx.fillStyle = g; ctx.fillRect(0, 0, c.width, c.height);
+    twinkles(ctx, c);
+  }
+  draw(ctx, c, now) {
+    const sw = this.sw();
+    const hook = this.toPx({ x: CENTER.x, y: this.topY });
+    const shelf = this.toPx({ x: CENTER.x, y: this.botY });
+    // hook (target while lifting)
+    ctx.strokeStyle = this.phase === "lift" ? "#e8a86a" : "rgba(232,168,106,0.3)";
+    ctx.lineWidth = 5; ctx.lineCap = "round";
+    ctx.beginPath(); ctx.arc(hook.x, hook.y - 14, 12, Math.PI * 0.1, Math.PI * 1.2); ctx.stroke();
+    // shelf (target while lowering)
+    ctx.strokeStyle = this.phase === "lower" ? "#9fc08a" : "rgba(159,192,138,0.3)";
+    ctx.lineWidth = 6;
+    ctx.beginPath(); ctx.moveTo(shelf.x - sw * 0.35, shelf.y); ctx.lineTo(shelf.x + sw * 0.35, shelf.y); ctx.stroke();
+    // the speed column: glows sage inside the gentle band, amber outside
+    if (this.phase === "lower") {
+      const v = this.t.handVel(this.side);
+      const down = v ? Math.max(0, -v.y) : 0;
+      const f = Math.min(1, down / (this.speedBand * 1.8));
+      const colX = shelf.x + sw * 0.75 * (this.side === "right" ? 1 : -1);
+      const colTop = hook.y, colBot = shelf.y;
+      ctx.fillStyle = "rgba(244,236,221,0.08)";
+      ctx.fillRect(colX - 10, colTop, 20, colBot - colTop);
+      const okBand = down < this.speedBand;
+      ctx.fillStyle = okBand ? "rgba(159,192,138,0.75)" : "rgba(232,168,106,0.85)";
+      ctx.fillRect(colX - 10, colBot - (colBot - colTop) * f, 20, (colBot - colTop) * f);
+      if (!okBand) {   // redundant non-color cue: the column wobbles when too fast
+        ctx.strokeStyle = "rgba(255,255,255,0.6)"; ctx.lineWidth = 2; ctx.setLineDash([4, 5]);
+        ctx.strokeRect(colX - 13, colTop, 26, colBot - colTop);
+        ctx.setLineDash([]);
+      }
+    }
+    // the lantern rides the hand; flame size = how gently it is being carried
+    const hp = this.t.palmPx(this.side, c);
+    if (hp) {
+      lanternShape(ctx, hp.x, hp.y + 26, 20 + this.flame * 6, this.phase === "lower" && this.flame > 0.6);
+      ctx.globalAlpha = Math.max(0.15, this.flame);
+      this.glow(ctx, hp.x, hp.y + 18, 9 + this.flame * 7, "#fff6d8", "#e8a86a", 20);
+      ctx.globalAlpha = 1;
+    }
+    this.drawTimerWhisper(ctx, c, now);
+  }
+  extra() {
+    return { descentSmooth: this.lowerMs ? this.inBandMs / this.lowerMs : 0, cycles: this.cycles };
+  }
+}
+
+/* ==================== G13 Two Lights (Fitts ladder) ==================== */
+// Speed–accuracy staircase: touch two buoys alternately; every block resizes
+// the buoys and their separation (Fitts index of difficulty), and the round
+// reports throughput — a repeatable hidden assessment.
+export class TwoLights extends GameBase {
+  id = "buoys";
+  setup() {
+    this.tips = {
+      objective: "Touch one light, then the other. Find your own rhythm.",
+      miss: "No rush, steady taps back and forth.",
+    };
+    this.block = 0;
+    this.taps = [];
+    this._newBlock();
+    this.activeIdx = 0;
+    this.lastTapAt = null;
+    this.tellStory(STORIES.buoys);
+  }
+  _newBlock() {
+    // blocks sweep difficulty: separation fraction × target size
+    const D = [0.5, 0.7, 0.9][this.block % 3];
+    const W = [1.3, 1, 0.75][Math.floor(this.block / 3) % 3];
+    this.sep = D; this.wScale = W;
+    const th = this.side === "right" ? 0 : Math.PI;
+    const r = (f) => ({
+      x: CENTER.x + Math.cos(th) * this.envAt(th) * this.params.rangeScale * this.sep * f,
+      y: CENTER.y + (f > 0 ? 0.08 : -0.08),
+    });
+    this.lights = [r(0.5), r(-0.5)];
+    this.blockTapCount = 0;
+    this.block++;
+  }
+  update(now) {
+    const target = this.lights[this.activeIdx];
+    const hitR = this.params.radius * this.wScale;
+    if (this.handNear(target, hitR)) {
+      // touch is enough — speed is the point of this game
+      const mt = this.lastTapAt ? (now - this.lastTapAt) / 1000 : null;
+      if (mt && mt > 0.15) {
+        const Dsw = Math.hypot(this.lights[0].x - this.lights[1].x, this.lights[0].y - this.lights[1].y);
+        const id = Math.log2((2 * Dsw) / (hitR * 2));
+        if (id > 0) this.taps.push({ mt, id, tp: id / mt });
+      }
+      this.lastTapAt = now;
+      this.hit({ reachFrac: 0.7 });
+      this.burst(target, "#fff2c2");
+      this.activeIdx = 1 - this.activeIdx;
+      if (++this.blockTapCount >= 10) { this._newBlock(); this.say("New waters. Keep your rhythm."); }
+    }
+  }
+  drawBg(ctx, c) {
+    const g = ctx.createLinearGradient(0, 0, 0, c.height);
+    g.addColorStop(0, "#1a2140"); g.addColorStop(0.7, "#182a42"); g.addColorStop(1, "#0e1830");
+    ctx.fillStyle = g; ctx.fillRect(0, 0, c.width, c.height);
+    twinkles(ctx, c);
+  }
+  draw(ctx, c, now) {
+    const pulse = Math.sin(now / 350) * 0.5 + 0.5;
+    this.lights.forEach((l, i) => {
+      const p = this.toPx(l);
+      const active = i === this.activeIdx;
+      const r = this.params.radius * this.wScale * this.sw();
+      // buoy body
+      ctx.fillStyle = active ? "#e8a86a" : "rgba(120,126,160,0.7)";
+      ctx.beginPath(); ctx.moveTo(p.x - 12, p.y + 20); ctx.lineTo(p.x + 12, p.y + 20); ctx.lineTo(p.x + 7, p.y - 6); ctx.lineTo(p.x - 7, p.y - 6); ctx.closePath(); ctx.fill();
+      if (active) {
+        this.glow(ctx, p.x, p.y - 16, 12 + pulse * 6, "#fff6d8", "#e8a86a", 26);
+        ctx.strokeStyle = "rgba(255,246,216,0.5)"; ctx.lineWidth = 2.5;
+        ctx.beginPath(); ctx.arc(p.x, p.y - 8, r, 0, TAU); ctx.stroke();
+      } else {
+        this.glow(ctx, p.x, p.y - 16, 7, "rgba(244,236,221,0.5)", "rgba(140,150,190,0.4)", 10);
+      }
+    });
+    this.drawTimerWhisper(ctx, c, now);
+  }
+  extra() {
+    const tp = this.taps.map(t => t.tp);
+    const mt = this.taps.map(t => t.mt);
+    const mean = a => a.length ? a.reduce((s, v) => s + v, 0) / a.length : 0;
+    return { throughput: +mean(tp).toFixed(2), meanMT: +mean(mt).toFixed(2), blocks: this.block };
+  }
+}
+
+/* ==================== G14 Ferry Oars (bilateral rowing) ==================== */
+// The suite's first two-arm game. Both hands cycle up and down to row; boat
+// speed rewards amplitude × symmetry (a bonus, never a requirement — the
+// Jintronix design). Mode "together" = in-phase; "bailing" = anti-phase,
+// the harder interlimb pattern (BATRAC).
+export class FerryOars extends GameBase {
+  id = "oars";
+  setup() {
+    this.tips = {
+      objective: "Row with both hands, nice and even.",
+      miss: "Let both arms share the work, gently.",
+    };
+    this.opts.bothArms = true;
+    this.mode = this.opts.mode === "bailing" ? "anti" : "in";
+    this.boatX = 0;                          // 0 → 1 across the harbor
+    this.crossings = 0;
+    this.phase = { left: null, right: null };  // wave state per hand
+    this.lastY = { left: null, right: null };
+    this.dir = { left: 0, right: 0 };
+    this.strokeAmp = { left: 0, right: 0 };
+    this.strokeMin = { left: null, right: null };
+    this.strokeMax = { left: null, right: null };
+    this.symScore = [];
+    this.speed = 0;
+    this.tellStory(STORIES.oars);
+  }
+  _trackStroke(s, y, now) {
+    // detect direction reversals → one half-stroke; amplitude = travel since last reversal
+    if (this.lastY[s] == null) { this.lastY[s] = y; return null; }
+    const dy = y - this.lastY[s];
+    // tiny threshold: slow, effortful strokes must still register (only true
+    // jitter is filtered; the reversal itself is the signal)
+    if (Math.abs(dy) < 0.0006) return null;
+    this.lastY[s] = y;
+    const dir = Math.sign(dy);
+    if (this.dir[s] === 0) { this.dir[s] = dir; this.strokeMin[s] = this.strokeMax[s] = y; return null; }
+    this.strokeMin[s] = Math.min(this.strokeMin[s], y);
+    this.strokeMax[s] = Math.max(this.strokeMax[s], y);
+    if (dir !== this.dir[s]) {
+      this.dir[s] = dir;
+      const amp = this.strokeMax[s] - this.strokeMin[s];
+      this.strokeMin[s] = this.strokeMax[s] = y;
+      if (amp > 0.12) return { amp, at: now, dirNow: dir };
+    }
+    return null;
+  }
+  update(now, dt) {
+    const ys = {};
+    for (const s of ["left", "right"]) {
+      const h = this.t.palmRel(s) || this.t.handRel(s);
+      if (h) ys[s] = h.y;
+    }
+    let stroked = false;
+    for (const s of ["left", "right"]) {
+      if (ys[s] == null) continue;
+      const st = this._trackStroke(s, ys[s], now);
+      if (st) { this.strokeAmp[s] = st.amp; this.lastStroke = { ...st, side: s }; stroked = true; }
+    }
+    // symmetry: compare the two hands' current vertical positions
+    if (ys.left != null && ys.right != null) {
+      const diff = this.mode === "in"
+        ? Math.abs(ys.left - ys.right)                               // together: same height
+        : Math.abs((ys.left - CENTER.y) + (ys.right - CENTER.y));    // bailing: mirror heights
+      this.sym = Math.max(0, 1 - diff / 0.5);
+    } else this.sym = 0;
+
+    if (stroked) {
+      const amp = (this.strokeAmp.left + this.strokeAmp.right) / 2;
+      const boost = amp * (0.6 + 0.4 * this.sym);      // symmetry sweetens, never gates
+      this.speed = Math.min(0.00035, this.speed + boost * 0.0004);
+      this.symScore.push(this.sym);
+      audio.note(Math.floor(this.sym * 4));
+    }
+    this.speed *= Math.pow(0.9994, dt);                // gentle drag
+    this.boatX += this.speed * dt;
+    if (this.boatX >= 1) {
+      this.crossings++;
+      this.boatX = 0;
+      this.hit({ reachFrac: 0.8 });
+      this.say("Across! The ferry thanks you both.");
+    }
+  }
+  drawBg(ctx, c) {
+    const g = ctx.createLinearGradient(0, 0, 0, c.height);
+    g.addColorStop(0, "#1b2342"); g.addColorStop(0.55, "#20355077"); g.addColorStop(1, "#0d1a30");
+    ctx.fillStyle = "#1b2342"; ctx.fillRect(0, 0, c.width, c.height);
+    ctx.fillStyle = g; ctx.fillRect(0, 0, c.width, c.height);
+    twinkles(ctx, c);
+    // far shore with waiting windows
+    ctx.fillStyle = "#141b30";
+    ctx.fillRect(c.width * 0.86, c.height * 0.42, c.width * 0.14, c.height * 0.2);
+    for (let i = 0; i < this.crossings && i < 8; i++) {
+      ctx.fillStyle = "#e8a86a";
+      ctx.fillRect(c.width * (0.88 + (i % 4) * 0.03), c.height * (0.45 + Math.floor(i / 4) * 0.07), 8, 10);
+    }
+    // water
+    ctx.fillStyle = "rgba(16, 40, 56, 0.5)";
+    ctx.fillRect(0, c.height * 0.62, c.width, c.height * 0.38);
+  }
+  draw(ctx, c, now) {
+    // the ferry crossing left → right
+    const bx = c.width * (0.12 + this.boatX * 0.68);
+    const by = c.height * 0.62 + Math.sin(now / 800) * 5;
+    ctx.save();
+    ctx.fillStyle = "#3a3552";
+    ctx.beginPath();
+    ctx.moveTo(bx - 60, by); ctx.lineTo(bx + 60, by); ctx.lineTo(bx + 40, by + 26); ctx.lineTo(bx - 40, by + 26);
+    ctx.closePath(); ctx.fill();
+    lanternShape(ctx, bx, by - 16, 11, this.sym > 0.7);
+    // oars angle with the mean hand height
+    const hL = this.t.palmRel("left"), hR = this.t.palmRel("right");
+    const oar = (hx, side) => {
+      const a = Math.max(-0.7, Math.min(0.7, (hx ?? CENTER.y) - CENTER.y));
+      ctx.strokeStyle = "rgba(232,185,138,0.8)"; ctx.lineWidth = 5; ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(bx + side * 26, by + 6);
+      ctx.lineTo(bx + side * 78, by + 6 + a * -60);
+      ctx.stroke();
+    };
+    oar(hL?.y, -1); oar(hR?.y, 1);
+    ctx.restore();
+    // the symmetry ribbon: a bar that levels when the two hands agree —
+    // level line + steady glow = good (shape cue, not color-only)
+    const rw = c.width * 0.22, rx = c.width / 2 - rw / 2, ry = c.height * 0.12;
+    ctx.strokeStyle = "rgba(244,236,221,0.25)"; ctx.lineWidth = 2;
+    ctx.strokeRect(rx, ry - 12, rw, 24);
+    const tilt = (this.sym != null ? (1 - this.sym) : 1) * 16;
+    const dirSign = (hL?.y ?? 0) > (hR?.y ?? 0) ? -1 : 1;
+    ctx.strokeStyle = this.sym > 0.7 ? "#9fc08a" : "#e8a86a";
+    ctx.lineWidth = 6; ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(rx + 8, ry + dirSign * tilt);
+    ctx.lineTo(rx + rw - 8, ry - dirSign * tilt);
+    ctx.stroke();
+    this.drawTimerWhisper(ctx, c, now);
+  }
+  extra() {
+    const mean = a => a.length ? a.reduce((s, v) => s + v, 0) / a.length : 0;
+    return { crossings: this.crossings, symmetry: +mean(this.symScore).toFixed(2), rowMode: this.mode };
+  }
+}
+
+/* ==================== G15 The Night Ferry (steering / berthing) ==================== */
+// Continuous steering — the most repeated commercial rehab verb after reach.
+// Solo: hand height is the rudder. Wheel mode: both hands grip an invisible
+// wheel; the angle of the line between the palms steers (bimanual).
+export class NightFerry extends GameBase {
+  id = "ferry";
+  setup() {
+    this.tips = {
+      objective: "Steer the ferry between the buoy gates.",
+      miss: "Small and steady on the wheel. Bumps are soft here.",
+    };
+    this.wheel = this.opts.mode === "wheel";
+    if (this.wheel) this.opts.bothArms = true;
+    this.boat = { y: 0.5, vy: 0 };          // 0..1 vertical position in the channel
+    this.gates = [];
+    this.gateEvery = 0.32;                  // world-space gap between gates
+    this.worldX = 0;
+    this.nextGateX = 0.5;
+    this.gatesThrough = 0;
+    this.bumps = 0;
+    this.steer = 0;
+    this.jitterSum = 0; this.jitterN = 0;
+    this.tellStory(STORIES.ferry);
+  }
+  update(now, dt) {
+    // steering input → target lateral velocity
+    let steer = null;
+    if (this.wheel) {
+      const l = this.t.palmRel("left"), r = this.t.palmRel("right");
+      if (l && r) steer = Math.max(-1, Math.min(1, (r.y - l.y) / 0.7));
+    } else {
+      const h = this.t.palmRel(this.side) || this.t.handRel(this.side);
+      if (h) steer = Math.max(-1, Math.min(1, (h.y - CENTER.y) / (0.55 * this.params.rangeScale)));
+    }
+    if (steer != null) {
+      this.jitterSum += Math.abs(steer - this.steer); this.jitterN++;
+      this.steer = steer;
+      this.boat.vy += (steer * 0.00042 - this.boat.vy) * 0.08;
+    }
+    this.boat.y = Math.max(0.06, Math.min(0.94, this.boat.y - this.boat.vy * dt));
+
+    // the channel scrolls; gates arrive on a rhythm set by the profile's pace
+    const speed = 0.00009 + 0.00002 * (this.gatesThrough > 4 ? 1 : 0);
+    this.worldX += speed * dt;
+    if (this.worldX + 1.2 > this.nextGateX) {
+      const gapHalf = Math.max(0.09, 0.2 - this.gatesThrough * 0.008);
+      this.gates.push({ x: this.nextGateX, yc: 0.2 + Math.random() * 0.6, gapHalf, done: false });
+      this.nextGateX += this.gateEvery;
+    }
+    for (const gd of this.gates) {
+      const sx = gd.x - this.worldX;        // screen-space 0..1 (boat sits at 0.22)
+      if (!gd.done && sx < 0.22) {
+        gd.done = true;
+        if (Math.abs(this.boat.y - gd.yc) <= gd.gapHalf) {
+          this.gatesThrough++;
+          this.hit({ reachFrac: 0.7 });
+          this.burst({ x: CENTER.x, y: CENTER.y }, "#9fc08a");
+        } else {
+          this.bumps++;
+          this.miss();                       // soft: the buoy just dings
+        }
+      }
+    }
+    this.gates = this.gates.filter(gd => gd.x - this.worldX > -0.2);
+  }
+  drawBg(ctx, c) {
+    const g = ctx.createLinearGradient(0, 0, 0, c.height);
+    g.addColorStop(0, "#151d3a"); g.addColorStop(0.4, "#1c2f4a"); g.addColorStop(1, "#0a1526");
+    ctx.fillStyle = g; ctx.fillRect(0, 0, c.width, c.height);
+    twinkles(ctx, c);
+    // moon road on the water
+    ctx.fillStyle = "rgba(244,236,221,0.05)";
+    ctx.fillRect(0, c.height * 0.1, c.width, c.height * 0.84);
+  }
+  draw(ctx, c, now) {
+    const laneTop = c.height * 0.08, laneH = c.height * 0.84;
+    // gates: paired buoys with a lit gap
+    for (const gd of this.gates) {
+      const sx = gd.x - this.worldX;
+      const px = c.width * (0.1 + sx * 0.85);
+      if (px > c.width + 40) continue;
+      const yTop = laneTop + (gd.yc - gd.gapHalf) * laneH;
+      const yBot = laneTop + (gd.yc + gd.gapHalf) * laneH;
+      const pulse = Math.sin(now / 400) * 0.5 + 0.5;
+      for (const [gy, flip] of [[yTop, -1], [yBot, 1]]) {
+        ctx.fillStyle = gd.done ? "rgba(120,126,160,0.5)" : "#c77f4a";
+        ctx.beginPath(); ctx.moveTo(px - 10, gy + flip * 14); ctx.lineTo(px + 10, gy + flip * 14); ctx.lineTo(px + 6, gy); ctx.lineTo(px - 6, gy); ctx.closePath(); ctx.fill();
+        if (!gd.done) this.glow(ctx, px, gy, 6 + pulse * 4, "#fff6d8", "#e8a86a", 14);
+      }
+      if (!gd.done) {
+        ctx.strokeStyle = "rgba(159,192,138,0.35)"; ctx.lineWidth = 3; ctx.setLineDash([6, 8]);
+        ctx.beginPath(); ctx.moveTo(px, yTop + 8); ctx.lineTo(px, yBot - 8); ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+    // the ferry at fixed x, rides boat.y
+    const bx = c.width * 0.22, by = laneTop + this.boat.y * laneH;
+    ctx.save();
+    ctx.translate(bx, by);
+    ctx.rotate(-this.boat.vy * 300);
+    ctx.fillStyle = "#4a4468";
+    ctx.beginPath(); ctx.moveTo(-44, -12); ctx.lineTo(30, -12); ctx.lineTo(48, 0); ctx.lineTo(30, 12); ctx.lineTo(-44, 12); ctx.closePath(); ctx.fill();
+    lanternShape(ctx, -8, -20, 9, true);
+    ctx.restore();
+    // wheel-mode: show the invisible wheel between the palms
+    if (this.wheel) {
+      const l = this.t.palmPx("left", c), r = this.t.palmPx("right", c);
+      if (l && r) {
+        ctx.strokeStyle = "rgba(232,185,138,0.55)"; ctx.lineWidth = 5; ctx.lineCap = "round";
+        ctx.beginPath(); ctx.moveTo(l.x, l.y); ctx.lineTo(r.x, r.y); ctx.stroke();
+        const mx = (l.x + r.x) / 2, my = (l.y + r.y) / 2;
+        ctx.strokeStyle = "rgba(232,185,138,0.35)"; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.arc(mx, my, Math.hypot(r.x - l.x, r.y - l.y) / 2, 0, TAU); ctx.stroke();
+      }
+    }
+    this.drawTimerWhisper(ctx, c, now);
+  }
+  extra() {
+    return {
+      gates: this.gatesThrough, bumps: this.bumps,
+      steadiness: this.jitterN ? +(1 - Math.min(1, (this.jitterSum / this.jitterN) * 12)).toFixed(2) : 0,
+      ferryMode: this.wheel ? "wheel" : "solo",
+    };
+  }
+}
+
+/* ==================== G16 Falling Stars (ballistic swipe) ==================== */
+// The suite's missing speed axis: success is a sweep THROUGH the streak at
+// real velocity, not a dwell. Later streaks spawn contralaterally, so the
+// sweep crosses the midline.
+export class FallingStars extends GameBase {
+  id = "stars";
+  setup() {
+    this.tips = {
+      objective: "Sweep your hand through the falling stars.",
+      miss: "A flowing sweep, like brushing sand away.",
+    };
+    this.streaks = [];
+    this.nextSpawn = 0;
+    this.needVel = 0.9;                     // SW/s sweep speed to scatter a streak
+    this.swept = 0;
+    this.crossers = 0;
+    this.tellStory(STORIES.stars);
+  }
+  update(now, dt) {
+    if (now > this.nextSpawn && this.streaks.length < 3) {
+      // from round midpoint on, some streaks sit across the midline
+      const late = this.elapsed(now) > this.roundSeconds * 0.45;
+      const cross = late && Math.random() < 0.4;
+      const pos = this.samplePos({ upperHalf: true });
+      if (cross) pos.x = -Math.abs(pos.x) * (this.side === "right" ? 1 : -1);
+      this.streaks.push({ ...pos, born: now, life: this.params.lifetime * 1400, cross, drift: (Math.random() - 0.5) * 0.00004 });
+      this.nextSpawn = now + 900 + Math.random() * 900;
+    }
+    const vel = this.t.handVel(this.side);
+    for (const st of this.streaks) {
+      st.y -= 0.00006 * dt;                  // slow fall
+      st.x += st.drift * dt;
+      if (now - st.born > st.life) { st.gone = true; this.miss(st); continue; }
+      if (this.handNear(st, this.params.radius * 1.15) && vel && vel.mag > this.needVel) {
+        st.gone = true;
+        this.swept++;
+        if (st.cross) this.crossers++;
+        this.hit(st, this.swept);
+        this.burst(st, "#fff2c2");
+      }
+    }
+    this.streaks = this.streaks.filter(st => !st.gone);
+  }
+  drawBg(ctx, c) {
+    const g = ctx.createRadialGradient(c.width / 2, c.height * 0.2, 60, c.width / 2, c.height * 0.5, c.height);
+    g.addColorStop(0, "#232a52"); g.addColorStop(1, "#0d1027");
+    ctx.fillStyle = g; ctx.fillRect(0, 0, c.width, c.height);
+    twinkles(ctx, c);
+  }
+  draw(ctx, c, now) {
+    for (const st of this.streaks) {
+      const p = this.toPx(st);
+      const age = (now - st.born) / st.life;
+      // the streak: a comet tail pointing up (it is falling)
+      const grad = ctx.createLinearGradient(p.x, p.y - 70, p.x, p.y);
+      grad.addColorStop(0, "rgba(255,246,216,0)");
+      grad.addColorStop(1, st.cross ? "rgba(143,208,200,0.9)" : "rgba(255,242,194,0.9)");
+      ctx.strokeStyle = grad; ctx.lineWidth = 7; ctx.lineCap = "round";
+      ctx.beginPath(); ctx.moveTo(p.x, p.y - 70); ctx.lineTo(p.x, p.y); ctx.stroke();
+      this.glow(ctx, p.x, p.y, 11, "#fff6d8", st.cross ? "#8fd0c8" : "#e8a86a", 20);
+      // life whisper: the streak fades as its moment passes
+      ctx.globalAlpha = 1 - age * 0.6;
+      starShape(ctx, p.x, p.y, 9, "#fff2c2");
+      ctx.globalAlpha = 1;
+    }
+    // sweep-speed shimmer on the cursor when moving fast enough
+    const vel = this.t.handVel(this.side);
+    const hp = this.t.palmPx(this.side, c);
+    if (hp && vel && vel.mag > this.needVel) {
+      ctx.strokeStyle = "rgba(255,246,216,0.6)"; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(hp.x, hp.y, 30 + Math.sin(now / 90) * 5, 0, TAU); ctx.stroke();
+    }
+    this.drawTimerWhisper(ctx, c, now);
+  }
+  extra() { return { swept: this.swept, midlineCrossed: this.crossers }; }
+}
+
+/* ==================== G17 Signal Flare (slingshot aim-hold-release) ==================== */
+// Two-phase aim-then-commit: grab the flare line, pull back through the
+// envelope (further = more power), hold the aim steady, open the hand to
+// launch. Pairs stability-under-load with a timed release.
+export class SignalFlare extends GameBase {
+  id = "flare";
+  setup() {
+    this.tips = {
+      objective: "Squeeze near the post, pull back, then open your hand to launch.",
+      miss: "Pull back slowly, and let go when the line feels steady.",
+    };
+    this.post = { x: CENTER.x, y: CENTER.y - 0.15 };   // anchor post
+    this.state = "idle";                                // idle → drawn → flying
+    this.wasClosed = false;
+    this.targets = [];
+    this.flare = null;
+    this.launches = 0; this.lit = 0;
+    this._newTarget();
+    this.tellStory(STORIES.flare);
+  }
+  _newTarget() {
+    const pos = this.samplePos({ upperHalf: true });
+    // sky targets sit high in the envelope
+    pos.y = Math.max(pos.y, CENTER.y + 0.35 * this.params.rangeScale);
+    this.targets = [{ ...pos, r: this.params.radius * 1.5, born: performance.now() }];
+  }
+  update(now, dt) {
+    const h = this.t.palmRel(this.side) || this.t.handRel(this.side);
+    const closed = this.t.handClosed(this.side);
+    const edge = closed && !this.wasClosed;
+    this.wasClosed = closed;
+    if (!h) return;
+
+    if (this.state === "idle") {
+      if (edge && Math.hypot(h.x - this.post.x, h.y - this.post.y) < this.params.radius * 1.6) {
+        this.state = "drawn";
+        audio.serveTick();
+      }
+    } else if (this.state === "drawn") {
+      this.drawVec = { x: this.post.x - h.x, y: this.post.y - h.y };   // launch direction
+      this.power = Math.min(1, Math.hypot(this.drawVec.x, this.drawVec.y) / (0.8 * this.params.rangeScale));
+      if (!closed) {
+        // release: the flare flies along the draw vector
+        const mag = Math.hypot(this.drawVec.x, this.drawVec.y) || 1e-6;
+        if (this.power < 0.15) { this.state = "idle"; return; }   // a slip, not a shot
+        this.launches++;
+        this.flare = {
+          x: this.post.x, y: this.post.y,
+          vx: this.drawVec.x / mag * (0.0012 + this.power * 0.0022),
+          vy: this.drawVec.y / mag * (0.0012 + this.power * 0.0022),
+          born: now,
+        };
+        this.state = "flying";
+        audio.whoosh();
+      }
+    } else if (this.state === "flying" && this.flare) {
+      this.flare.x += this.flare.vx * dt;
+      this.flare.y += this.flare.vy * dt;
+      this.flare.vy -= 0.0000025 * dt;        // whisper of gravity
+      const t0 = this.targets[0];
+      if (t0 && Math.hypot(this.flare.x - t0.x, this.flare.y - t0.y) < t0.r) {
+        this.lit++;
+        this.hit(t0, this.lit);
+        this.burst(t0, "#ffd98a");
+        this.flare = null; this.state = "idle";
+        this._newTarget();
+        return;
+      }
+      if (now - this.flare.born > 2600) {
+        this.miss(t0);
+        this.flare = null; this.state = "idle";
+      }
+    }
+  }
+  drawBg(ctx, c) {
+    const g = ctx.createLinearGradient(0, 0, 0, c.height);
+    g.addColorStop(0, "#101433"); g.addColorStop(0.65, "#232a52"); g.addColorStop(1, "#181d38");
+    ctx.fillStyle = g; ctx.fillRect(0, 0, c.width, c.height);
+    twinkles(ctx, c);
+  }
+  draw(ctx, c, now) {
+    const pp = this.toPx(this.post);
+    const pulse = Math.sin(now / 400) * 0.5 + 0.5;
+    // the post: grab point
+    ctx.strokeStyle = "rgba(232,185,138,0.8)"; ctx.lineWidth = 6; ctx.lineCap = "round";
+    ctx.beginPath(); ctx.moveTo(pp.x, pp.y + 26); ctx.lineTo(pp.x, pp.y - 6); ctx.stroke();
+    if (this.state === "idle") {
+      this.glow(ctx, pp.x, pp.y - 10, 10 + pulse * 5, "#fff6d8", "#e8a86a", 20);
+      ctx.strokeStyle = "rgba(255,246,216,0.4)"; ctx.lineWidth = 2.5; ctx.setLineDash([6, 7]);
+      ctx.beginPath(); ctx.arc(pp.x, pp.y - 10, this.params.radius * 1.6 * this.sw(), 0, TAU); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    // drawn: the line from post to hand + power bloom + aim ghost
+    if (this.state === "drawn") {
+      const hp = this.t.palmPx(this.side, c);
+      if (hp) {
+        ctx.strokeStyle = "rgba(255,242,194,0.85)"; ctx.lineWidth = 4;
+        ctx.beginPath(); ctx.moveTo(pp.x, pp.y - 10); ctx.lineTo(hp.x, hp.y); ctx.stroke();
+        // aim ghost dots along the launch direction
+        const mag = Math.hypot(this.drawVec.x, this.drawVec.y) || 1e-6;
+        for (let i = 1; i <= 4; i++) {
+          const gx = this.post.x + this.drawVec.x / mag * i * 0.22;
+          const gy = this.post.y + this.drawVec.y / mag * i * 0.22;
+          const gp = this.toPx({ x: gx, y: gy });
+          ctx.globalAlpha = 0.5 - i * 0.09;
+          ctx.fillStyle = "#fff2c2";
+          ctx.beginPath(); ctx.arc(gp.x, gp.y, 4, 0, TAU); ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+        // power bloom at the post
+        this.glow(ctx, pp.x, pp.y - 10, 8 + this.power * 18, "#fff6d8", "#e8a86a", 24);
+      }
+    }
+    // the flare in flight
+    if (this.flare) {
+      const fp = this.toPx(this.flare);
+      this.glow(ctx, fp.x, fp.y, 12, "#fff6d8", "#e8a86a", 26);
+      ctx.strokeStyle = "rgba(232,168,106,0.5)"; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(fp.x - this.flare.vx * 26000, fp.y + this.flare.vy * 26000); ctx.lineTo(fp.x, fp.y); ctx.stroke();
+    }
+    // sky target: a dark paper lantern waiting to be lit
+    for (const t0 of this.targets) {
+      const tp = this.toPx(t0);
+      lanternShape(ctx, tp.x, tp.y, t0.r * this.sw() * 0.55, false, "#6a5f8a");
+      ctx.strokeStyle = `rgba(255,246,216,${0.35 + pulse * 0.3})`; ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.arc(tp.x, tp.y, t0.r * this.sw(), 0, TAU); ctx.stroke();
+    }
+    this.drawTimerWhisper(ctx, c, now);
+  }
+  extra() {
+    return { launches: this.launches, lit: this.lit, accuracy: this.launches ? +(this.lit / this.launches).toFixed(2) : 0 };
+  }
+}
+
+/* ==================== G18 Pantry Shelves (lift-to-shelf, ARAT) ==================== */
+// The canonical ARAT grasp paradigm as gameplay: grasp a jar low in the
+// envelope, carry it up, open the hand over a shelf. Shelves climb through
+// the patient's own elevation range; the top one touches arcMaxDeg territory.
+export class PantryShelves extends GameBase {
+  id = "shelf";
+  setup() {
+    this.tips = {
+      objective: "Squeeze the jar, lift it to the glowing shelf, and open your hand.",
+      miss: "Take your time. Up it goes, shelf by shelf.",
+    };
+    this.shelfFracs = [0.25, 0.5, 0.75];    // of the vertical reach above center
+    this.level = 0;
+    this.placed = 0;
+    this.jar = null; this.carrying = false;
+    this.wasClosed = false;
+    this._newJar();
+    this.tellStory(STORIES.shelf);
+  }
+  _shelfPos(i) {
+    const up = this.envAt(Math.PI / 2) * this.params.rangeScale;
+    return { x: CENTER.x + (this.side === "right" ? 0.42 : -0.42), y: CENTER.y + this.shelfFracs[i] * up + 0.12 };
+  }
+  _newJar() {
+    // jars start low on the trained side (table height)
+    this.jar = {
+      x: CENTER.x + (this.side === "right" ? -0.15 : 0.15),
+      y: CENTER.y - 0.45 * this.params.rangeScale,
+    };
+    this.carrying = false;
+  }
+  update(now, dt) {
+    const h = this.t.palmRel(this.side) || this.t.handRel(this.side);
+    if (!h || !this.jar) return;
+    const closed = this.t.handClosed(this.side);
+    const edge = closed && !this.wasClosed;
+    this.wasClosed = closed;
+
+    if (!this.carrying) {
+      // arrive open, then squeeze — the reach-to-grasp chain (same rule as Harbor Crates)
+      if (edge && Math.hypot(h.x - this.jar.x, h.y - this.jar.y) < this.params.radius * 1.3) {
+        this.carrying = true;
+        audio.note(2);
+      }
+    } else {
+      this.jar.x = h.x; this.jar.y = h.y;
+      if (!closed) {
+        const shelf = this._shelfPos(this.level);
+        if (Math.hypot(h.x - shelf.x, h.y - shelf.y) < this.params.radius * 1.5) {
+          this.placed++;
+          this.hit({ reachFrac: 0.5 + this.shelfFracs[this.level] * 0.5 });
+          this.burst(shelf, "#ffd98a");
+          if (this.level < this.shelfFracs.length - 1) this.level++;
+          else { this.level = 0; this.say("Top shelf! Starting a fresh row."); }
+          this._newJar();
+        } else {
+          // the jar drifts back down to the table — soft, no shatter
+          this.miss(null, true);
+          audio.miss();
+          this._newJar();
+        }
+      }
+    }
+  }
+  drawBg(ctx, c) {
+    const g = ctx.createLinearGradient(0, 0, 0, c.height);
+    g.addColorStop(0, "#2a2344"); g.addColorStop(1, "#161226");
+    ctx.fillStyle = g; ctx.fillRect(0, 0, c.width, c.height);
+  }
+  draw(ctx, c, now) {
+    const sw = this.sw();
+    const pulse = Math.sin(now / 400) * 0.5 + 0.5;
+    // shelves: the active one glows; higher shelves wait in the dark
+    this.shelfFracs.forEach((f, i) => {
+      const sp = this.toPx(this._shelfPos(i));
+      const active = i === this.level;
+      ctx.strokeStyle = active ? `rgba(232,168,106,${0.65 + pulse * 0.3})` : "rgba(244,236,221,0.18)";
+      ctx.lineWidth = active ? 7 : 4; ctx.lineCap = "round";
+      ctx.beginPath(); ctx.moveTo(sp.x - sw * 0.3, sp.y); ctx.lineTo(sp.x + sw * 0.3, sp.y); ctx.stroke();
+      if (active) {
+        ctx.strokeStyle = "rgba(255,246,216,0.4)"; ctx.lineWidth = 2.5; ctx.setLineDash([6, 7]);
+        ctx.beginPath(); ctx.arc(sp.x, sp.y, this.params.radius * 1.5 * sw, 0, TAU); ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    });
+    // placed jars stack on the shelves below the active one
+    for (let i = 0; i < this.placed && i < 12; i++) {
+      const lvl = i % this.shelfFracs.length;
+      const sp = this.toPx(this._shelfPos(lvl));
+      const jx = sp.x - sw * 0.22 + (Math.floor(i / this.shelfFracs.length)) * sw * 0.15;
+      this._jarShape(ctx, jx, sp.y - sw * 0.1, sw * 0.11, false);
+    }
+    // the live jar (on the table or in the hand)
+    if (this.jar) {
+      const jp = this.carrying ? this.t.palmPx(this.side, c) : this.toPx(this.jar);
+      if (jp) this._jarShape(ctx, jp.x, jp.y + (this.carrying ? 20 : 0), sw * 0.14, this.carrying);
+      if (!this.carrying) {
+        const tp = this.toPx(this.jar);
+        ctx.strokeStyle = "rgba(255,246,216,0.4)"; ctx.lineWidth = 2.5; ctx.setLineDash([6, 7]);
+        ctx.beginPath(); ctx.arc(tp.x, tp.y, this.params.radius * 1.3 * sw, 0, TAU); ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+    this.drawTimerWhisper(ctx, c, now);
+  }
+  _jarShape(ctx, x, y, r, bright) {
+    ctx.save();
+    const g = ctx.createLinearGradient(x, y - r, x, y + r);
+    g.addColorStop(0, bright ? "#ffe9b8" : "#d8b98a"); g.addColorStop(1, bright ? "#e8a86a" : "#a87848");
+    ctx.fillStyle = g;
+    ctx.shadowColor = "rgba(232,168,106,0.7)"; ctx.shadowBlur = bright ? 24 : 8;
+    ctx.beginPath(); ctx.roundRect(x - r * 0.8, y - r, r * 1.6, r * 2, r * 0.4); ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = "rgba(30,20,10,0.6)"; ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.roundRect(x - r * 0.8, y - r, r * 1.6, r * 2, r * 0.4); ctx.stroke();
+    ctx.fillStyle = "rgba(30,20,10,0.5)";
+    ctx.fillRect(x - r * 0.5, y - r * 1.25, r, r * 0.35);
+    ctx.restore();
+  }
+  extra() { return { jarsPlaced: this.placed, topShelfFrac: this.shelfFracs[this.level] }; }
+}
+
+/* ==================== G19 Light Every Window (scan-and-cancel) ==================== */
+// Cancellation-scanning field: every window must be lit exactly once.
+// With a visual-field flag set, spawns weight into the affected hemifield
+// (scanning training) and each far-side window announces itself with a
+// chime — per-hemifield latency is the round's clinical metric.
+export class LightWindows extends GameBase {
+  id = "windows";
+  setup() {
+    this.tips = {
+      objective: "Light every dark window before dawn.",
+      miss: "Sweep your eyes across the whole town, corner to corner.",
+    };
+    this.windows = [];
+    this.lit = 0;
+    this.latency = { left: [], right: [] };
+    this._newTown();
+    this.tellStory(STORIES.windows);
+  }
+  _newTown() {
+    this.windows = [];
+    // a row of houses across the reachable width; windows at two heights
+    for (let i = 0; i < 8; i++) {
+      const fx = -1 + (i + 0.5) / 4;                    // -1..1 across
+      const th = Math.atan2(0.1, fx);
+      const maxR = this.envAt(th) * this.params.rangeScale;
+      const x = CENTER.x + fx * maxR * 0.95;
+      const y = CENTER.y + (i % 2 ? 0.16 : -0.18) * maxR;
+      const pos = { x, y };
+      const px = this.toPx(pos);
+      if (px.x < 60 || px.x > this.canvas.width - 60) continue;
+      this.windows.push({ ...pos, lit: false, shown: performance.now(), announced: false });
+    }
+  }
+  update(now, dt) {
+    let dark = 0;
+    for (const w of this.windows) {
+      if (w.lit) continue;
+      dark++;
+      // hemifield chime: windows on the cut side call out once (audio S2 cue)
+      if (!w.announced && A11Y.field !== "none") {
+        const cutSide = A11Y.field;
+        const onCut = cutSide === "left" ? w.x < CENTER.x : w.x > CENTER.x;
+        if (onCut) { audio.serveTick(); w.announced = true; }
+      }
+      const prog = this.dwellProgress("w" + w.x.toFixed(2) + w.y.toFixed(2), this.handNear(w, this.params.radius * 1.2), now, 500);
+      if (prog >= 1) {
+        w.lit = true;
+        this.lit++;
+        const sideKey = w.x < CENTER.x ? "left" : "right";
+        this.latency[sideKey].push((now - w.shown) / 1000);
+        this.hit({ reachFrac: Math.abs(w.x - CENTER.x) });
+        this.burst(w, "#ffd98a");
+        this.clearDwell("w" + w.x.toFixed(2) + w.y.toFixed(2));
+      }
+    }
+    if (!dark && this.windows.length) {
+      this.say("The whole town is glowing. Here is the next street.");
+      this._newTown();
+    }
+  }
+  drawBg(ctx, c) {
+    const g = ctx.createLinearGradient(0, 0, 0, c.height);
+    g.addColorStop(0, "#191d3d"); g.addColorStop(0.75, "#232042"); g.addColorStop(1, "#141126");
+    ctx.fillStyle = g; ctx.fillRect(0, 0, c.width, c.height);
+    twinkles(ctx, c);
+  }
+  draw(ctx, c, now) {
+    const sw = this.sw();
+    for (const w of this.windows) {
+      const p = this.toPx(w);
+      // the house behind the window
+      ctx.fillStyle = "#100d1e";
+      ctx.beginPath(); ctx.roundRect(p.x - sw * 0.17, p.y - sw * 0.2, sw * 0.34, sw * 0.42, 5); ctx.fill();
+      // the window itself
+      if (w.lit) {
+        ctx.fillStyle = "#e8a86a";
+        ctx.shadowColor = "#e8a86a"; ctx.shadowBlur = 18;
+        ctx.fillRect(p.x - sw * 0.07, p.y - sw * 0.09, sw * 0.14, sw * 0.18);
+        ctx.shadowBlur = 0;
+      } else {
+        ctx.fillStyle = "rgba(150,160,200,0.25)";
+        ctx.fillRect(p.x - sw * 0.07, p.y - sw * 0.09, sw * 0.14, sw * 0.18);
+        ctx.strokeStyle = `rgba(255,246,216,${0.3 + 0.25 * Math.sin(now / 600 + p.x)})`;
+        ctx.lineWidth = 2;
+        ctx.strokeRect(p.x - sw * 0.07, p.y - sw * 0.09, sw * 0.14, sw * 0.18);
+      }
+    }
+    this.drawTimerWhisper(ctx, c, now);
+  }
+  extra() {
+    const mean = a => a.length ? +(a.reduce((s, v) => s + v, 0) / a.length).toFixed(2) : null;
+    return { windowsLit: this.lit, latencyLeft: mean(this.latency.left), latencyRight: mean(this.latency.right) };
+  }
+}
+
+/* ==================== G20 Harbor Lights Sorting (cognitive-motor dual task) ==================== */
+// A rule layer over reach-and-catch: only tonight's lanterns count, and the
+// rule flips mid-round on a chime. Cognitive difficulty (rule flips) rides
+// on top of motor difficulty — errors of commission are the metric.
+export class HarborSorting extends GameBase {
+  id = "sorting";
+  setup() {
+    this.tips = {
+      objective: null,                       // set per rule below
+      miss: "Check the lantern before you reach. There is always time.",
+    };
+    this.kinds = [
+      { key: "amber", name: "round amber", hue: "#e8a86a", shape: "round" },
+      { key: "teal", name: "long teal", hue: "#8fd0c8", shape: "tall" },
+    ];
+    this.rule = 0;
+    this.lanterns = [];
+    this.nextSpawn = 0;
+    this.nextFlip = 0;
+    this.commissions = 0;                    // caught the wrong lantern
+    this.correct = 0;
+    this._announceRule(true);
+    this.tellStory(STORIES.sorting);
+  }
+  _announceRule(first) {
+    const k = this.kinds[this.rule];
+    this.tips.objective = `Catch only the ${k.name} lanterns tonight.`;
+    if (!first) audio.point();
+    this.say(this.tips.objective);
+  }
+  update(now, dt) {
+    if (!this.nextFlip) this.nextFlip = now + 14000 + Math.random() * 6000;
+    if (now > this.nextFlip) {
+      this.rule = 1 - this.rule;
+      this.nextFlip = now + 14000 + Math.random() * 6000;
+      this._announceRule(false);
+    }
+    if (now > this.nextSpawn && this.lanterns.length < 3) {
+      const kind = this.kinds[Math.random() < 0.55 ? this.rule : 1 - this.rule];
+      this.lanterns.push({ ...this.samplePos(), kind, born: now, life: this.params.lifetime * 1600 });
+      this.nextSpawn = now + 1100 + Math.random() * 900;
+    }
+    for (const l of this.lanterns) {
+      const key = "l" + l.born;
+      const prog = this.dwellProgress(key, this.handNear(l, this.params.radius), now, 600);
+      if (prog >= 1) {
+        l.gone = true;
+        this.clearDwell(key);
+        if (l.kind.key === this.kinds[this.rule].key) {
+          this.correct++;
+          this.hit(l, this.correct);
+          this.burst(l, l.kind.hue);
+        } else {
+          this.commissions++;
+          this.miss(l);
+          this.say("Not that one tonight. " + this.tips.objective);
+        }
+        continue;
+      }
+      if (now - l.born > l.life) {
+        l.gone = true;
+        // letting a WRONG lantern pass is the right choice — quiet reward
+        if (l.kind.key !== this.kinds[this.rule].key) { this.stats.stars += 2; }
+        else this.miss(l, true);
+      }
+    }
+    this.lanterns = this.lanterns.filter(l => !l.gone);
+  }
+  drawBg(ctx, c) {
+    const g = ctx.createLinearGradient(0, 0, 0, c.height);
+    g.addColorStop(0, "#1d1f42"); g.addColorStop(1, "#101228");
+    ctx.fillStyle = g; ctx.fillRect(0, 0, c.width, c.height);
+    twinkles(ctx, c);
+    // tonight's rule, always visible as a shape on the mast (not color-only)
+    const k = this.kinds[this.rule];
+    const mx = c.width / 2, my = c.height * 0.09;
+    ctx.strokeStyle = "rgba(244,236,221,0.5)"; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(mx, my + 46); ctx.lineTo(mx, my - 8); ctx.stroke();
+    this._lanternShape(ctx, mx, my + 14, 15, k, true);
+  }
+  draw(ctx, c, now) {
+    for (const l of this.lanterns) {
+      const p = this.toPx(l);
+      const age = (now - l.born) / l.life;
+      ctx.globalAlpha = age > 0.75 ? 1 - (age - 0.75) * 3 : 1;
+      this._lanternShape(ctx, p.x, p.y, 17, l.kind, false);
+      ctx.globalAlpha = 1;
+    }
+    this.drawTimerWhisper(ctx, c, now);
+  }
+  _lanternShape(ctx, x, y, r, kind, mast) {
+    ctx.save();
+    ctx.shadowColor = kind.hue; ctx.shadowBlur = mast ? 22 : 14;
+    ctx.fillStyle = kind.hue;
+    ctx.beginPath();
+    if (kind.shape === "round") ctx.ellipse(x, y, r, r, 0, 0, TAU);
+    else ctx.roundRect(x - r * 0.55, y - r * 1.25, r * 1.1, r * 2.5, r * 0.5);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = "#fff6d8";
+    ctx.beginPath(); ctx.arc(x, y - (kind.shape === "round" ? 0 : r * 0.3), r * 0.35, 0, TAU); ctx.fill();
+    ctx.strokeStyle = "rgba(20,16,40,0.7)"; ctx.lineWidth = 2;
+    ctx.beginPath();
+    if (kind.shape === "round") ctx.ellipse(x, y, r, r, 0, 0, TAU);
+    else ctx.roundRect(x - r * 0.55, y - r * 1.25, r * 1.1, r * 2.5, r * 0.5);
+    ctx.stroke();
+    ctx.restore();
+  }
+  extra() { return { correctCatches: this.correct, wrongCatches: this.commissions }; }
+}
+
+/* ==================== G21 Teapot Turn (pronation/supination) ==================== */
+// The hardest FMA-UE territory, absent from almost every camera suite:
+// forearm rotation with the arm otherwise still. Palm up catches honey
+// drops; palm down pours the tea. Uses tracker.palmFacing (self-calibrating
+// 3-state with hysteresis).
+export class TeapotTurn extends GameBase {
+  id = "teapot";
+  setup() {
+    this.tips = {
+      objective: "Turn your palm up for honey, palm down to pour.",
+      miss: "Just the forearm turns, like turning a key.",
+    };
+    this.want = "up";
+    this.holdMs = 0;
+    this.turns = 0;
+    this.noSignalSince = null;
+    this.drop = null;
+    this.tellStory(STORIES.teapot);
+  }
+  update(now, dt) {
+    const facing = this.t.palmFacing(this.side);
+    if (facing == null) {
+      // hand model lost: coach the framing instead of failing silently
+      this.noSignalSince ??= now;
+      if (now - this.noSignalSince > 6000) {
+        this.noSignalSince = now;
+        this.say("Bring your hand a little closer to the camera.");
+      }
+      return;
+    }
+    this.noSignalSince = null;
+    if (facing === this.want) {
+      this.holdMs += dt;
+      if (this.holdMs > 900) {                 // held the rotation: it counts
+        this.turns++;
+        this.hit({ reachFrac: 0.5 }, this.turns);
+        const from = this.want;
+        this.want = this.want === "up" ? "down" : "up";
+        this.holdMs = 0;
+        this.drop = { at: now, kind: from };   // little animation seed
+        this.say(this.want === "up" ? "Now palm up, catch the honey." : "And palm down, pour the tea.");
+      }
+    } else this.holdMs = Math.max(0, this.holdMs - dt * 0.6);
+  }
+  drawBg(ctx, c) {
+    const g = ctx.createLinearGradient(0, 0, 0, c.height);
+    g.addColorStop(0, "#2b2244"); g.addColorStop(1, "#191430");
+    ctx.fillStyle = g; ctx.fillRect(0, 0, c.width, c.height);
+    twinkles(ctx, c);
+  }
+  draw(ctx, c, now) {
+    const hp = this.t.palmPx(this.side, c);
+    const sw = this.sw();
+    const pulse = Math.sin(now / 400) * 0.5 + 0.5;
+    // the ask, drawn as a big gentle arrow arc + icon (shape, not just words)
+    const cx = c.width / 2, cy = c.height * 0.2;
+    ctx.save();
+    ctx.strokeStyle = `rgba(255,246,216,${0.5 + pulse * 0.3})`;
+    ctx.lineWidth = 7; ctx.lineCap = "round";
+    const up = this.want === "up";
+    ctx.beginPath();
+    ctx.arc(cx, cy, 46, up ? Math.PI * 0.15 : Math.PI * 1.15, up ? Math.PI * 0.85 : Math.PI * 1.85, !up);
+    ctx.stroke();
+    // arrowhead
+    const aA = up ? Math.PI * 0.85 : Math.PI * 1.85;
+    const ax = cx + 46 * Math.cos(aA), ay = cy + 46 * Math.sin(aA);
+    ctx.beginPath(); ctx.arc(ax, ay, 7, 0, TAU); ctx.fillStyle = "#fff6d8"; ctx.fill();
+    ctx.restore();
+    // rotation progress bowl/teapot at the hand
+    if (hp) {
+      const frac = Math.min(1, this.holdMs / 900);
+      if (this.want === "up") {
+        // bowl filling with honey drops
+        ctx.strokeStyle = "#e8b98a"; ctx.lineWidth = 5;
+        ctx.beginPath(); ctx.arc(hp.x, hp.y + 34, 26, 0, Math.PI); ctx.stroke();
+        ctx.fillStyle = "rgba(232,168,106,0.8)";
+        ctx.beginPath(); ctx.arc(hp.x, hp.y + 34, 24 * frac, 0, Math.PI); ctx.fill();
+      } else {
+        // teapot tipping, tea arc growing
+        ctx.strokeStyle = "#9fc0c8"; ctx.lineWidth = 5;
+        ctx.beginPath(); ctx.arc(hp.x, hp.y + 30, 24, Math.PI, 0); ctx.stroke();
+        ctx.strokeStyle = "rgba(143,208,200,0.85)"; ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(hp.x + 22, hp.y + 30);
+        ctx.quadraticCurveTo(hp.x + 34, hp.y + 46, hp.x + 30, hp.y + 40 + 40 * frac);
+        ctx.stroke();
+      }
+    }
+    // celebration droplet after each completed turn
+    if (this.drop && now - this.drop.at < 900) {
+      const f = (now - this.drop.at) / 900;
+      const dx = c.width / 2, dy = c.height * 0.32 + f * 60;
+      ctx.globalAlpha = 1 - f;
+      this.glow(ctx, dx, dy, 10, "#fff6d8", this.drop.kind === "up" ? "#e8a86a" : "#8fd0c8", 16);
+      ctx.globalAlpha = 1;
+    }
+    this.drawTimerWhisper(ctx, c, now);
+  }
+  extra() { return { turns: this.turns }; }
+}
+
+/* ==================== G22 Firefly Glide (graded grasp control) ==================== */
+// The continuous curl signal as an analog flight stick: squeeze gently and
+// the firefly rises, relax and she sinks. Thread her between the reeds.
+// An entry point below the suite's easiest difficulty — no reach needed.
+export class FireflyGlide extends GameBase {
+  id = "glide";
+  setup() {
+    this.tips = {
+      objective: "Squeeze gently to rise, relax to sink.",
+      miss: "Tiny squeezes. She answers the smallest movement.",
+    };
+    this.flyY = 0.5;                     // 0 bottom .. 1 top of the flight lane
+    this.gaps = [];
+    this.worldX = 0;
+    this.nextGapX = 0.7;
+    this.through = 0;
+    this.brushes = 0;
+    this.noSignalSince = null;
+    this.tellStory(STORIES.glide);
+  }
+  _curl01() {
+    // curl → 0..1 openness using the patient's own calibrated range
+    const curl = this.t.handCurl(this.side);
+    if (curl == null) return null;
+    const cal = this.t.curlCal[this.side];
+    if (!cal || cal.hi - cal.lo < 0.2) return null;
+    return Math.max(0, Math.min(1, (curl - cal.lo) / (cal.hi - cal.lo)));
+  }
+  update(now, dt) {
+    const open = this._curl01();
+    if (open == null) {
+      this.noSignalSince ??= now;
+      if (now - this.noSignalSince > 6000) {
+        this.noSignalSince = now;
+        this.say("Show me your hand, nice and clear, then squeeze softly.");
+      }
+      return;
+    }
+    this.noSignalSince = null;
+    const target = 1 - open;             // more squeeze = higher flight
+    this.flyY += (target - this.flyY) * Math.min(1, dt / 260);
+
+    const speed = 0.00008;
+    this.worldX += speed * dt;
+    if (this.worldX + 1.1 > this.nextGapX) {
+      const gapHalf = Math.max(0.13, 0.24 - this.through * 0.01);
+      this.gaps.push({ x: this.nextGapX, yc: 0.22 + Math.random() * 0.56, gapHalf, done: false });
+      this.nextGapX += 0.42;
+    }
+    for (const gp of this.gaps) {
+      const sx = gp.x - this.worldX;
+      if (!gp.done && sx < 0.2) {
+        gp.done = true;
+        if (Math.abs(this.flyY - gp.yc) <= gp.gapHalf) {
+          this.through++;
+          this.hit({ reachFrac: 0.5 }, this.through);
+        } else {
+          this.brushes++;
+          this.miss();                    // she brushes the reeds, feathers fly, no harm
+        }
+      }
+    }
+    this.gaps = this.gaps.filter(gp => gp.x - this.worldX > -0.2);
+  }
+  drawBg(ctx, c) {
+    const g = ctx.createLinearGradient(0, 0, 0, c.height);
+    g.addColorStop(0, "#15243c"); g.addColorStop(1, "#0b1524");
+    ctx.fillStyle = g; ctx.fillRect(0, 0, c.width, c.height);
+    twinkles(ctx, c);
+    ctx.fillStyle = "rgba(14, 34, 30, 0.6)";
+    ctx.fillRect(0, c.height * 0.9, c.width, c.height * 0.1);
+  }
+  draw(ctx, c, now) {
+    const laneTop = c.height * 0.08, laneH = c.height * 0.8;
+    // reed gates
+    for (const gp of this.gaps) {
+      const sx = gp.x - this.worldX;
+      const px = c.width * (0.08 + sx * 0.88);
+      if (px > c.width + 30) continue;
+      const yTop = laneTop + (gp.yc - gp.gapHalf) * laneH;
+      const yBot = laneTop + (gp.yc + gp.gapHalf) * laneH;
+      ctx.strokeStyle = gp.done ? "rgba(110,140,110,0.4)" : "rgba(130,170,120,0.75)";
+      ctx.lineWidth = 10; ctx.lineCap = "round";
+      ctx.beginPath(); ctx.moveTo(px, laneTop - 10); ctx.lineTo(px, yTop); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(px, yBot); ctx.lineTo(px, laneTop + laneH + 16); ctx.stroke();
+      // seed heads
+      for (const gy of [yTop, yBot]) {
+        ctx.fillStyle = gp.done ? "rgba(160,180,150,0.4)" : "#b8c89a";
+        ctx.beginPath(); ctx.ellipse(px, gy, 7, 13, 0, 0, TAU); ctx.fill();
+      }
+    }
+    // the firefly at fixed x
+    const fx = c.width * 0.2, fy = laneTop + this.flyY * laneH;
+    const wob = Math.sin(now / 240) * 3;
+    this.glow(ctx, fx, fy + wob, 12, "#fff6d8", "#cfe08a", 26);
+    // wings
+    ctx.strokeStyle = "rgba(255,246,216,0.5)"; ctx.lineWidth = 2.5;
+    const wf = Math.sin(now / 70) * 8;
+    ctx.beginPath(); ctx.moveTo(fx - 4, fy + wob - 4); ctx.quadraticCurveTo(fx - 16, fy + wob - 14 + wf, fx - 22, fy + wob - 4); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(fx + 4, fy + wob - 4); ctx.quadraticCurveTo(fx + 16, fy + wob - 14 - wf, fx + 22, fy + wob - 4); ctx.stroke();
+    // squeeze meter: a little vertical firefly ladder by the wrist side
+    const open = this._curl01();
+    if (open != null) {
+      const mx = c.width * 0.06;
+      ctx.strokeStyle = "rgba(244,236,221,0.25)"; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(mx, c.height * 0.25); ctx.lineTo(mx, c.height * 0.75); ctx.stroke();
+      const my = c.height * (0.75 - (1 - open) * 0.5);
+      this.glow(ctx, mx, my, 7, "#fff6d8", "#cfe08a", 14);
+    }
+    this.drawTimerWhisper(ctx, c, now);
+  }
+  extra() { return { gatesThrough: this.through, reedBrushes: this.brushes }; }
+}
+
+/* ==================== G23 Night Blooms (aperture pre-shaping) ==================== */
+// Reach-to-grasp coupling: the hand must ARRIVE already shaped — wide open
+// for the big blooms, half-open for the small — then close at contact.
+// Trains the transport-aperture link that stroke de-couples.
+export class NightBlooms extends GameBase {
+  id = "bloom";
+  setup() {
+    this.tips = {
+      objective: "Shape your hand to the flower before you arrive.",
+      miss: "Big flower, big open hand. Small flower, soft half-open.",
+    };
+    this.bloom = null;
+    this.gathered = 0;
+    this.wasClosed = false;
+    this._newBloom();
+    this.tellStory(STORIES.bloom);
+  }
+  _newBloom() {
+    const big = Math.random() < 0.5;
+    this.bloom = { ...this.samplePos(), big, born: performance.now(), state: "waiting" };
+  }
+  _aperture() {
+    const curl = this.t.handCurl(this.side);
+    const cal = this.t.curlCal[this.side];
+    if (curl == null || !cal || cal.hi - cal.lo < 0.2) return null;
+    return Math.max(0, Math.min(1, (curl - cal.lo) / (cal.hi - cal.lo)));   // 1 = wide open
+  }
+  update(now, dt) {
+    if (!this.bloom) return;
+    const b = this.bloom;
+    const near = this.handNear(b, this.params.radius * 1.3);
+    const ap = this._aperture();
+    const closed = this.t.handClosed(this.side);
+    const edge = closed && !this.wasClosed;
+    this.wasClosed = closed;
+
+    if (b.state === "waiting" && near) {
+      // arrival check: was the hand pre-shaped correctly?
+      const wantOpen = b.big ? 0.75 : 0.35;
+      const tol = 0.28;
+      b.state = ap != null && Math.abs(ap - wantOpen) < tol ? "shaped" : "wrongshape";
+      b.arrivedAt = now;
+      if (b.state === "wrongshape") {
+        this.say(b.big ? "This one is big. Open your hand wide first." : "A little one. Just half open.");
+      }
+    }
+    if (b.state === "wrongshape" && !near) b.state = "waiting";   // back out, try again
+    if (b.state === "shaped") {
+      if (!near) { b.state = "waiting"; return; }
+      if (edge) {
+        this.gathered++;
+        this.hit(b, this.gathered);
+        this.burst(b, b.big ? "#dba0b0" : "#cfe08a");
+        this._newBloom();
+        return;
+      }
+    }
+    if (now - b.born > this.params.lifetime * 2200) {
+      this.miss(b);
+      this._newBloom();
+    }
+  }
+  drawBg(ctx, c) {
+    const g = ctx.createLinearGradient(0, 0, 0, c.height);
+    g.addColorStop(0, "#1e1b3f"); g.addColorStop(1, "#121022");
+    ctx.fillStyle = g; ctx.fillRect(0, 0, c.width, c.height);
+    twinkles(ctx, c);
+  }
+  draw(ctx, c, now) {
+    const b = this.bloom;
+    if (!b) return;
+    const p = this.toPx(b);
+    const R = (b.big ? 34 : 17) + Math.sin(now / 500) * 2;
+    // petals
+    ctx.save();
+    ctx.translate(p.x, p.y);
+    for (let i = 0; i < (b.big ? 8 : 5); i++) {
+      ctx.rotate(TAU / (b.big ? 8 : 5));
+      ctx.fillStyle = b.state === "shaped" ? "rgba(159,192,138,0.85)" : (b.big ? "rgba(219,160,176,0.8)" : "rgba(207,224,138,0.8)");
+      ctx.beginPath(); ctx.ellipse(R * 0.8, 0, R * 0.55, R * 0.3, 0, 0, TAU); ctx.fill();
+    }
+    ctx.fillStyle = "#fff6d8";
+    ctx.beginPath(); ctx.arc(0, 0, R * 0.35, 0, TAU); ctx.fill();
+    ctx.restore();
+    // shape hint by the flower: a ring showing the wanted hand openness
+    const hintR = b.big ? 26 : 13;
+    ctx.strokeStyle = "rgba(255,246,216,0.55)"; ctx.lineWidth = 3;
+    ctx.setLineDash(b.big ? [] : [5, 6]);
+    ctx.beginPath(); ctx.arc(p.x, p.y - R - 26, hintR, 0, TAU); ctx.stroke();
+    ctx.setLineDash([]);
+    // live aperture ring at the cursor: match the hint to succeed
+    const ap = this._aperture();
+    const hp = this.t.palmPx(this.side, c);
+    if (ap != null && hp) {
+      ctx.strokeStyle = b.state === "shaped" ? "#9fc08a" : "rgba(232,168,106,0.8)";
+      ctx.lineWidth = 3.5;
+      ctx.beginPath(); ctx.arc(hp.x, hp.y, 8 + ap * 26, 0, TAU); ctx.stroke();
+    }
+    this.drawTimerWhisper(ctx, c, now);
+  }
+  extra() { return { bloomsGathered: this.gathered }; }
+}
+
+/* ==================== G24 Firefly Pinch (pincer precision) ==================== */
+// ARAT's pinch subscale: catch fireflies with thumb and index only — a
+// whole-fist squeeze scares them away, explicitly dissociating pincer from
+// mass grasp. Prototype-grade: needs the hand close enough to the camera.
+export class FireflyPinch extends GameBase {
+  id = "pinch";
+  setup() {
+    this.tips = {
+      objective: "Catch the firefly with just two fingertips.",
+      miss: "Thumb and pointer only, soft as picking a berry.",
+    };
+    this.fly = null;
+    this.caught = 0;
+    this.scared = 0;
+    this.wasPinch = false;
+    this.wasFist = false;
+    this.noSignalSince = null;
+    this._newFly();
+    this.tellStory(STORIES.pinch);
+  }
+  _newFly() {
+    this.fly = { ...this.samplePos(), born: performance.now(), jx: Math.random() * 10 };
+  }
+  update(now, dt) {
+    if (!this.fly) return;
+    const f = this.fly;
+    // firefly meanders gently
+    f.x += Math.sin(now / 900 + f.jx) * 0.00003 * dt;
+    f.y += Math.cos(now / 1100 + f.jx) * 0.00003 * dt;
+
+    if (this.t._handPts(this.side) == null) {
+      this.noSignalSince ??= now;
+      if (now - this.noSignalSince > 6000) {
+        this.noSignalSince = now;
+        this.say("Bring your hand a little closer, so I can see your fingers.");
+      }
+      return;
+    }
+    this.noSignalSince = null;
+
+    const near = this.handNear(f, this.params.radius * 1.2);
+    const pinch = this.t.pinchOnly(this.side);
+    const pinchEdge = pinch && !this.wasPinch;
+    this.wasPinch = pinch;
+    const fist = this.t.handClosed(this.side) && !pinch;
+    const fistEdge = fist && !this.wasFist;
+    this.wasFist = fist;
+
+    if (near && pinchEdge) {
+      this.caught++;
+      this.hit(f, this.caught);
+      this.burst(f, "#cfe08a");
+      this._newFly();
+      return;
+    }
+    if (near && fistEdge) {
+      // the whole fist startles her — she darts to a new spot (soft teaching moment)
+      this.scared++;
+      this.miss(f, true);
+      audio.whoosh();
+      this.say(this.tips.miss);
+      this._newFly();
+      return;
+    }
+    if (now - f.born > this.params.lifetime * 2600) {
+      this.miss(f);
+      this._newFly();
+    }
+  }
+  drawBg(ctx, c) {
+    const g = ctx.createLinearGradient(0, 0, 0, c.height);
+    g.addColorStop(0, "#14202c"); g.addColorStop(1, "#0a121c");
+    ctx.fillStyle = g; ctx.fillRect(0, 0, c.width, c.height);
+    twinkles(ctx, c);
+    ctx.fillStyle = "rgba(20, 40, 30, 0.5)";
+    ctx.fillRect(0, c.height * 0.88, c.width, c.height * 0.12);
+  }
+  draw(ctx, c, now) {
+    const f = this.fly;
+    if (!f) return;
+    const p = this.toPx(f);
+    const blink = 0.5 + 0.5 * Math.sin(now / 300 + f.jx);
+    this.glow(ctx, p.x, p.y, 8 + blink * 6, "#fff6d8", "#cfe08a", 22);
+    ctx.strokeStyle = "rgba(255,246,216,0.35)"; ctx.lineWidth = 2; ctx.setLineDash([4, 6]);
+    ctx.beginPath(); ctx.arc(p.x, p.y, this.params.radius * 1.2 * this.sw(), 0, TAU); ctx.stroke();
+    ctx.setLineDash([]);
+    // pinch meter: two dots that meet as thumb and index come together
+    const gap = this.t.pinch(this.side);
+    const hp = this.t.palmPx(this.side, c);
+    if (gap != null && hp) {
+      const d = Math.min(40, gap * 46);
+      ctx.fillStyle = "#fff2c2";
+      ctx.beginPath(); ctx.arc(hp.x - d / 2, hp.y - 34, 5, 0, TAU); ctx.fill();
+      ctx.beginPath(); ctx.arc(hp.x + d / 2, hp.y - 34, 5, 0, TAU); ctx.fill();
+    }
+    this.drawTimerWhisper(ctx, c, now);
+  }
+  extra() { return { pinched: this.caught, fistScares: this.scared }; }
+}
+
 /* ==================== shared little painters ==================== */
 function twinkles(ctx, c) {
   const now = performance.now();
@@ -1677,15 +3340,36 @@ function crateShape(ctx, x, y, s, bright) {
 }
 
 // Focused set for now: Harbor Crates + Arc Pong + Echo Reach (plus the
-// circle assessment). The rest stay implemented but hidden via `disabled`.
+// circle assessment). The originals stay implemented but hidden via
+// `disabled`. The Aug 2026 additions (research pass in GAME_IDEAS.md) ship
+// enabled for review — flip `disabled: true` to curate the patient menu.
+// `trains` = the one movement the game trains, shown on its card so
+// therapists can prescribe by movement (MindMotion labeling pattern).
 export const GAMES = [
-  { id: "constellations", name: "Constellations", cls: Constellations, disabled: true },
-  { id: "drift", name: "Drift", cls: Drift, disabled: true },
-  { id: "ember", name: "Ember Watch", cls: EmberWatch, disabled: true },
-  { id: "lantern", name: "Lantern Release", cls: LanternRelease, disabled: true },
-  { id: "pong", name: "Arc Pong", cls: ArcPong },
-  { id: "rhythm", name: "Melody Tiles", cls: MelodyTiles, disabled: true },
-  { id: "boxes", name: "Harbor Crates", cls: HarborCrates },
-  { id: "compass", name: "Compass Rose", cls: CompassRose, disabled: true },
-  { id: "echo", name: "Echo Reach", cls: EchoReach },
+  { id: "constellations", name: "Constellations", cls: Constellations, disabled: true, trains: "Guided reaching" },
+  { id: "drift", name: "Drift", cls: Drift, disabled: true, trains: "Interception" },
+  { id: "ember", name: "Ember Watch", cls: EmberWatch, disabled: true, trains: "Reach and hold" },
+  { id: "lantern", name: "Lantern Release", cls: LanternRelease, disabled: true, trains: "Carry and release" },
+  { id: "pong", name: "Arc Pong", cls: ArcPong, trains: "Continuous control" },
+  { id: "rhythm", name: "Melody Tiles", cls: MelodyTiles, disabled: true, trains: "Timed reaching" },
+  { id: "boxes", name: "Harbor Crates", cls: HarborCrates, trains: "Grasp and carry" },
+  { id: "compass", name: "Compass Rose", cls: CompassRose, disabled: true, trains: "Center-out reach" },
+  { id: "echo", name: "Echo Reach", cls: EchoReach, trains: "Position sense" },
+  // --- Aug 2026 additions: Tier 1 (no new tracking needed) ---
+  { id: "lens", name: "Lighthouse Lens", cls: LighthouseLens, trains: "Sweeping coverage" },
+  { id: "crane", name: "Crane Keeper", cls: CraneKeeper, trains: "Hold high + squeeze" },
+  { id: "feather", name: "Feather Lantern", cls: FeatherLantern, trains: "Slow lowering" },
+  { id: "buoys", name: "Two Lights", cls: TwoLights, trains: "Speed and accuracy" },
+  { id: "oars", name: "Ferry Oars", cls: FerryOars, trains: "Both arms together" },
+  { id: "ferry", name: "Night Ferry", cls: NightFerry, trains: "Steering control" },
+  { id: "stars", name: "Falling Stars", cls: FallingStars, trains: "Quick sweeps" },
+  { id: "flare", name: "Signal Flare", cls: SignalFlare, trains: "Aim, hold, release" },
+  { id: "shelf", name: "Pantry Shelves", cls: PantryShelves, trains: "Lift to height" },
+  { id: "windows", name: "Light Every Window", cls: LightWindows, trains: "Scanning reach" },
+  { id: "sorting", name: "Harbor Lights", cls: HarborSorting, trains: "Think and reach" },
+  // --- Tier 2 (hand-model dependent: hand should be nearer the camera) ---
+  { id: "teapot", name: "Teapot Turn", cls: TeapotTurn, trains: "Palm rotation" },
+  { id: "glide", name: "Firefly Glide", cls: FireflyGlide, trains: "Gentle squeeze control" },
+  { id: "bloom", name: "Night Blooms", cls: NightBlooms, trains: "Hand shaping" },
+  { id: "pinch", name: "Firefly Pinch", cls: FireflyPinch, trains: "Fingertip pinch" },
 ];

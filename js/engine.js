@@ -4,6 +4,7 @@
 
 import { Coach } from "./coach.js";
 import { audio } from "./audio.js";
+import { A11Y, speakLine } from "./a11y.js";
 
 export const TAU = Math.PI * 2;
 // Reach center: all envelope-based targets (and the assessment circle) are
@@ -31,6 +32,9 @@ export function drawBody(ctx, c, t, opts = {}) {
   ctx.save();
   ctx.lineCap = "round";
   ctx.strokeStyle = framed ? "rgba(159,192,138,0.55)" : "rgba(232,168,106,0.5)";
+  // amber and sage are a red-green confusion pair (near-identical luminance),
+  // so the framing state also changes line pattern: dashed = still adjusting
+  if (!framed) ctx.setLineDash([12, 9]);
   ctx.lineWidth = 6;
   const seg = (a, b) => { const A = P(a), B = P(b); ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(B.x, B.y); ctx.stroke(); };
   seg(p.shL, p.shR);
@@ -182,14 +186,9 @@ export class GameBase {
     el.innerHTML = main ? main + (sub ? `<small>${sub}</small>` : "") : "";
   }
 
-  _speak(text) {
-    try {
-      speechSynthesis.cancel();
-      const u = new SpeechSynthesisUtterance(text);
-      u.rate = 0.9;                      // unhurried, for an older audience
-      speechSynthesis.speak(u);
-    } catch { /* optional */ }
-  }
+  // caption defaults to false in-game: say() shows #cue and tellStory shows
+  // #prompt, so the text is already on screen — no double display
+  _speak(text, caption = false) { speakLine(text, 0.9, caption); }
 
   // story intro (round 1): shows + speaks, and delays play by its length
   tellStory(story) {
@@ -289,6 +288,13 @@ export class GameBase {
       const frac = 0.45 + Math.random() * 0.55;
       const r = frac * this.params.rangeScale * env;
       const pos = { x: CENTER.x + Math.cos(th) * r, y: CENTER.y + Math.sin(th) * r, isFar: r > 0.7 * this.params.rangeScale * env, reachFrac: r / env };
+      // visual-field policy (hemianopia ≠ hemiparesis: the reach envelope
+      // covers the arm; this covers sight). comfort = keep targets where the
+      // patient can see them; scan = deliberately train the cut side.
+      if (A11Y.field !== "none" && opts.theta == null && tries < 8) {
+        const onCutSide = A11Y.field === "left" ? pos.x < -0.05 : pos.x > 0.05;
+        if (A11Y.fieldMode === "comfort" ? onCutSide : (!onCutSide && Math.random() < 0.6)) continue;
+      }
       const px = this.toPx(pos);
       const c = this.canvas;
       const inside = px.x > MARGIN && px.x < c.width - MARGIN && px.y > MARGIN && px.y < c.height - MARGIN;
@@ -310,6 +316,7 @@ export class GameBase {
     if (target?.reachFrac) this.stats.reachFracs.push(target.reachFrac);
     noteStep != null ? audio.note(noteStep) : audio.hit();
     // therapist voice: streak praise at milestones
+    this.fb.lastEvent = performance.now();
     this.fb.hitStreak++; this.fb.missStreak = 0;
     if ([5, 10, 15].includes(this.fb.hitStreak)) {
       this.say(pickOne([
@@ -320,11 +327,32 @@ export class GameBase {
     }
   }
   miss(target, silent = false) {
+    this.fb.lastEvent = performance.now();
+    if (A11Y.practice) return;     // practice mode: nothing counts against you
     this.stats.misses++;
     if (target?.isFar) this.stats.missFar++;
     if (!silent) audio.miss();     // silent: in Melody Tiles the missing note IS the feedback
     this.fb.missStreak++; this.fb.hitStreak = 0;
   }
+
+  // Sticky dwell (tremor accommodation): progress accumulates while the hand
+  // is on the target and survives brief exits (≤450 ms) instead of resetting
+  // — the literature-endorsed alternative to simply lengthening dwell time.
+  // Returns 0..1; caller acts at 1 and then clearDwell(key).
+  dwellProgress(key, inside, now, needMs = A11Y.dwellMs) {
+    this._dwells ??= {};
+    let d = this._dwells[key];
+    if (inside) {
+      if (!d) d = this._dwells[key] = { acc: 0, last: now, out: null };
+      if (d.out == null) d.acc += now - d.last;
+      d.out = null; d.last = now;
+    } else if (d) {
+      d.out ??= now; d.last = now;
+      if (now - d.out > 450) { delete this._dwells[key]; return 0; }
+    } else return 0;
+    return Math.min(1, d.acc / needMs);
+  }
+  clearDwell(key) { if (this._dwells) delete this._dwells[key]; }
 
   // ---- therapist voice: short spoken guidance driven by performance ----
   say(text) {
@@ -343,6 +371,13 @@ export class GameBase {
   _feedbackTick(now) {
     if (this.coach.state !== "idle") return;
     if (now - this.fb.lastSpeak < 10000) return;
+    // objective reminder (cognitive accessibility): with no HUD, restate the
+    // goal after ~12 s of no interaction so the patient is never lost
+    if (this.tips?.objective && now - (this.fb.lastEvent ?? this.startT) > 12000) {
+      this.fb.lastEvent = now;
+      this.say(this.tips.objective);
+      return;
+    }
     if (this.fb.missStreak >= 3) {
       this.fb.missStreak = 0;
       this.say(this.tips?.miss || "No rush. Watch it come, and start your reach early.");
@@ -387,12 +422,17 @@ export class GameBase {
     ctx.shadowColor = outer; ctx.shadowBlur = blur;
     ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.fill();
     ctx.shadowBlur = 0;
+    if (A11Y.contrast) {           // high-contrast mode: dark rim on every glow
+      ctx.strokeStyle = "rgba(12,12,32,0.9)"; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(x, y, r + 1.5, 0, TAU); ctx.stroke();
+    }
   }
 
   burst(pos, color = "#ffd98a") {
     const p = this.toPx(pos);
-    for (let i = 0; i < 14; i++) {
-      const a = Math.random() * TAU, s = 2 + Math.random() * 4;
+    const n = A11Y.calm ? 5 : 14;              // reduced motion: gentler bloom
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * TAU, s = A11Y.calm ? 1 + Math.random() * 1.5 : 2 + Math.random() * 4;
       this.particles.push({ x: p.x, y: p.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 1, color });
     }
   }
