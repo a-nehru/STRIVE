@@ -5,7 +5,7 @@
 //  - targets only inside the assessed envelope × rangeScale, clamped on-screen
 // "Grab" is dwell-based in v1 (hand-close detection is the M3 upgrade).
 
-import { GameBase, TAU, CENTER, drawBody, drawVideoMirror } from "./engine.js";
+import { GameBase, TAU, CENTER, drawBody, drawVideoMirror, drawHand } from "./engine.js";
 import { audio } from "./audio.js";
 import { songById } from "./songs.js";
 import { A11Y } from "./a11y.js";
@@ -43,6 +43,7 @@ const STORIES = {
   glide: { title: "The firefly glide", text: "Squeeze gently and the firefly rises. Relax, and she drifts down." },
   bloom: { title: "The night blooms", text: "Open your hand wide for the big flowers, halfway for the small. Arrive ready." },
   pinch: { title: "The firefly pinch", text: "Catch fireflies with just two fingertips. A whole fist frightens them." },
+  rainbow: { title: "The rainbow to Strivealon", text: "Dark clouds sit on the rainbow road. Walk across, sweep them off, and the treasure is yours." },
 };
 
 /* ==================== G1 Constellations ==================== */
@@ -898,6 +899,61 @@ export class ArcPong extends GameBase {
     drawPad(X(this.court.right), pads.rightY, rKind);
     drawPad(X(this.court.left) - 26, pads.leftY2, "mate");
     drawPad(X(this.court.right) + 26, pads.rightY2, "mate");
+
+    // rope rigs: each paddle hangs from a rope over a pulley, and a little
+    // helper hauls it up and down. The patient's helper (the puzzle hero)
+    // mirrors their arm; the dark cloud works the opponent's rope.
+    const rig = (fx, y, token, out) => {
+      if (y == null) return null;
+      const px = X(fx), py = Y(this.wallTop) - 28;
+      const range = Math.max(0.05, this.wallBottom - this.paddleH - this.wallTop);
+      const f = Math.max(0, Math.min(1, (this.wallBottom - this.paddleH - y) / range));
+      // paddle up = rope hauled in = helper rides low; paddle down = helper high
+      const cx = px + out * 58;
+      const cy = Y(this.wallTop + 0.06 + f * Math.max(0.12, this.wallBottom - this.wallTop - 0.18));
+      ctx.save();
+      ctx.lineCap = "round";
+      // rope: paddle → pulley, then pulley → helper hands (with a little sag)
+      ctx.strokeStyle = "rgba(232,185,138,0.85)"; ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.moveTo(px, Y(y)); ctx.lineTo(px, py); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(px, py);
+      ctx.quadraticCurveTo((px + cx) / 2, (py + cy - 26) / 2 + 14, cx, cy - 26);
+      ctx.stroke();
+      // pulley wheel on its mount; the spoke turns as the rope runs
+      ctx.strokeStyle = "rgba(244,236,221,0.35)"; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(px, py - 9); ctx.lineTo(px, 0); ctx.stroke();
+      ctx.fillStyle = "#2a3550"; ctx.strokeStyle = "rgba(244,236,221,0.6)"; ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.arc(px, py, 9, 0, TAU); ctx.fill(); ctx.stroke();
+      const sa = f * 5;
+      ctx.beginPath(); ctx.moveTo(px - Math.cos(sa) * 7, py - Math.sin(sa) * 7); ctx.lineTo(px + Math.cos(sa) * 7, py + Math.sin(sa) * 7); ctx.stroke();
+      // the helper, softly haloed so silhouettes read on the night court
+      ctx.fillStyle = "rgba(244,236,221,0.14)";
+      ctx.beginPath(); ctx.arc(cx, cy, 34, 0, TAU); ctx.fill();
+      if (token === "hero") puzzleShape(ctx, cx, cy, 36);
+      else if (token === "cloud") cloudShape(ctx, cx, cy, 26);
+      else friendShape(ctx, token, cx, cy, 32);
+      // little hands gripping the rope
+      ctx.fillStyle = "#e8b98a";
+      ctx.beginPath(); ctx.arc(cx - 5, cy - 26, 4, 0, TAU); ctx.fill();
+      ctx.beginPath(); ctx.arc(cx + 5, cy - 26, 4, 0, TAU); ctx.fill();
+      ctx.restore();
+      return { cx, cy };
+    };
+    const charOf = kind => kind === "patient" ? (this.mode === "bimanual" ? "scribble" : "hero")
+      : this.mode === "companion" ? "stack" : "cloud";
+    const rightChar = this.patientRight ? "hero" : charOf(rKind);
+    const leftChar = !this.patientRight ? "hero" : charOf(lKind);
+    const rigR = rig(this.court.right, pads.rightY, rightChar, 1);
+    const rigL = rig(this.court.left, pads.leftY, leftChar, -1);
+    // a whisper of a line from the patient's hand to their helper: your hand
+    // is what pulls the rope
+    const myRig = this.patientRight ? rigR : rigL;
+    const hp = this.t.palmPx(this.side, c);
+    if (myRig && hp) {
+      ctx.strokeStyle = "rgba(244,236,221,0.16)"; ctx.lineWidth = 2; ctx.setLineDash([4, 9]);
+      ctx.beginPath(); ctx.moveTo(hp.x, hp.y); ctx.lineTo(myRig.cx, myRig.cy - 26); ctx.stroke();
+      ctx.setLineDash([]);
+    }
 
     if (this.serving) {
       const t = (now - this.serving.start) / 550;
@@ -3284,6 +3340,446 @@ export class FireflyPinch extends GameBase {
   extra() { return { pinched: this.caught, fistScares: this.scared }; }
 }
 
+/* ==================== G25 Rainbow Crossing — the road to Strivealon ==================== */
+// Walk the rainbow road (the hero follows your hand along the arc). Dark
+// clouds block the way: WHOOSH them off with an outward forearm sweep
+// (shoulder external rotation — elbow stays planted, or the sweep resets).
+// Friends from the Quirky Crew are stuck on the road too: SAVE them with a
+// gentle squeeze (or a steady hold, for hands that can't close yet) — never
+// whoosh a friend! Reach the chest for the jackpot, then cross back the other
+// way. Flat daylight cartoon look (ink on cream, high contrast, no
+// glow-dependent cues) for visual accessibility. Round 1 opens with a
+// skippable learn-by-doing tutorial.
+const RAINBOW_STRIPES = ["#e8837a", "#e8a86a", "#ecd06f", "#9fc08a", "#a4b6e0"];
+const INK = "#1b1b3a";
+const FRIEND_KINDS = ["scribble", "stack"];
+export class RainbowCrossing extends GameBase {
+  id = "rainbow";
+  setup() {
+    this.roundSeconds = this.opts.tellStory ? 75 : 60;
+    this.needDeg = 32;                  // outward sweep (deg) that whooshes a cloud
+    this.saveHold = 1500;               // dwell fallback (ms) for saving friends
+    this.cloudsPushed = 0; this.friendsSaved = 0; this.jackpots = 0;
+    this.skyStars = 0;
+    this.tips = { miss: "Keep your elbow by your side and sweep your hand outward, like brushing crumbs away." };
+    this.path = this._buildPath();
+    this.tut = this.opts.tellStory ? { step: 0, said: -1, skipDwell: null } : null;
+    this._newCrossing(true);
+    if (!this.tut) {
+      this._prompt("Cross the rainbow", "Whoosh the clouds off. Squeeze to save your friends");
+      setTimeout(() => this._prompt(""), 3400);
+    }
+  }
+  extra() { return { cloudsPushed: this.cloudsPushed, friendsSaved: this.friendsSaved, jackpots: this.jackpots }; }
+
+  // low on the opposite side, arching over the top to high on the trained
+  // side — always inside rangeScale × envelope, clamped on-screen
+  _buildPath() {
+    const N = 48, a0 = 205, a1 = 55, M = 90, c = this.canvas;
+    const pts = [];
+    for (let i = 0; i <= N; i++) {
+      const t = i / N;
+      let ad = a0 + (a1 - a0) * t;
+      if (this.side === "left") ad = 180 - ad;
+      const th = deg(ad);
+      const r = (0.68 + 0.1 * Math.sin(t * Math.PI)) * this.params.rangeScale * this.envAt(th);
+      const px = this.toPx(fromCenter(th, r));
+      px.x = Math.min(Math.max(px.x, M), c.width - M);
+      px.y = Math.min(Math.max(px.y, M), c.height - M);
+      pts.push({ ...this.t.pxToRel(px, c), reachFrac: 0.72, isFar: false });
+    }
+    return pts;
+  }
+
+  _newCrossing(first) {
+    if (!first) this.path.reverse();    // walk back across; the chest waits at the far end
+    this.pos = 0;
+    this.crew = [];
+    const N = this.path.length - 1;
+    let kinds, spots;
+    if (this.tut) {                     // tutorial: cloud → friend → cloud, evenly spread
+      kinds = ["cloud", "friend", "cloud"];
+      spots = [0.3, 0.55, 0.78];
+    } else {
+      kinds = ["cloud", "cloud", "cloud", "friend"];
+      const j = 1 + Math.floor(Math.random() * 3);   // friend anywhere but never first
+      [kinds[3], kinds[j]] = [kinds[j], kinds[3]];
+      spots = [0.28, 0.46, 0.64, 0.82].map(f => f + (Math.random() - 0.5) * 0.05);
+    }
+    this.ents = kinds.map((kind, i) => ({
+      kind, friend: kind === "friend" ? pick(FRIEND_KINDS) : null,
+      idx: Math.round(spots[i] * N),
+      state: "blocking", born: null, need: this.needDeg, hold: this.saveHold,
+      dwell: null, armed: false, gauge: 0, ph: Math.random() * TAU,
+    }));
+  }
+
+  // outward forearm sweep, degrees, since the most-inward recent position.
+  // The elbow must stay planted (true rotation, not a whole-arm swing).
+  _updateSweep() {
+    const e = this.t.elbow(this.side), w = this.t.wrist(this.side);
+    if (!e?.ok || !w?.ok) { this.sweep = null; return 0; }
+    const out = this.side === "right" ? 1 : -1;
+    const a = Math.atan2(-(w.y - e.y), out * (w.x - e.x)) * 180 / Math.PI;
+    if (a < -70 || a > 165) { this.sweep = null; return 0; }   // arm hanging / off-plane
+    const sw = this.t.frame.sw;
+    const ex = e.x / sw, ey = e.y / sw;
+    if (!this.sweep || a > this.sweep.refA) { this.sweep = { refA: a, ex, ey }; return 0; }
+    if (Math.hypot(ex - this.sweep.ex, ey - this.sweep.ey) > 0.4) { this.sweep = { refA: a, ex, ey }; return 0; }
+    this.sweep.refA += (a - this.sweep.refA) * 0.004;   // slowly forget old inward reference
+    return this.sweep.refA - a;
+  }
+
+  _pt(f) {
+    const i = Math.max(0, Math.min(this.path.length - 1, f));
+    const i0 = Math.floor(i), i1 = Math.min(this.path.length - 1, i0 + 1), w = i - i0;
+    const a = this.path[i0], b = this.path[i1];
+    return { x: a.x + (b.x - a.x) * w, y: a.y + (b.y - a.y) * w };
+  }
+
+  _push(e, now) {
+    e.state = "falling"; e.fall = now; e.gauge = 0;
+    this.sweep = null;
+    this.cloudsPushed++;
+    this.hit(this.path[e.idx], this.cloudsPushed + this.friendsSaved);
+    this.burst(this.path[e.idx], "#a4b6e0");
+    if (this.tut?.step === 1) this.tut.step = 2;
+  }
+  _save(e, now) {
+    e.state = "saved"; e.gauge = 0;
+    this.friendsSaved++;
+    this.crew.push(e.friend);
+    this.hit(this.path[e.idx], this.cloudsPushed + this.friendsSaved);
+    this.burst(this.path[e.idx], "#ecd06f");
+    this.say("Saved! They will walk with you.");
+    if (this.tut?.step === 2) {
+      this.tut.step = 3;
+      setTimeout(() => { if (this.active && this.tut) this._prompt(""); }, 3600);
+    }
+  }
+
+  update(now, dt) {
+    const N = this.path.length - 1;
+
+    // jackpot celebration, then flip the crossing
+    if (this.celebrate) {
+      if (now > this.celebrate) { this.celebrate = null; this._newCrossing(false); }
+      return;
+    }
+
+    const ent = this.ents.find(e => e.state === "blocking");
+    const cap = ent ? Math.max(0, ent.idx - 2) : N;
+
+    // walking: the hero follows the hand along the road
+    this.moving = false;
+    const h = this.t.palmRel(this.side) || this.t.handRel(this.side);
+    if (h) {
+      const corridor = Math.max(this.params.radius * 1.35, 0.34);
+      let best = -1, bd = corridor;
+      const from = Math.max(0, Math.floor(this.pos) - 2);
+      const to = Math.min(cap, Math.floor(this.pos) + 14);
+      for (let i = from; i <= to; i++) {
+        const d = Math.hypot(h.x - this.path[i].x, h.y - this.path[i].y);
+        if (d < bd) { bd = d; best = i; }
+      }
+      if (best > this.pos) {
+        this.pos = Math.min(best, this.pos + 20 * dt / 1000, cap);
+        this.moving = true;
+        if (this.tut?.step === 0 && this.pos > 6) this.tut.step = 1;
+      }
+    }
+
+    // engaged with the blocker?
+    this.engaged = ent && this.pos >= cap - 1.5 ? ent : null;
+    if (this.engaged) {
+      const e = this.engaged, p = this.path[e.idx];
+      e.born ??= now;
+      const swept = this._updateSweep();
+      if (e.kind === "cloud") {
+        e.gauge = Math.min(1, swept / e.need);
+        if (swept >= e.need) this._push(e, now);
+        else if (now - e.born > 8000 + this.params.lifetime * 2000) {
+          this.miss(p);
+          e.need = Math.max(15, e.need * 0.65);   // gets easier, never impossible
+          e.born = now;
+        }
+      } else {
+        // friend: arrive open, squeeze to save — steady hold works too
+        const near = this.handNear(p, this.params.radius * 1.3);
+        const closed = this.t.handClosed(this.side);
+        if (near && !closed) e.armed = true;
+        if (near && closed && e.armed) this._save(e, now);
+        else if (near) {
+          e.dwell ??= now;
+          e.gauge = Math.min(1, (now - e.dwell) / e.hold);
+          if (now - e.dwell > e.hold) this._save(e, now);
+        } else { e.dwell = null; e.gauge = 0; }
+        // whooshing a friend: kind correction, no penalty
+        if (e.state === "blocking" && swept >= e.need) {
+          this.sweep = null;
+          e.wobble = now;
+          this.say("Oh, that's a friend! Squeeze gently to save them.");
+        }
+        if (e.state === "blocking" && now - e.born > 10000 + this.params.lifetime * 2000) {
+          this.miss(p);
+          e.hold = Math.max(800, e.hold * 0.7);
+          e.born = now;
+          this.say("Hold your hand on your friend, nice and steady.");
+        }
+      }
+    } else this.sweep = null;
+
+    for (const e of this.ents) if (e.state === "falling" && now - e.fall > 1400) e.state = "gone";
+
+    // jackpot!
+    if (!ent && this.pos >= N - 0.5) {
+      this.jackpots++;
+      this.stats.stars += 25 + this.crew.length * 10;
+      this.skyStars = Math.min(9, this.skyStars + 1 + this.crew.length);
+      audio.fanfare();
+      this.burst(this.path[N], "#ecd06f");
+      this.celebrate = now + 2000;
+      if (this.tut) { this.tut = null; this._prompt(""); }
+      this.say(this.crew.length ? "Jackpot! And your friends are safe!" : "Jackpot! Wonderful crossing!");
+      return;
+    }
+
+    this._tutTick(now);
+  }
+
+  _tutTick(now) {
+    if (!this.tut) return;
+    const c = this.canvas;
+    // skip pill (top corner opposite the trained arm's start): hover to skip
+    const hp = this.t.palmPx(this.side, c);
+    const sx = c.width - 115, sy = 62;
+    if (hp && Math.hypot(hp.x - sx, hp.y - sy) < 62) {
+      this.tut.skipDwell ??= now;
+      if (now - this.tut.skipDwell > 1200) {
+        this.tut = null;
+        this._prompt("");
+        this.say("Alright, off you go!");
+        return;
+      }
+    } else this.tut.skipDwell = null;
+    const LINES = {
+      0: ["Move your hand along the rainbow", "Your little friend walks where your hand leads"],
+      1: ["A dark cloud blocks the road!", "Elbow by your side, sweep your hand outward. Whoosh!"],
+      2: ["A friend is stuck on the road", "Reach to them and squeeze gently. Or just hold your hand on them"],
+      3: ["You have it!", "Walk on to the treasure chest"],
+    };
+    if (this.tut.said !== this.tut.step) {
+      this.tut.said = this.tut.step;
+      const [a, b] = LINES[this.tut.step];
+      this._prompt(a, b);
+      this._speak(a + ". " + b + ".");
+    }
+  }
+
+  drawBg(ctx, c, now) {
+    ctx.fillStyle = "#f2ecdc";
+    ctx.fillRect(0, 0, c.width, c.height);
+    // sun peeking behind a soft cloud
+    const sx = c.width * 0.16, sy = c.height * 0.13;
+    ctx.fillStyle = "#ecd06f";
+    ctx.beginPath(); ctx.arc(sx + 42, sy - 14, 26, 0, TAU); ctx.fill();
+    ctx.fillStyle = "#fdfaf2";
+    for (const [dx, r] of [[-32, 22], [0, 30], [34, 24]]) { ctx.beginPath(); ctx.arc(sx + dx, sy + 8, r, 0, TAU); ctx.fill(); }
+    // stars returned to the Strivealon sky — one per jackpot, plus saved friends
+    for (let i = 0; i < this.skyStars; i++) {
+      const fx = 0.1 + (i * 0.61) % 0.8, fy = 0.05 + (i * 0.37) % 0.16;
+      ctx.globalAlpha = 0.7 + Math.sin(now / 600 + i) * 0.3;
+      starShape(ctx, c.width * fx, c.height * fy, 9, "#e8a86a");
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  draw(ctx, c, now) {
+    const sw = this.sw();
+    const pts = this.path.map(p => this.toPx(p));
+    const nrm = pts.map((p, i) => {
+      const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)];
+      const dx = b.x - a.x, dy = b.y - a.y, L = Math.hypot(dx, dy) || 1;
+      return { x: -dy / L, y: dx / L };
+    });
+    // rainbow band: ink outline, then five flat stripes
+    const bw = Math.max(46, sw * 0.3);
+    const band = (off, w, color) => {
+      ctx.strokeStyle = color; ctx.lineWidth = w; ctx.lineJoin = "round"; ctx.lineCap = "round";
+      ctx.beginPath();
+      pts.forEach((p, i) => {
+        const x = p.x + nrm[i].x * off, y = p.y + nrm[i].y * off;
+        i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+      });
+      ctx.stroke();
+    };
+    band(0, bw + 7, INK);
+    const s5 = bw / 5;
+    RAINBOW_STRIPES.forEach((col, k) => band((k - 2) * s5, s5 + 1.5, col));
+
+    // treasure chest at the far end
+    const end = pts[pts.length - 1];
+    const open = !!this.celebrate || (!this.ents.some(e => e.state === "blocking") && this.pos > this.path.length - 6);
+    chestShape(ctx, end.x, end.y - bw * 0.75, Math.max(56, sw * 0.34), open, now);
+
+    // clouds falling off, behind everything else
+    const out = this.side === "right" ? 1 : -1;
+    for (const e of this.ents) {
+      if (e.state !== "falling") continue;
+      const p = pts[e.idx], t = (now - e.fall) / 1400;
+      if (t >= 1) continue;
+      cloudShape(ctx, p.x + out * 90 * t, p.y + t * t * c.height * 0.4, Math.max(40, sw * 0.22), 1 - t, out * t * 2.2);
+      // whoosh trails
+      ctx.strokeStyle = `rgba(27,27,58,${0.4 * (1 - t)})`;
+      ctx.lineWidth = 3; ctx.lineCap = "round";
+      for (const dy of [-14, 2, 18]) {
+        ctx.beginPath();
+        ctx.moveTo(p.x - out * 30, p.y + dy);
+        ctx.quadraticCurveTo(p.x + out * 20 * t * 4, p.y + dy - 6, p.x + out * (30 + 60 * t), p.y + dy + 10 * t);
+        ctx.stroke();
+      }
+    }
+
+    // rescued crew trailing behind the hero
+    this.crew.forEach((kind, i) => {
+      const p = this.toPx(this._pt(this.pos - 3.2 * (i + 1)));
+      friendShape(ctx, kind, p.x, p.y - bw * 0.55, Math.max(30, sw * 0.16), Math.sin(now / 240 + i) * 3);
+    });
+    // the hero
+    const tp = this.toPx(this._pt(this.pos));
+    puzzleShape(ctx, tp.x, tp.y - bw * 0.6, Math.max(38, sw * 0.2), this.moving ? Math.sin(now / 140) * 4 : Math.sin(now / 700) * 1.5);
+
+    // blockers on the road
+    for (const e of this.ents) {
+      if (e.state !== "blocking") continue;
+      const p = pts[e.idx];
+      const bob = Math.sin(now / 520 + e.ph) * 4;
+      const wob = e.wobble && now - e.wobble < 500 ? Math.sin((now - e.wobble) / 40) * 5 : 0;
+      const es = Math.max(40, sw * 0.22);
+      if (e.kind === "cloud") cloudShape(ctx, p.x + wob, p.y - bw * 0.55 + bob, es, 1, 0);
+      else friendShape(ctx, e.friend, p.x + wob, p.y - bw * 0.55 + bob, es * 0.85, bob * 0.4);
+
+      if (this.engaged === e) {
+        const ringR = es * 0.95;
+        const hint = (text) => {
+          ctx.fillStyle = "rgba(27,27,58,0.85)";
+          ctx.font = `800 ${Math.round(c.height * 0.028)}px Nunito, sans-serif`;
+          ctx.textAlign = "center";
+          ctx.fillText(text, p.x, p.y - bw * 0.55 - ringR - 16);
+        };
+        // progress ring: sweep gauge (cloud) or squeeze-hold gauge (friend)
+        if (e.gauge > 0) {
+          ctx.strokeStyle = "#9fc08a"; ctx.lineWidth = 7; ctx.lineCap = "round";
+          ctx.beginPath(); ctx.arc(p.x, p.y - bw * 0.55, ringR, -Math.PI / 2, -Math.PI / 2 + TAU * e.gauge); ctx.stroke();
+        }
+        if (e.kind === "cloud") {
+          hint("Sweep outward to whoosh ✋");
+          // animated outward arc: a dot rides from the top of the cloud out
+          // and away, showing the whoosh gesture
+          const cy = p.y - bw * 0.55;
+          const ar = es * 1.55, a0 = -Math.PI / 2, a1 = a0 + out * 1.6;
+          ctx.strokeStyle = "rgba(27,27,58,0.5)"; ctx.lineWidth = 4; ctx.setLineDash([6, 8]);
+          ctx.beginPath(); ctx.arc(p.x, cy, ar, a0, a1, out < 0); ctx.stroke();
+          ctx.setLineDash([]);
+          const f = (now % 1300) / 1300;
+          const ad = a0 + out * 1.6 * f;
+          ctx.fillStyle = "rgba(27,27,58,0.75)";
+          ctx.beginPath(); ctx.arc(p.x + Math.cos(ad) * ar, cy + Math.sin(ad) * ar, 6 + 3 * Math.sin(f * Math.PI), 0, TAU); ctx.fill();
+        } else {
+          const closed = this.t.handClosed(this.side);
+          const near = this.handNear(this.path[e.idx], this.params.radius * 1.3);
+          if (near && closed && !e.armed) hint("Open your hand first ✋");
+          else hint(this.tut ? "Squeeze gently to save ✊" : "Squeeze to save ✊");
+        }
+      }
+    }
+
+    // tutorial extras: guide dots ahead of the hero + the skip pill
+    if (this.tut) {
+      if (this.tut.step === 0) {
+        for (let k = 0; k < 3; k++) {
+          const g = this.toPx(this._pt(this.pos + 3 + k * 3 + ((now / 260) % 3)));
+          ctx.globalAlpha = 0.55 - k * 0.14;
+          ctx.fillStyle = INK;
+          ctx.beginPath(); ctx.arc(g.x, g.y, 7, 0, TAU); ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+      }
+      const sx = c.width - 115, sy = 62;
+      ctx.fillStyle = "rgba(253,250,242,0.9)";
+      ctx.strokeStyle = INK; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.roundRect(sx - 75, sy - 26, 150, 52, 26); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = INK;
+      ctx.font = `800 ${Math.round(c.height * 0.03)}px Nunito, sans-serif`;
+      ctx.textAlign = "center";
+      ctx.fillText("Skip ✋", sx, sy + 9);
+      if (this.tut.skipDwell) {
+        const f = Math.min(1, (now - this.tut.skipDwell) / 1200);
+        ctx.strokeStyle = "#9fc08a"; ctx.lineWidth = 5;
+        ctx.beginPath(); ctx.arc(sx, sy, 36, -Math.PI / 2, -Math.PI / 2 + TAU * f); ctx.stroke();
+      }
+    }
+
+    if (this.celebrate) {
+      ctx.fillStyle = `rgba(27,27,58,${Math.min(1, (this.celebrate - now) / 2000 + 0.3)})`;
+      ctx.font = `800 ${Math.round(c.height * 0.07)}px Nunito, sans-serif`;
+      ctx.textAlign = "center";
+      ctx.fillText("Jackpot! ✦", c.width / 2, c.height * 0.2);
+    }
+
+    // timer whisper, ink flavored for the daylight scene
+    const f = 1 - this.elapsed(now) / this.roundSeconds;
+    ctx.strokeStyle = "rgba(27,27,58,0.22)";
+    ctx.lineWidth = 3; ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(c.width * (0.5 - 0.4 * f), 10);
+    ctx.lineTo(c.width * (0.5 + 0.4 * f), 10);
+    ctx.stroke();
+  }
+
+  // flat ink-on-cream arm + cursor (the engine default is tuned for night scenes)
+  _drawArmAndCursor(ctx, c, now) {
+    const side = this.side;
+    const sh = this.t.shoulder(side), el = this.t.elbow(side), wr = this.t.wrist(side);
+    const P = pt => this.t._videoToPx(pt.x, pt.y, c);
+    ctx.save();
+    ctx.lineCap = "round";
+    if (sh && el?.ok && wr?.ok) {
+      const ps = P(sh), pe = P(el), pw = P(wr);
+      ctx.strokeStyle = "rgba(27,27,58,0.16)"; ctx.lineWidth = 10;
+      ctx.beginPath(); ctx.moveTo(ps.x, ps.y); ctx.lineTo(pe.x, pe.y); ctx.lineTo(pw.x, pw.y); ctx.stroke();
+      ctx.strokeStyle = "rgba(27,27,58,0.5)"; ctx.lineWidth = 3.5;
+      ctx.beginPath(); ctx.moveTo(ps.x, ps.y); ctx.lineTo(pe.x, pe.y); ctx.lineTo(pw.x, pw.y); ctx.stroke();
+    }
+    // real hand skeleton when available (amber/sage reads fine on cream);
+    // otherwise a flat wrist→palm line + disc
+    const handDrawn = drawHand(ctx, c, this.t, side, { fallback: false });
+    if (!handDrawn) {
+      const pm = this.t.palm(side);
+      if (wr?.ok && pm) {
+        const pw = P(wr), pp = P(pm);
+        ctx.strokeStyle = "rgba(27,27,58,0.5)"; ctx.lineWidth = 3.5;
+        ctx.beginPath(); ctx.moveTo(pw.x, pw.y); ctx.lineTo(pp.x, pp.y); ctx.stroke();
+        ctx.lineWidth = 2.5;
+        ctx.beginPath(); ctx.arc(pp.x, pp.y, 7, 0, TAU);
+        if (this.t.handClosed(side)) { ctx.fillStyle = "#e8a86a"; ctx.fill(); } else ctx.stroke();
+      }
+    }
+    const hp = this.t.palmPx(side, c);   // cursor rides the palm center
+    if (hp) {
+      ctx.strokeStyle = "rgba(27,27,58,0.28)"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(hp.x, hp.y, this.params.radius * this.sw(), 0, TAU); ctx.stroke();
+      if (!handDrawn) {
+        ctx.fillStyle = "#e8a86a";
+        ctx.beginPath(); ctx.arc(hp.x, hp.y, 12, 0, TAU); ctx.fill();
+        ctx.strokeStyle = INK; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.arc(hp.x, hp.y, 12, 0, TAU); ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+}
+
 /* ==================== shared little painters ==================== */
 function twinkles(ctx, c) {
   const now = performance.now();
@@ -3319,6 +3815,96 @@ function starShape(ctx, x, y, r, color) {
   }
   ctx.closePath(); ctx.fill();
 }
+/* ---- Rainbow Crossing cast (flat cartoon, ink outlines) ---- */
+function cloudShape(ctx, x, y, s, alpha = 1, rot = 0) {
+  ctx.save();
+  ctx.translate(x, y); ctx.rotate(rot); ctx.globalAlpha = alpha;
+  ctx.fillStyle = "#23234a";
+  for (const [dx, dy, r] of [[-s * 0.5, 0.04 * s, s * 0.42], [0, -s * 0.28, s * 0.5], [s * 0.5, 0.04 * s, s * 0.42], [0, s * 0.2, s * 0.46]]) {
+    ctx.beginPath(); ctx.arc(dx, dy, r, 0, TAU); ctx.fill();
+  }
+  // sad eyes, frown, one tear
+  ctx.fillStyle = "#f2ecdc";
+  ctx.beginPath(); ctx.ellipse(-s * 0.22, -s * 0.08, s * 0.13, s * 0.16, 0, 0, TAU); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(s * 0.22, -s * 0.08, s * 0.13, s * 0.16, 0, 0, TAU); ctx.fill();
+  ctx.fillStyle = "#3a5a9a";
+  ctx.beginPath(); ctx.arc(-s * 0.22, -s * 0.03, s * 0.07, 0, TAU); ctx.fill();
+  ctx.beginPath(); ctx.arc(s * 0.22, -s * 0.03, s * 0.07, 0, TAU); ctx.fill();
+  ctx.strokeStyle = "#f2ecdc"; ctx.lineWidth = Math.max(2, s * 0.06); ctx.lineCap = "round";
+  ctx.beginPath(); ctx.arc(0, s * 0.46, s * 0.2, Math.PI * 1.2, Math.PI * 1.8); ctx.stroke();
+  ctx.fillStyle = "#7ab0d8";
+  ctx.beginPath(); ctx.arc(s * 0.36, s * 0.18, s * 0.08, 0, TAU); ctx.fill();
+  ctx.restore();
+}
+function faceDots(ctx, s, dy) {
+  ctx.fillStyle = "#fdfaf2";
+  ctx.beginPath(); ctx.arc(-s * 0.16, dy, s * 0.11, 0, TAU); ctx.fill();
+  ctx.beginPath(); ctx.arc(s * 0.16, dy, s * 0.11, 0, TAU); ctx.fill();
+  ctx.fillStyle = INK;
+  ctx.beginPath(); ctx.arc(-s * 0.16, dy, s * 0.05, 0, TAU); ctx.fill();
+  ctx.beginPath(); ctx.arc(s * 0.16, dy, s * 0.05, 0, TAU); ctx.fill();
+}
+function faceSmile(ctx, s, dy) {
+  ctx.strokeStyle = INK; ctx.lineWidth = Math.max(1.5, s * 0.05); ctx.lineCap = "round";
+  ctx.beginPath(); ctx.arc(0, dy, s * 0.14, Math.PI * 0.15, Math.PI * 0.85); ctx.stroke();
+}
+function puzzleShape(ctx, x, y, s, bob = 0) {
+  ctx.save();
+  ctx.translate(x, y + bob);
+  ctx.fillStyle = "#ecc94b"; ctx.strokeStyle = INK; ctx.lineWidth = Math.max(2, s * 0.07);
+  ctx.beginPath(); ctx.arc(0, -s * 0.6, s * 0.18, 0, TAU); ctx.fill(); ctx.stroke();   // knob
+  ctx.beginPath(); ctx.roundRect(-s / 2, -s / 2, s, s, s * 0.18); ctx.fill();
+  ctx.stroke();
+  faceDots(ctx, s, -s * 0.08);
+  faceSmile(ctx, s, s * 0.14);
+  ctx.restore();
+}
+function friendShape(ctx, kind, x, y, s, bob = 0) {
+  ctx.save();
+  ctx.translate(x, y + bob);
+  if (kind === "scribble") {
+    ctx.fillStyle = "#e8827a";
+    ctx.beginPath(); ctx.arc(0, 0, s * 0.52, 0, TAU); ctx.fill();
+    ctx.strokeStyle = "#c4574e"; ctx.lineWidth = Math.max(1.5, s * 0.05);
+    for (let i = 0; i < 3; i++) { ctx.beginPath(); ctx.arc(0, 0, s * (0.18 + i * 0.13), i, i + 4.6); ctx.stroke(); }
+    faceDots(ctx, s, -s * 0.06);
+    faceSmile(ctx, s, s * 0.16);
+  } else {
+    const blob = (dy, rx, ry, col) => { ctx.fillStyle = col; ctx.beginPath(); ctx.ellipse(0, dy, rx, ry, 0, 0, TAU); ctx.fill(); };
+    blob(s * 0.3, s * 0.5, s * 0.24, "#9fc08a");
+    blob(0, s * 0.4, s * 0.2, "#7aa8c8");
+    blob(-s * 0.3, s * 0.3, s * 0.22, "#e8827a");
+    ctx.fillStyle = "#fdfaf2"; ctx.beginPath(); ctx.arc(0, -s * 0.32, s * 0.14, 0, TAU); ctx.fill();
+    ctx.fillStyle = INK; ctx.beginPath(); ctx.arc(0, -s * 0.32, s * 0.06, 0, TAU); ctx.fill();
+    ctx.strokeStyle = "#5a4a3a"; ctx.lineWidth = Math.max(1.5, s * 0.05); ctx.lineCap = "round";
+    ctx.beginPath(); ctx.arc(0, s * 0.3, s * 0.16, Math.PI * 0.15, Math.PI * 0.85); ctx.stroke();
+  }
+  ctx.restore();
+}
+function chestShape(ctx, x, y, s, open, now) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.strokeStyle = INK; ctx.lineWidth = Math.max(2, s * 0.06);
+  if (open) {   // lid tipped back, gold spilling out
+    ctx.fillStyle = "#23234a";
+    ctx.beginPath(); ctx.roundRect(-s * 0.58, -s * 0.72, s * 1.16, s * 0.3, s * 0.08); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = "#ecd06f";
+    for (const [dx, dy, r] of [[-s * 0.28, -s * 0.32, s * 0.13], [0, -s * 0.4, s * 0.15], [s * 0.28, -s * 0.32, s * 0.13]]) {
+      ctx.beginPath(); ctx.arc(dx, dy, r, 0, TAU); ctx.fill(); ctx.stroke();
+    }
+    starShape(ctx, 0, -s * (0.85 + 0.06 * Math.sin(now / 300)), s * 0.2, "#ecd06f");
+  } else {
+    ctx.fillStyle = "#23234a";
+    ctx.beginPath(); ctx.roundRect(-s * 0.55, -s * 0.5, s * 1.1, s * 0.3, s * 0.08); ctx.fill(); ctx.stroke();
+  }
+  ctx.fillStyle = "#fdfaf2";
+  ctx.beginPath(); ctx.roundRect(-s / 2, -s * 0.24, s, s * 0.54, s * 0.08); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = INK;   // keyhole
+  ctx.beginPath(); ctx.arc(0, -s * 0.05, s * 0.07, 0, TAU); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(-s * 0.04, -s * 0.02); ctx.lineTo(s * 0.04, -s * 0.02); ctx.lineTo(0, s * 0.12); ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
+
 function crateShape(ctx, x, y, s, bright) {
   ctx.save();
   // vivid green blocks (like the physical BBT's colored blocks): high
@@ -3372,4 +3958,5 @@ export const GAMES = [
   { id: "glide", name: "Firefly Glide", cls: FireflyGlide, trains: "Gentle squeeze control" },
   { id: "bloom", name: "Night Blooms", cls: NightBlooms, trains: "Hand shaping" },
   { id: "pinch", name: "Firefly Pinch", cls: FireflyPinch, trains: "Fingertip pinch" },
+  { id: "rainbow", name: "Rainbow Crossing", cls: RainbowCrossing, trains: "Outward sweep + grasp" },
 ];

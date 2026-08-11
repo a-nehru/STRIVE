@@ -28,6 +28,7 @@ const MOODS = {
   boxes:          { bpm: 74, kick: [0, 7, 10], snare: [4, 12], padGain: 0.045, bassGain: 0.05, hatGain: 0.022 },
   compass:        { bpm: 70, kick: [0, 10], snare: [4], padGain: 0.05, bassGain: 0.04, hatGain: 0.018 },
   echo:           { bpm: 64, kick: [0, 10], snare: [], padGain: 0.055, bassGain: 0.035, hatGain: 0.014 },
+  rainbow:        { bpm: 80, kick: [0, 7, 10], snare: [4, 12], padGain: 0.045, bassGain: 0.05, hatGain: 0.024 },
 };
 const SWING = 0.16;   // fraction of a 16th added to off-beat hats
 

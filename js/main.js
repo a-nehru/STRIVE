@@ -443,6 +443,25 @@ const CARD_ART = {
       <path d="M204 260 Q180 210 158 172" stroke="rgba(232,185,138,.8)" stroke-width="7" fill="none" stroke-linecap="round"/>
       <rect x="0" y="352" width="300" height="48" fill="rgba(20,40,30,.5)"/>
     </svg></div>`,
+  rainbow: `<div class="art" style="background:linear-gradient(180deg,#f4eede,#ebe0c8)">
+    <svg viewBox="0 0 300 400" style="position:absolute;inset:0;width:100%;height:100%">
+      <g fill="none" stroke-linecap="round">
+        <path d="M50 370 C130 340 150 250 150 200 C150 150 180 90 255 55" stroke="#1b1b3a" stroke-width="66"/>
+        <path d="M50 370 C130 340 150 250 150 200 C150 150 180 90 255 55" stroke="#e8837a" stroke-width="58"/>
+        <path d="M50 370 C130 340 150 250 150 200 C150 150 180 90 255 55" stroke="#e8a86a" stroke-width="46"/>
+        <path d="M50 370 C130 340 150 250 150 200 C150 150 180 90 255 55" stroke="#ecd06f" stroke-width="34"/>
+        <path d="M50 370 C130 340 150 250 150 200 C150 150 180 90 255 55" stroke="#9fc08a" stroke-width="22"/>
+        <path d="M50 370 C130 340 150 250 150 200 C150 150 180 90 255 55" stroke="#a4b6e0" stroke-width="10"/>
+      </g>
+      <circle cx="52" cy="66" r="20" fill="#ecd06f"/>
+      <g fill="#23234a"><circle cx="100" cy="180" r="18"/><circle cx="122" cy="170" r="21"/><circle cx="144" cy="182" r="17"/><circle cx="122" cy="190" r="18"/></g>
+      <circle cx="112" cy="172" r="4" fill="#f2ecdc"/><circle cx="132" cy="172" r="4" fill="#f2ecdc"/>
+      <rect x="222" y="30" width="56" height="34" rx="5" fill="#fdfaf2" stroke="#1b1b3a" stroke-width="4"/>
+      <rect x="218" y="16" width="64" height="17" rx="5" fill="#23234a" stroke="#1b1b3a" stroke-width="4"/>
+      <rect x="176" y="286" width="34" height="34" rx="7" fill="#ecc94b" stroke="#1b1b3a" stroke-width="4"/>
+      <circle cx="193" cy="281" r="7" fill="#ecc94b" stroke="#1b1b3a" stroke-width="4"/>
+      <circle cx="187" cy="299" r="2.6" fill="#1b1b3a"/><circle cx="199" cy="299" r="2.6" fill="#1b1b3a"/>
+    </svg></div>`,
 };
 
 function renderSelect() {
@@ -676,6 +695,10 @@ function renderBetween(round, note) {
       lines.push(`Trick shots: <b>${round.gripShots ? `${round.gripShots} grip ✊` : ""}${round.gripShots && round.spinShots ? " · " : ""}${round.spinShots ? `${round.spinShots} spin ↻` : ""}</b>`);
   }
   else if (round.game === "boxes") lines.push(`You carried <b>${round.boxes} crates</b> across, a fine ferry load!`);
+  else if (round.game === "rainbow") {
+    lines.push(`You whooshed <b>${round.cloudsPushed} clouds</b> off the rainbow and saved <b>${round.friendsSaved} friend${round.friendsSaved === 1 ? "" : "s"}</b>!`);
+    if (round.jackpots) lines.push(`Jackpots reached: <b>${round.jackpots}</b> ✦ Strivealon's sky is getting brighter.`);
+  }
   else if (round.game === "rhythm") lines.push(`You played <b>${round.notesHitPct}%</b> of "${round.song}", best streak <b>${round.bestCombo} notes</b>.`);
   else if (round.game === "compass") lines.push(`You lit <b>${round.hits} compass points</b> and always found your way home.`);
   else if (round.game === "echo") lines.push(`You found <b>${round.hits} echoes</b>${round.meanEchoErrSW != null ? `, on average <b>${round.meanEchoErrSW}</b> shoulder-widths from the star` : ""}.`);
