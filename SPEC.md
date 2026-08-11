@@ -35,11 +35,20 @@ Design grounded in Zhang et al. 2024 (CFI framework) and Cameirão et al. (RGS).
 
 ## 3. Tracking
 
-| | MediaPipe (v1) | ZED 2 (v2) |
+| | MediaPipe (v1) | ZED 2 (implemented via bridge) |
 |---|---|---|
-| Arm joints | Pose Landmarker (shoulder/elbow/wrist), 2D + rough z | Full 3D skeleton, real depth |
-| Grasp | Hand Landmarker on a **zoomed crop around the tracked wrist** (full-frame hands at 12 ft are unreliable) | No fingers — still needs the crop trick or a near camera |
-| Risk | Grasp detection at distance is the main R&D risk. Fallback if unreliable: **dwell-and-hold** (hold position 1–2 s) replaces grasp in any game that asks for it. | Integration effort |
+| Arm joints | Pose Landmarker (shoulder/elbow/wrist), 2D + rough z | SDK BODY_38 depth-based skeleton, streamed to the browser |
+| Grasp | Hand Landmarker on a **zoomed crop around the tracked wrist** (full-frame hands at 12 ft are unreliable) | BODY_38's four coarse hand points feed the pose-fingertip grip fallback; the 21-point hand model is unavailable |
+| Risk | Grasp detection at distance is the main R&D risk. Fallback if unreliable: **dwell-and-hold** (hold position 1–2 s) replaces grasp in any game that asks for it. | Hand-model games (Firefly Pinch, Night Blooms, Teapot Turn) degrade in ZED mode |
+
+**ZED integration (shipped):** the game is a static web app, so `tools/zed_bridge.py`
+is the adapter — it runs the ZED SDK body tracking natively and serves
+`localhost:8322` (`/status` probe, `/stream` SSE skeletons re-mapped to the
+MediaPipe 33-landmark layout, `/video.mjpg` mirror preview). `tracker.js`
+probes it at boot: bridge up → ZED drives the identical `_ingest` pipeline;
+bridge absent → webcam + MediaPipe, unchanged. Staff drawer setting "Camera
+source" (Auto / Webcam only, device-level). Depth is not yet consumed in-game;
+a depth-aware envelope is the natural v3.
 
 Grasp signal (v1 target): binary open/closed from hand-landmark finger
 curl, smoothed over ~300 ms. Recorded per event with position along the arc.
@@ -287,8 +296,77 @@ Scoring by error (<0.25 SW perfect / <0.5 good). Metric: mean echo error.
 
 ### Implemented Pong modes (v1)
 solo (vs gentle AI) · bimanual (left arm vs right arm — the suite's bimanual
-game) · coupled (both arms average into one paddle) · companion (arrow keys).
-Patient paddle sits on the trained-arm side; per-arm arcs used in bimanual.
+game) · coupled (both arms average into one paddle) · companion (arrow keys) ·
+team-arms · team-keys. Patient paddle sits on the trained-arm side; per-arm
+arcs used in bimanual.
+
+### Pong refinements (Aug 2026, implemented)
+- **Walled lane sized to the arc:** hard rebound walls pulled inside the court
+  to match `rangeScale ×` the assessed arc, so a small arc still gets a fully
+  playable lane; walls widen as the DDA grows range demand.
+- **Diegetic control explanation — the rope rig:** each paddle hangs from a
+  rope over a pulley, hauled by a character (the puzzle-piece hero for the
+  patient, the dark cloud for the AI, friends for teammate/companion paddles).
+  The helper rides the rope as the arm moves, so the arm→paddle mapping is
+  visible instead of abstract.
+- **Constant rally speed:** the ball crosses the court in a fixed number of
+  seconds; no per-return or per-rally acceleration. Difficulty moves only
+  between rounds via the DDA. Skill shots keep a momentary punch that resets
+  at the next paddle contact.
+- **Flat flight:** vertical speed capped at 38% of horizontal; AI aims near
+  the lane middle. Rallies cross in shallow diagonals rather than ricocheting.
+- **Long-rally resolution ("the sleepy star"):** in vs-AI modes a rally past
+  75 s visibly tires the AI (reaction gain and speed fade, sleep marks
+  appear); past 90 s it drifts to the lane middle and can no longer chase, so
+  the patient wins the point through ordinary physics — never a visible timer.
+  Spoken as "You wore the little star out!". No AI in bimanual/companion, so
+  no cap there.
+- **Round-1 tutorial doubling as a speed assessment:** replaces the story.
+  Step 1: touch a pulsing star at the lane top, then bottom, five times —
+  teaches the mapping AND measures paddle speed (median top↔bottom traversal,
+  first transition dropped as reaction). Ball crossing time = `1.4 × T +
+  0.45 s`, clamped to the DDA lifetime limits, used from the very first serve
+  and persisted into `params.lifetime` (the DDA adjusts from the calibrated
+  start). Step 2: meet one easy serve (misses give the AI no points during the
+  tutorial). Skippable via a hand-hover pill; skipping falls back to the
+  assessment-seeded speed. `paddleTraversalS` is logged per round — the
+  suite's only direct arm-speed trend.
+
+### G25 — "Rainbow Crossing" (external rotation + grasp discrimination)
+The suite's first game in the **Strivealon story world**: dark clouds are
+covering the stars over the village; games earn stars back for its sky.
+Co-designed with Tavi; cast = "The Quirky Crew" (yellow puzzle-piece hero,
+red scribble-ball, stacked one-eye, sad dark-cloud enemies).
+- **Mechanic:** the hero walks a rainbow road (an arc built point-by-point
+  inside `rangeScale ×` the assessed envelope, low on the opposite side and
+  arching to high on the trained side; the hand traces it to walk). Dark
+  clouds block the road: **whoosh them off with an outward forearm sweep**
+  (shoulder external rotation — the elbow must stay planted or the sweep
+  resets; ~32° of sweep, easing to 15° after timeouts so it never becomes
+  impossible). Quirky Crew friends are also stuck on the road: **save them
+  with a gentle squeeze** (arrive open, then close; a steady 1.5 s hold works
+  for hands that can't close). Sweeping at a friend gets a kind spoken
+  correction, no penalty — a discrimination/inhibition element. Reaching the
+  chest = jackpot (stars, +bonus per rescued friend, stars return to the
+  sky); the crossing then reverses.
+- **Trains:** shoulder external rotation (a Fugl-Meyer movement nothing else
+  in the suite touches), guided reach along a path, grasp, response
+  inhibition.
+- **Difficulty knobs:** envelope-scaled path radius (rangeScale), sweep
+  degrees required, save-hold duration, blocker timeout (lifetime-scaled).
+- **Metrics:** `cloudsPushed`, `friendsSaved`, `jackpots` per round.
+- **Tutorial:** round 1 is a skippable learn-by-doing crossing (walk → whoosh
+  a demo cloud → save a friend), voice-guided, skip via hand-hover pill.
+- **Art direction (deliberate departure):** flat daylight cartoon — ink
+  outlines on warm cream, high contrast, no glow-dependent cues — chosen for
+  visual-impairment accessibility. The arm skeleton/cursor rendering is
+  overridden in ink for this game. See DESIGN_BRIEF §9.
+
+### Aug 2026 additions (G10–G24)
+Fifteen further games from the research pass (wipe coverage, bilateral rowing,
+steering, ballistic swipes, pronation/supination, pinch, cognitive sorting…)
+are specified in `GAME_IDEAS.md` and implemented in `games.js` with a
+`trains:` label per card so therapists can prescribe by movement.
 
 ### Orientation rule (all games)
 Layouts mirror by trained arm: Pong paddle side, Lantern carries cross the
@@ -314,7 +392,9 @@ game → rounds with DDA until stop rule (fatigue check / time / patient exit).
 3. **M3 — Grasp R&D:** wrist-crop hand tracking at distance; fallback dwell.
 4. **M4 — Drift + Lantern Release** (grasp-dependent stages gated on M3).
 5. **M5 — Ember Watch + reward economy across games.**
-6. **M6 — ZED 2 backend; second plane (toward-TV flexion).**
+6. **M6 — ZED 2 backend** ✅ shipped as the localhost bridge (see §3);
+   second plane (toward-TV flexion) still open — the bridge streams 2D today,
+   so depth-plane games are the remaining work.
 
 Open questions: exact joint-angle definition per plane (goniometry-matched?),
 pain-scale wording per clinical team, patient ID scheme, bilateral/mirror

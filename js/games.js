@@ -572,7 +572,7 @@ export class LanternRelease extends GameBase {
 export class ArcPong extends GameBase {
   id = "pong";
   setup() {
-    this.roundSeconds = 60;
+    this.roundSeconds = this.opts.tellStory ? 80 : 60;   // round 1 fits the tutorial
     this.mode = this.opts.mode || "solo";
     this.profiles = this.opts.profiles || {};
     this.patientRight = this.side === "right";
@@ -605,8 +605,14 @@ export class ArcPong extends GameBase {
       addEventListener("keydown", this._keyDown);
       addEventListener("keyup", this._keyUp);
     }
-    const wait = this.tellStory(STORIES.pong);
-    if (!wait) {
+    // round 1: skippable learn-by-doing tutorial instead of the story. Its
+    // paddle sweeps double as a speed assessment: the median top<->bottom
+    // traversal time sets the ball's crossing time (pongCrossTime), which
+    // main.js persists into params.lifetime for the DDA to adjust from.
+    this.tut = this.opts.tellStory
+      ? { step: 0, said: -1, skipDwell: null, touches: [], lastTouch: null, target: "top" }
+      : null;
+    if (!this.tut) {
       const SUB = {
         solo: "Raise and lower your arm to score points past the other paddle!",
         bimanual: "Each arm has its own paddle. Rally with yourself!",
@@ -619,8 +625,8 @@ export class ArcPong extends GameBase {
         .filter(Boolean).join(" · ");
       this._prompt("Rally with the light", SUB[this.mode] + (skillHint ? ` (${skillHint})` : ""));
       setTimeout(() => this._prompt(""), 3200);
+      this._startServe(performance.now());
     }
-    this._startServe(performance.now() + wait);
   }
   stop() {
     if (this._keyDown) { removeEventListener("keydown", this._keyDown); removeEventListener("keyup", this._keyUp); }
@@ -631,6 +637,10 @@ export class ArcPong extends GameBase {
       pongMode: this.mode, bestRally: this.bestRally, points: this.score.us, aiPoints: this.score.ai,
       gripShots: this.gripShots, spinShots: this.spinShots,
       skills: { ...this.skills },
+      // tutorial warm-up measurement: median lane traversal time and the ball
+      // crossing time derived from it (absent when the tutorial was skipped)
+      paddleTraversalS: this.paddleTraversalS ?? null,
+      pongCrossTime: this.pongCrossTime ? Math.round(this.pongCrossTime * 100) / 100 : null,
     };
   }
   // grip shot step 1: hand closed at contact catches the ball on the paddle
@@ -649,13 +659,79 @@ export class ArcPong extends GameBase {
   _startServe(now) {
     this.serving = { start: now, beats: -1 };
     this.ball = null;
+    this._tired = 0;
+  }
+
+  // round-1 tutorial: (0) touch the star at the lane top, then bottom, five
+  // times — the sweeps teach the control AND measure real paddle speed —
+  // then (1) meet one easy serve, then play. Hover the skip pill to jump in.
+  _tutTargetY() {
+    return this.tut.target === "top"
+      ? this.wallTop + this.paddleH / 2 + 0.02
+      : this.wallBottom - this.paddleH / 2 - 0.02;
+  }
+  _pongTut(now) {
+    const c = this.canvas;
+    const hp = this.t.palmPx(this.side, c);
+    const sx = c.width - 115, sy = 62;
+    if (hp && Math.hypot(hp.x - sx, hp.y - sy) < 62) {
+      this.tut.skipDwell ??= now;
+      if (now - this.tut.skipDwell > 1200) {
+        this.tut = null;
+        this._prompt("");
+        if (!this.ball && !this.serving) this._startServe(now);
+        this.say("Alright, rally time!");
+        return;
+      }
+    } else this.tut.skipDwell = null;
+
+    const LINES = {
+      0: ["Your helper pulls the paddle", "Raise and lower your arm. Touch each star with your paddle"],
+      1: ["Here comes the star, nice and easy", "Watch it come, and meet it with your paddle"],
+      2: ["You have it!", "Rally with the star. Outlast it, and the point is yours"],
+    };
+    if (this.tut.said !== this.tut.step) {
+      this.tut.said = this.tut.step;
+      const [a, b] = LINES[this.tut.step];
+      this._prompt(a, b);
+      this._speak(a + ". " + b + ".");
+    }
+
+    if (this.tut.step === 0) {
+      const padY = this.patientRight ? this.pads.rightY : this.pads.leftY;
+      if (padY == null) return;
+      const targetY = this._tutTargetY();
+      if (Math.abs(padY + this.paddleH / 2 - targetY) < this.paddleH * 0.6) {
+        if (this.tut.lastTouch != null) this.tut.touches.push((now - this.tut.lastTouch) / 1000);
+        this.tut.lastTouch = now;
+        this.tut.target = this.tut.target === "top" ? "bottom" : "top";
+        audio.note(this.tut.touches.length);
+        this.burstAtPx((this.patientRight ? this.court.right : this.court.left) * c.width,
+                       targetY * c.height, "#ffd98a");
+        if (this.tut.touches.length >= 4) {
+          // drop the first transition (reaction, not speed), take the median
+          const tr = this.tut.touches.slice(1).sort((a, b) => a - b);
+          const median = tr[Math.floor(tr.length / 2)];
+          this.paddleTraversalS = Math.round(median * 100) / 100;
+          this.pongCrossTime = Math.min(5.5, Math.max(1.6, 1.4 * median + 0.45));
+          this.tut.step = 1;
+          this._startServe(now);
+        }
+      }
+    } else if (this.tut.step === 1 && this.rally >= 1) {
+      this.tut.step = 2;
+      setTimeout(() => { if (this.active && this.tut) { this.tut = null; this._prompt(""); } }, 3800);
+    }
   }
   _launch(now) {
     // serve inside the walled lane, aimed gently (see _capVy)
     const laneMid = (this.wallTop + this.wallBottom) / 2;
-    const ty = laneMid + (Math.random() - 0.5) * 0.7 * (this.wallBottom - this.wallTop - this.paddleH);
-    const speedup = 1 + Math.min(0.5, this.rally * 0.05);
-    const vx0 = (this.court.right - this.court.left) / this.params.lifetime * speedup;
+    const ty = laneMid + (Math.random() - 0.5) * 0.5 * (this.wallBottom - this.wallTop - this.paddleH);
+    // constant rally speed: the ball always crosses in a fixed number of
+    // seconds (difficulty moves between rounds via the DDA, never mid-rally).
+    // The tutorial's measured paddle speed overrides the assessment seed.
+    const vx0 = (this.court.right - this.court.left) / (this.pongCrossTime || this.params.lifetime);
+    this.baseVx = vx0;
     const fromLeft = this.patientRight;
     this.ball = {
       x: fromLeft ? this.court.left + 0.06 : this.court.right - 0.06,
@@ -681,10 +757,10 @@ export class ArcPong extends GameBase {
     this.keysY = Math.max(this.wallTop, Math.min(this.wallBottom - this.paddleH, this.keysY));
     return this.keysY;
   }
-  // flat-flight rule: vertical speed never exceeds 55% of horizontal, so
+  // flat-flight rule: vertical speed never exceeds 38% of horizontal, so
   // rallies cross the field instead of ricocheting between the walls
   _capVy(b) {
-    const m = 0.55 * Math.abs(b.vx);
+    const m = 0.38 * Math.abs(b.vx);
     if (Math.abs(b.vy) > m) b.vy = Math.sign(b.vy) * m;
   }
   // paddles: {leftY, rightY, leftY2?, rightY2?} — the 2s are teammate paddles
@@ -697,11 +773,20 @@ export class ArcPong extends GameBase {
     } else {
       patientY = this._angleToY(this.side, this.profiles[this.side]);
     }
-    // AI with reaction lag (so it genuinely misses sharp shots)
+    // AI with reaction lag (so it genuinely misses sharp shots). On a very
+    // long rally the star gets sleepy: from 75 s its reactions fade, and past
+    // 90 s it drifts to the middle and can no longer keep up — the patient
+    // wins the point through ordinary play, never by a timer cutting in.
     if (this.hasAI && this.ball) {
       const s = dt / 1000;
-      this.aiLagY += (this.ball.y - this.aiLagY) * Math.min(1, 3 * s);
-      this.aiY += Math.max(-0.24 * s, Math.min(0.24 * s, this.aiLagY - this.aiY));
+      const age = (now - this.ball.born) / 1000;
+      const tired = Math.max(0, Math.min(1, (age - 75) / 15));
+      this._tired = tired;
+      const gain = 3 * (1 - 0.75 * tired);
+      const vmax = 0.24 * (1 - 0.72 * tired);
+      this.aiLagY += (this.ball.y - this.aiLagY) * Math.min(1, gain * s);
+      if (tired >= 1) this.aiLagY += ((this.wallTop + this.wallBottom) / 2 - this.aiLagY) * 0.6 * s;
+      this.aiY += Math.max(-vmax * s, Math.min(vmax * s, this.aiLagY - this.aiY));
       this.aiY = Math.max(this.wallTop + this.paddleH / 2, Math.min(this.wallBottom - this.paddleH / 2, this.aiY));
     }
     const aiPad = this.aiY - this.paddleH / 2;
@@ -729,6 +814,11 @@ export class ArcPong extends GameBase {
   update(now, dt) {
     this.pads = this._paddles(now, dt);
 
+    if (this.tut) {
+      this._pongTut(now);
+      if (!this.ball && !this.serving) return;   // tutorial step 0: no ball yet
+    }
+
     if (this.serving) {
       const beat = Math.floor((now - this.serving.start) / 550);
       if (beat > this.serving.beats) {
@@ -748,7 +838,7 @@ export class ArcPong extends GameBase {
       if (!this.t.handClosed(this.side) || now - this.caught.since > 1200) {
         const dir = this.caught.edge === "right" ? -1 : 1;
         b.vx = dir * (this.caught.vx0 || 0.25) * 1.35;      // fired back faster
-        b.vy = (Math.random() - 0.5) * 0.22;
+        b.vy = (Math.random() - 0.5) * 0.16;
         this._capVy(b);
         this.gripShots++;
         this.stats.stars += 5;
@@ -771,8 +861,10 @@ export class ArcPong extends GameBase {
 
     const patRight = this.patientRight;
     const returnBall = (dir, py, isPlayerSide) => {
-      b.vx = dir * Math.abs(b.vx) * 1.05;
-      b.vy += ((b.y - (py + this.paddleH / 2)) / this.paddleH) * 0.18;   // gentler deflection: flatter rallies
+      // every return resets to the base speed — skill shots punch briefly,
+      // but the rally itself never accelerates
+      b.vx = dir * (this.baseVx || Math.abs(b.vx));
+      b.vy += ((b.y - (py + this.paddleH / 2)) / this.paddleH) * 0.12;   // gentle deflection: flat rallies
       b.spin = 0;
       if (isPlayerSide) {
         this.rally++; this.bestRally = Math.max(this.bestRally, this.rally);
@@ -793,10 +885,10 @@ export class ArcPong extends GameBase {
         }
       } else {
         audio.note(0);
-        if (this.hasAI) {   // AI aims inside the walled lane
+        if (this.hasAI) {   // AI aims inside the walled lane, near the middle
           const laneMid = (this.wallTop + this.wallBottom) / 2;
-          b.tx = laneMid + (Math.random() - 0.5) * 0.7 * (this.wallBottom - this.wallTop - this.paddleH);
-          b.vy = (b.tx - b.y) / ((this.court.right - this.court.left) / Math.abs(b.vx)) + (Math.random() - 0.5) * 0.04;
+          b.tx = laneMid + (Math.random() - 0.5) * 0.5 * (this.wallBottom - this.wallTop - this.paddleH);
+          b.vy = (b.tx - b.y) / ((this.court.right - this.court.left) / Math.abs(b.vx)) + (Math.random() - 0.5) * 0.03;
         }
       }
       this._capVy(b);
@@ -808,8 +900,11 @@ export class ArcPong extends GameBase {
       const playerSide = patRight || this.mode === "bimanual";
       if (py != null) { if (!this._tryCatch(now, "right", py)) returnBall(-1, py, patRight || this.mode === "bimanual"); }
       else if (b.x > this.court.right + 0.04) {
-        if (playerSide) { this.miss({ isFar: false }); this.rally = 0; if (this.hasAI) { this.score.ai++; } }
-        else { this.score.us++; this.pointFlash = now + 1300; audio.point(); this.say("Point to you!"); }
+        if (playerSide) { this.miss({ isFar: false }); this.rally = 0; if (this.hasAI && !this.tut) { this.score.ai++; } }
+        else {
+          this.score.us++; this.pointFlash = now + 1300; audio.point();
+          this.say(this._tired >= 1 ? "You wore the little star out! Point to you!" : "Point to you!");
+        }
         this._startServe(now);
         return;
       }
@@ -820,8 +915,11 @@ export class ArcPong extends GameBase {
       const playerSide = !patRight || this.mode === "bimanual";
       if (py != null) { if (!this._tryCatch(now, "left", py)) returnBall(1, py, !patRight || this.mode === "bimanual"); }
       else if (b.x < this.court.left - 0.04) {
-        if (playerSide) { this.miss({ isFar: false }); this.rally = 0; if (this.hasAI) { this.score.ai++; } }
-        else { this.score.us++; this.pointFlash = now + 1300; audio.point(); this.say("Point to you!"); }
+        if (playerSide) { this.miss({ isFar: false }); this.rally = 0; if (this.hasAI && !this.tut) { this.score.ai++; } }
+        else {
+          this.score.us++; this.pointFlash = now + 1300; audio.point();
+          this.say(this._tired >= 1 ? "You wore the little star out! Point to you!" : "Point to you!");
+        }
         this._startServe(now);
         return;
       }
@@ -953,6 +1051,59 @@ export class ArcPong extends GameBase {
       ctx.strokeStyle = "rgba(244,236,221,0.16)"; ctx.lineWidth = 2; ctx.setLineDash([4, 9]);
       ctx.beginPath(); ctx.moveTo(hp.x, hp.y); ctx.lineTo(myRig.cx, myRig.cy - 26); ctx.stroke();
       ctx.setLineDash([]);
+    }
+
+    // sleepy z's over the AI paddle as a long rally wears the star down —
+    // the coming miss reads as earned, not random
+    if (this.hasAI && this.ball && (this._tired || 0) > 0.25) {
+      const aiEdge = this.patientRight ? this.court.left : this.court.right;
+      const ax = X(aiEdge) + (this.patientRight ? -34 : 34);
+      const ay = Y(this.aiY) - 30;
+      ctx.save();
+      ctx.fillStyle = `rgba(200,179,217,${0.4 + 0.5 * this._tired})`;
+      ctx.font = `800 ${Math.round(c.height * 0.032)}px Nunito, sans-serif`;
+      ctx.textAlign = "center";
+      for (let i = 0; i < (this._tired >= 1 ? 3 : 2); i++) {
+        const ph = (now / 900 + i * 0.33) % 1;
+        ctx.globalAlpha = (1 - ph) * (0.4 + 0.6 * this._tired);
+        ctx.fillText("z", ax + Math.sin(ph * 6 + i) * 8, ay - ph * 46 - i * 6);
+      }
+      ctx.restore();
+      ctx.globalAlpha = 1;
+    }
+
+    // round-1 tutorial overlays: pulsing target star for the paddle sweeps,
+    // a guide line from the paddle, and the hover-to-skip pill
+    if (this.tut) {
+      if (this.tut.step === 0) {
+        const fx = this.patientRight ? this.court.right : this.court.left;
+        const ty = this._tutTargetY();
+        const pulse = Math.sin(now / 300) * 0.5 + 0.5;
+        const padY = this.patientRight ? this.pads?.rightY : this.pads?.leftY;
+        if (padY != null) {
+          ctx.setLineDash([5, 8]);
+          ctx.strokeStyle = "rgba(244,236,221,0.35)"; ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.moveTo(X(fx), Y(padY + this.paddleH / 2)); ctx.lineTo(X(fx), Y(ty)); ctx.stroke();
+          ctx.setLineDash([]);
+        }
+        this.glow(ctx, X(fx), Y(ty), 14 + pulse * 6, "#fff6d8", "#e8a86a", 24);
+        starShape(ctx, X(fx), Y(ty), 12 + pulse * 3, "#ffd98a");
+        ctx.strokeStyle = `rgba(255,217,138,${0.4 + pulse * 0.4})`; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.arc(X(fx), Y(ty), 26 + pulse * 6, 0, TAU); ctx.stroke();
+      }
+      const sx = c.width - 115, sy = 62;
+      ctx.fillStyle = "rgba(20,16,40,0.85)";
+      ctx.strokeStyle = "rgba(244,236,221,0.6)"; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.roundRect(sx - 75, sy - 26, 150, 52, 26); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = "#f4ecdd";
+      ctx.font = `800 ${Math.round(c.height * 0.03)}px Nunito, sans-serif`;
+      ctx.textAlign = "center";
+      ctx.fillText("Skip ✋", sx, sy + 9);
+      if (this.tut.skipDwell) {
+        const f = Math.min(1, (now - this.tut.skipDwell) / 1200);
+        ctx.strokeStyle = "#9fc08a"; ctx.lineWidth = 5;
+        ctx.beginPath(); ctx.arc(sx, sy, 36, -Math.PI / 2, -Math.PI / 2 + TAU * f); ctx.stroke();
+      }
     }
 
     if (this.serving) {

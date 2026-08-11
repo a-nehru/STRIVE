@@ -230,6 +230,28 @@ wrong stack/clinical shape — concept adopted as The Night Ferry);
 commercial games); `jooapa/Angry_Birds_Decompilation` (decompilation toolkit
 for Rovio's proprietary games — mechanic adopted legally as Signal Flare).
 
+## Shipped since this document (status update)
+
+The Tier 1 and Tier 2 candidates above were implemented in `games.js` (Aug
+2026) with a `trains:` label per card. One further game shipped from outside
+this research pass:
+
+- **Rainbow Crossing** (`rainbow`) — co-designed with Tavi; the first game in
+  the Strivealon story world (see DESIGN_BRIEF §9). Walk a rainbow road built
+  inside the envelope, **whoosh dark clouds off with a shoulder
+  external-rotation sweep** (elbow-planted gate), save Quirky Crew friends
+  with a gentle squeeze or steady hold, jackpot chest at each end, skippable
+  round-1 tutorial. Notable because **external rotation** was a gap this
+  document missed: it sits in the FMA-UE shoulder items alongside
+  pronation/supination, and no camera-based suite in the commercial survey
+  trains it. The elbow-stillness gate is what separates true rotation from a
+  whole-arm swing. Flat daylight-cartoon art for low-vision accessibility.
+
+Also shipped: Arc Pong's rope-rig presentation, constant rally speed, flat
+flight, sleepy-star long-rally resolution, and a round-1 tutorial that
+doubles as a paddle-speed assessment (`paddleTraversalS` → ball crossing
+time). Details in SPEC §7.
+
 ## Key sources
 
 Clinical: RGS methodology (jneuroengrehab 1743-0003-7-48) · FMA-UE item

@@ -144,9 +144,26 @@ button { font-family: inherit; cursor: pointer; }
 }
 
 /* ---------- P3 game select — full-bleed cards (1g) ---------- */
-#screen-select { background: linear-gradient(165deg, #1b1b3a 0%, #2a2454 60%, #3a3168 100%); gap: 4vh; }
-#screen-select h1 { font-weight: 800; font-size: clamp(30px, 3.4vw, 54px); }
-.cards { display: flex; gap: 2vw; align-items: stretch; justify-content: center; flex-wrap: wrap; padding: 0 3vw; }
+/* The menu outgrew one viewport (18+ cards), so the screen scrolls: content
+   starts at the top (center + overflow would clip the first row beyond reach)
+   and a calm amber scrollbar stays visible as the affordance. Mouse wheel,
+   trackpad, touch drag, and arrow-key navigation (scrollIntoView) all work. */
+#screen-select {
+  background: linear-gradient(165deg, #1b1b3a 0%, #2a2454 60%, #3a3168 100%); gap: 4vh;
+  justify-content: flex-start;
+  overflow-y: auto;
+  padding: 4.5vh 0 7vh;
+  scrollbar-color: rgba(232,168,106,.6) rgba(244,236,221,.08);
+}
+#screen-select::-webkit-scrollbar { width: 14px; }
+#screen-select::-webkit-scrollbar-track { background: rgba(244,236,221,.07); }
+#screen-select::-webkit-scrollbar-thumb {
+  background: rgba(232,168,106,.55); border-radius: 8px;
+  border: 3px solid transparent; background-clip: padding-box;
+}
+#screen-select::-webkit-scrollbar-thumb:hover { background: rgba(232,168,106,.85); background-clip: padding-box; border: 3px solid transparent; }
+#screen-select h1 { font-weight: 800; font-size: clamp(30px, 3.4vw, 54px); flex-shrink: 0; }
+.cards { display: flex; gap: 2vw; align-items: stretch; justify-content: center; flex-wrap: wrap; padding: 0 3vw 3vh; }
 .gcard {
   position: relative; width: clamp(180px, 15.5vw, 300px); aspect-ratio: 3/4;
   border-radius: 18px; overflow: hidden; border: none; padding: 0;

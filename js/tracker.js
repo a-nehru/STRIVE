@@ -14,6 +14,10 @@ const LM = {
   hipL: 23, hipR: 24,
 };
 
+// local ZED bridge (tools/zed_bridge.py): probed at init when camera source
+// is "auto"; the game never requires it
+const ZED_BRIDGE = "http://localhost:8322";
+
 const SLOW = 0.04, FAST = 0.35, HAND = 0.5;
 // hand open/closed: index-tip distance from the wrist (SW units) shrinks as
 // the fist closes. Fixed fallback thresholds (hysteresis) are used until the
@@ -69,8 +73,28 @@ export class Tracker {
     this.frame = null;         // { x, y, sw }
   }
 
-  async init(videoEl) {
+  // source: "auto" probes the local ZED bridge (tools/zed_bridge.py) and uses
+  // the ZED SDK skeleton when it's running; "webcam" forces MediaPipe. The
+  // bridge speaks the MediaPipe 33-landmark layout, so everything downstream
+  // of _ingest (smoothing, stable frame, coach, grip fallback) is identical.
+  async init(videoEl, source = "auto") {
     this.video = videoEl;
+    this.source = "webcam";
+    if (source !== "webcam") {
+      const zed = await this._probeZed();
+      if (zed) {
+        this.source = "zed";
+        this.zedInfo = zed;
+        // the bridge's MJPEG preview stands in for the webcam <video>: expando
+        // props make it quack like one for drawVideoMirror and _videoToPx
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        img.src = `${ZED_BRIDGE}/video.mjpg`;
+        img.videoWidth = zed.w; img.videoHeight = zed.h; img.readyState = 2;
+        this.video = img;
+        return;
+      }
+    }
     const vision = await FilesetResolver.forVisionTasks(
       "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
     this.landmarker = await PoseLandmarker.createFromOptions(vision, {
@@ -103,9 +127,35 @@ export class Tracker {
     await videoEl.play();
   }
 
+  async _probeZed() {
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 900);
+      const r = await fetch(`${ZED_BRIDGE}/status`, { signal: ctrl.signal });
+      clearTimeout(timer);
+      if (!r.ok) return null;
+      const s = await r.json();
+      return s.ok && s.w && s.h ? s : null;
+    } catch { return null; }
+  }
+
+  _startZed() {
+    this.es = new EventSource(`${ZED_BRIDGE}/stream`);
+    this.es.onmessage = ev => {
+      if (!this.running) return;
+      try {
+        const msg = JSON.parse(ev.data);
+        if (!msg.lm) return;
+        const lm = msg.lm.map(p => ({ x: p[0], y: p[1], visibility: p[2] }));
+        this._ingest(lm, performance.now());
+      } catch { /* skip malformed frame */ }
+    };
+  }
+
   start() {
     if (this.running) return;
     this.running = true;
+    if (this.source === "zed") { this._startZed(); return; }
     const loop = () => {
       if (!this.running) return;
       const now = performance.now();
@@ -126,7 +176,7 @@ export class Tracker {
     requestAnimationFrame(loop);
   }
 
-  stop() { this.running = false; }
+  stop() { this.running = false; this.es?.close(); this.es = null; }
   onFrame(cb) { this.listeners.push(cb); }
   clearListeners() { this.listeners = []; }
   get trackingOk() { return performance.now() - this.lastSeen < 700; }

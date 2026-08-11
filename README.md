@@ -29,16 +29,28 @@ Stand or sit 1–2 m from the camera with your whole upper body visible.
 
 ## Flow
 
-1. **Assessment** (per arm — the RGS "calibration" / CFI "Clinical" step)
-   - Hold-still capture of a comfortable home position.
-   - 8-direction maximal reach → **reach envelope** (active ROM analog).
-   - 5 precision touches at 60% of the envelope → **pointing error**.
-   - Also measured: **reaction time**, **movement time**, **peak speed**.
-   - All distances are in *shoulder-width units relative to the shoulder
-     midpoint*, so results are camera-distance independent and comparable
-     across sessions.
-2. **Game** — pop drifting star-bubbles with your hand. 30-second rounds.
+1. **Assessment** (per arm — the RGS "calibration" / CFI "Clinical" step):
+   choose hand → hold still (rest position becomes the work center) →
+   squeeze calibration ("open wide… now squeeze") → **trace the biggest
+   circle you can** (the trace IS the ROM readout: a 16-direction reach
+   envelope + arm-elevation arc, path jitter, loop time) → 3 grasp orbs.
+   All distances are in *shoulder-width units relative to the shoulder
+   midpoint*, so results are camera-distance independent and comparable
+   across sessions.
+2. **Games** — a suite of ~20 short activities (reach, catch, carry, pong,
+   rowing, steering, wiping, pinching, external rotation…), each labeled
+   with the movement it trains so therapists prescribe by movement. Targets
+   only ever appear inside the assessed envelope. Round-1 tutorials are
+   learn-by-doing and skippable; Pong's doubles as a paddle-speed
+   measurement that sets its ball speed.
 3. **Round summary → dynamic difficulty adjustment → next round.**
+
+Story world: the village of **Strivealon**, whose stars the evil dark clouds
+are covering — play earns the stars back.
+
+**ZED 2 (optional):** run `python tools/zed_bridge.py` and the game uses the
+ZED SDK's depth-based skeleton instead of MediaPipe (staff-drawer "Camera
+source" setting; falls back to the webcam automatically).
 
 ## How the papers map to the code
 
@@ -63,8 +75,11 @@ Stand or sit 1–2 m from the camera with your whole upper body visible.
 ## Notes / limits
 
 - Targets the mild-to-moderate population (Brunnstrom IV–V-ish): requires
-  some antigravity shoulder/elbow movement, no grasp tracking (pose model
-  only — a hand-landmark "grasp" task would be the natural next step,
-  mirroring RGS Hitting → Grasping → Placing progression).
+  some antigravity shoulder/elbow movement.
+- Grasp tracking is two-tier: a dedicated 21-point hand model gives real
+  finger curl (with per-person squeeze calibration from the assessment), and
+  a self-calibrating pose-fingertip heuristic is the fallback — so games that
+  ask for a squeeze always accept a steady hold instead, and patients without
+  grasp still complete everything.
 - Data stays in the browser's localStorage; use **Export** for a JSON copy.
 - Not a medical device; use under clinician guidance.

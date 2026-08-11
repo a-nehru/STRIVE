@@ -60,10 +60,14 @@ async function boot() {
   $("loading").classList.remove("hidden");
   try {
     const t = new Tracker();
-    await t.init($("video"));
+    // device-level setting (not per-patient): "auto" probes the local ZED
+    // bridge (tools/zed_bridge.py) and falls back to the webcam
+    await t.init($("video"), localStorage.getItem("strive-cam-source") || "auto");
     t.start();
     state.tracker = t;
-    $("camstate").textContent = "Camera: tracking";
+    $("camstate").textContent = t.source === "zed"
+      ? "Camera: ZED 2 (SDK body tracking via bridge)"
+      : "Camera: tracking";
     $("camstate").className = "ok";
   } catch (e) {
     $("camstate").textContent = "Camera: unavailable. " + e.message;
@@ -627,6 +631,9 @@ function onRoundEnd(round) {
   if (round.compEvents.length >= 3 && result.params.rangeScale > prof.params.rangeScale) {
     result = { params: prof.params, note: "Let's keep it steady while we work on posture." };
   }
+  // Pong tutorial warm-up: the measured paddle speed becomes the ball's
+  // crossing time going forward (the DDA adjusts from this calibrated start)
+  if (round.game === "pong" && round.pongCrossTime) result.params.lifetime = round.pongCrossTime;
   store.saveParams(state.patient, state.side, result.params);
 
   // rest pacing: every 4th round, or a compensation spike (fatigue proxy),
@@ -983,6 +990,13 @@ $("in-patient").addEventListener("input", e => {
 });
 $("in-shoulder").addEventListener("change", e => store.setShoulderCm(state.patient, parseFloat(e.target.value)));
 $("in-arm").addEventListener("change", e => { state.side = e.target.value; state.sideChosen = true; });
+// camera source is picked once at boot (webcam + MediaPipe vs ZED bridge),
+// so changing it reloads the app
+$("in-camera").value = localStorage.getItem("strive-cam-source") || "auto";
+$("in-camera").addEventListener("change", e => {
+  localStorage.setItem("strive-cam-source", e.target.value);
+  location.reload();
+});
 
 // ---- Comfort (accessibility) controls: per-patient, persisted ----
 function syncComfortControls() {

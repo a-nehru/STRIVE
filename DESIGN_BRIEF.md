@@ -243,6 +243,45 @@ System pieces:
 11. Palette, type scale (with 12-ft minimums), component sheet (buttons,
     cards, chips, dwell-hover states, face scale, arc widget, Coach states)
 
-# 8. Out of scope for mockups (but design nothing that blocks them)
-- ZED 2 depth plane, patient-vs-patient networked pong, localization,
-  EMR integration.
+# 9. The Strivealon story world & the daylight cartoon look (Aug 2026)
+
+The suite now has a narrative frame: the village of **Strivealon**, whose
+stars are being covered by evil dark clouds. Games earn stars back for the
+sky, or fight the clouds directly. This gives the reward economy a story
+("stars return to Strivealon") without changing any game's mechanics.
+
+## 9.1 The cast — "The Quirky Crew"
+Flat cartoon characters with ink outlines (from Tavi's mockups):
+- **The puzzle-piece hero** — yellow rounded square with a knob, dot eyes,
+  simple smile. The player's avatar/helper wherever a character is needed.
+- **The scribble-ball** — red circle filled with darker squiggle strokes.
+- **The stack** — three stacked ellipses (red/blue/green) with one big eye.
+- **The dark clouds** — near-black ink clouds with sad blue eyes, a frown,
+  and one tear. The villains, but pitiable, never scary: when defeated they
+  are "whooshed away", and in Pong the AI cloud simply gets sleepy.
+
+## 9.2 A second, deliberate visual mode: flat daylight cartoon
+Rainbow Crossing introduces a **daylight look that intentionally departs from
+the night-harbor language**: warm cream ground (`#f2ecdc`), flat unshaded
+fills, dark ink (`#1b1b3a`) outlines on everything, and **no glow-dependent
+cues** — chosen for visual-impairment accessibility (the night look leans on
+luminance glow, which low-vision patients can miss). Rules for this mode:
+- Rainbow stripe palette: `#e8837a` `#e8a86a` `#ecd06f` `#9fc08a` `#a4b6e0`,
+  always bounded by an ink outline.
+- Feedback = shape + motion + sound (rings that fill, characters that bob,
+  whoosh lines), never glow alone.
+- The arm skeleton and cursor are re-rendered in ink for contrast on cream.
+- Either world may host future games; pick per game, never mix in one scene.
+
+## 9.3 Character use inside the night world
+Characters may visit night-world games as **diegetic explainers**: in Arc
+Pong each paddle hangs from a rope over a pulley hauled by a character (hero
+= patient, dark cloud = AI, friends = teammates), with a soft cream halo
+behind each so silhouettes read on the dark court. On very long rallies the
+cloud visibly tires (lavender "z z" marks) before it finally can't keep up —
+staged failure that reads as earned, never random.
+
+# 10. Out of scope for mockups (but design nothing that blocks them)
+- Patient-vs-patient networked pong, localization, EMR integration.
+- ZED 2 depth-*plane* games (the ZED itself now works via the localhost
+  bridge — see SPEC §3 — but everything it feeds is still frontal-plane 2D).
