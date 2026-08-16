@@ -24,18 +24,24 @@ const pickOne = arr => arr[Math.floor(Math.random() * arr.length)];
 // opts.framed  — sage skeleton (settled) vs amber (still adjusting)
 // opts.hands   — pass false to skip the glowing hand dots (for screens that
 //                draw their own hand cursor)
+// opts.map     — optional px→px affine remap (mini-mirror: body drawn at a
+//                fixed size in a fixed frame, regardless of camera distance);
+//                opts.scale is the same remap's scale factor, for radii
 export function drawBody(ctx, c, t, opts = {}) {
   const p = t.pts;
   if (!p?.shL || !p?.shR) return;
   const framed = opts.framed !== false;
-  const P = pt => t._videoToPx(pt.x, pt.y, c);
+  const k = opts.scale ?? 1;
+  const P = opts.map
+    ? pt => opts.map(t._videoToPx(pt.x, pt.y, c))
+    : pt => t._videoToPx(pt.x, pt.y, c);
   ctx.save();
   ctx.lineCap = "round";
   ctx.strokeStyle = framed ? "rgba(159,192,138,0.55)" : "rgba(232,168,106,0.5)";
   // amber and sage are a red-green confusion pair (near-identical luminance),
   // so the framing state also changes line pattern: dashed = still adjusting
   if (!framed) ctx.setLineDash([12, 9]);
-  ctx.lineWidth = 6;
+  ctx.lineWidth = Math.max(3, 6 * k);
   const seg = (a, b) => { const A = P(a), B = P(b); ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(B.x, B.y); ctx.stroke(); };
   seg(p.shL, p.shR);
   const shMid = { x: (p.shL.x + p.shR.x) / 2, y: (p.shL.y + p.shR.y) / 2 };
@@ -57,11 +63,11 @@ export function drawBody(ctx, c, t, opts = {}) {
   const ear = p.earL && p.earR ? { x: (p.earL.x + p.earR.x) / 2, y: (p.earL.y + p.earR.y) / 2 } : (p.earL || p.earR);
   if (ear) {
     const E = P(ear);
-    ctx.beginPath(); ctx.arc(E.x, E.y, 0.34 * t.pxPerSW(c), 0, TAU); ctx.stroke();
+    ctx.beginPath(); ctx.arc(E.x, E.y, 0.34 * t.pxPerSW(c) * k, 0, TAU); ctx.stroke();
   }
   // hands: real hand skeletons (glow-dot fallback inside drawHand)
   if (opts.hands !== false) {
-    for (const s of ["left", "right"]) drawHand(ctx, c, t, s);
+    for (const s of ["left", "right"]) drawHand(ctx, c, t, s, { map: opts.map, scale: k });
   }
   ctx.restore();
 }
@@ -76,8 +82,12 @@ const FINGER_CHAINS = [[0, 1, 2, 3, 4], [0, 5, 6, 7, 8], [0, 9, 10, 11, 12], [0,
 export function drawHand(ctx, c, t, side, opts = {}) {
   const pts = t._handPts(side);
   const closed = t.handClosed(side);
+  const k = opts.scale ?? 1;
   if (pts) {
-    const P = pts.map(p => t._videoToPx(p.x, p.y, c));
+    const P = pts.map(p => {
+      const px = t._videoToPx(p.x, p.y, c);
+      return opts.map ? opts.map(px) : px;
+    });
     const palmW = Math.hypot(P[5].x - P[17].x, P[5].y - P[17].y);
     const lw = Math.max(3, palmW * 0.16);
     ctx.save();
@@ -107,18 +117,19 @@ export function drawHand(ctx, c, t, side, opts = {}) {
     return true;
   }
   if (opts.fallback === false) return false;
-  const hp = t.palmPx(side, c);
+  let hp = t.palmPx(side, c);
   if (!hp) return false;
+  if (opts.map) hp = opts.map(hp);
   ctx.save();
   ctx.shadowColor = closed ? "rgba(159,192,138,0.9)" : "rgba(232,168,106,0.8)";
   ctx.shadowBlur = closed ? 26 : 18;
   ctx.fillStyle = closed ? "#9fc08a" : "#e8a86a";
-  ctx.beginPath(); ctx.arc(hp.x, hp.y, 11, 0, TAU); ctx.fill();
+  ctx.beginPath(); ctx.arc(hp.x, hp.y, 11 * k, 0, TAU); ctx.fill();
   ctx.shadowBlur = 0;
   ctx.strokeStyle = closed ? "#9fc08a" : "rgba(244,236,221,0.55)";
   ctx.lineWidth = closed ? 4 : 2.5;
   if (!closed) ctx.setLineDash([6, 7]);
-  ctx.beginPath(); ctx.arc(hp.x, hp.y, closed ? 16 : 24, 0, TAU); ctx.stroke();
+  ctx.beginPath(); ctx.arc(hp.x, hp.y, (closed ? 16 : 24) * k, 0, TAU); ctx.stroke();
   ctx.setLineDash([]);
   ctx.restore();
   return false;
@@ -130,12 +141,15 @@ export function drawHand(ctx, c, t, side, opts = {}) {
 export function drawVideoMirror(ctx, c, t, tint = 0.38) {
   const v = t.video;
   if (!v || v.readyState < 2) return false;
-  const scale = Math.max(c.width / v.videoWidth, c.height / v.videoHeight);
-  const dw = v.videoWidth * scale, dh = v.videoHeight * scale;
+  // a stereo webcam (ZED on plain UVC) sends left eye | right eye in one
+  // frame; show only the left eye, or the patient sees the room twice
+  const sw = t.srcW ?? v.videoWidth, sh = t.srcH ?? v.videoHeight;
+  const scale = Math.max(c.width / sw, c.height / sh);
+  const dw = sw * scale, dh = sh * scale;
   const dx = (c.width - dw) / 2, dy = (c.height - dh) / 2;
   ctx.save();
   ctx.translate(c.width, 0); ctx.scale(-1, 1);
-  ctx.drawImage(v, dx, dy, dw, dh);   // centered, so the mirrored x equals dx
+  ctx.drawImage(v, 0, 0, sw, sh, dx, dy, dw, dh);   // centered: mirrored x equals dx
   ctx.restore();
   // soft ink veil so the glowing overlays stay readable on the video
   if (tint > 0) { ctx.fillStyle = `rgba(22,22,54,${tint})`; ctx.fillRect(0, 0, c.width, c.height); }
@@ -164,6 +178,19 @@ export class GameBase {
     CENTER.y = this.profile.center?.y ?? CENTER_DEFAULT.y;
     // and their measured squeeze range from the assessment's calibration step
     if (this.profile.curlCal) this.t.setCurlCal(this.side, this.profile.curlCal.lo, this.profile.curlCal.hi);
+    // Range demand in the patient's own arm lengths. The envelope is stored in
+    // shoulder-width units, but SW is a PROJECTED width: turning the trunk or
+    // sitting at a different distance shifts it by a few percent, and an arm
+    // is not made of shoulder widths anyway. armLenSW records how long this
+    // arm measured at assessment time; against the arm measured right now it
+    // gives the factor that keeps "70% of range" meaning 70% of THIS reach,
+    // this session. Clamped hard: this corrects drift, it never rescales the
+    // clinical envelope out from under the therapist.
+    this.armScale = 1;
+    const refArm = this.profile.armLenSW, liveArm = this.t.armLenSW(this.side);
+    if (refArm > 0.4 && liveArm > 0.4) {
+      this.armScale = Math.max(0.8, Math.min(1.25, liveArm / refArm));
+    }
     this.t.setBaseline();
     this.startT = performance.now();
     this.pausedMs = 0;
@@ -233,9 +260,13 @@ export class GameBase {
     this._lastT = now;
 
     this.update?.(now, dt);
+    // `armBehind` puts the arm and cursor UNDER the game layer: in a busy
+    // scene the skeleton crossing the play area adds lines that compete with
+    // the thing the patient is meant to watch
+    if (this.armBehind) this._drawArmAndCursor(ctx, c, now);
     this.draw?.(ctx, c, now);
     this._drawParticles(ctx);
-    this._drawArmAndCursor(ctx, c, now);
+    if (!this.armBehind) this._drawArmAndCursor(ctx, c, now);
 
     if (this.coach.dimming) {
       ctx.fillStyle = `rgba(18,12,28,${this.coach.dimming})`;
@@ -273,7 +304,9 @@ export class GameBase {
     const f = (((theta % TAU) + TAU) % TAU) / TAU * BINS;
     const i = Math.floor(f) % BINS, j = (i + 1) % BINS;
     const w = f - Math.floor(f);
-    return e[i] * (1 - w) + e[j] * w;
+    // armScale keeps the envelope tied to the arm rather than to the
+    // projected shoulder width it was recorded against (see start())
+    return (e[i] * (1 - w) + e[j] * w) * (this.armScale ?? 1);
   }
 
   // Sample a target inside rangeScale × envelope AND inside the visible

@@ -284,6 +284,12 @@ class GameAudio {
     this._ensure();
     this._tone(392, this.ctx.currentTime, 0.08, "sine", 0.05, 0.005);
   }
+  paddle() {   // woody "pock" of a paddle return — physical, distinct from the melody
+    this._ensure();
+    const t = this.ctx.currentTime;
+    this._tone(523.25, t, 0.07, "triangle", 0.14, 0.004);
+    this._tone(261.63, t, 0.11, "sine", 0.1, 0.004);
+  }
   point() {    // scored a point vs the AI
     this._ensure();
     const t = this.ctx.currentTime;

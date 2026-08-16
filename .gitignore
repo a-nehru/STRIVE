@@ -1,3 +1,6 @@
 .claude/
 Thumbs.db
 desktop.ini
+__pycache__/
+# SMTP credentials for tools/mail_bridge.py - never commit these
+tools/mail_config.json

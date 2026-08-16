@@ -28,7 +28,8 @@ const STORIES = {
   boxes: { title: "The last ferry", text: "The harbor crates must cross before the ferry leaves. Carry them over, one by one." },
   compass: { title: "The compass rose", text: "From the heart of the compass, light every point, and always return home." },
   echo: { title: "The star's echo", text: "A star leaves an invisible echo where it shone. Remember the spot, and find it again." },
-  lens: { title: "The lighthouse lens", text: "Sea fog has settled on the great lens. Wipe it clear, so the light reaches the boats." },
+  dots: { title: "Connect the dots", text: "There is a picture hiding in these dots. Go from one to the next and it will draw itself." },
+  lens: { title: "Scratch cards", text: "Under the silver there is a picture. Scrape it away with your hand and see what it is." },
   crane: { title: "The night crane", text: "Hold the crane high and steady. Squeeze to catch each crate as it passes." },
   feather: { title: "The feather lantern", text: "Lift the lantern to its hook. Then lower it, slow as a feather." },
   buoys: { title: "The two lights", text: "Two buoys blink in the dark. Touch one, then the other. Find your rhythm." },
@@ -562,6 +563,30 @@ export class LanternRelease extends GameBase {
 }
 
 /* ==================== G5 Arc Pong — solo / bimanual / coupled / companion / team ==================== */
+// How a long rally ends. The star used to simply go to sleep — drift to the
+// middle and stop keeping up — which reads as being handed the point rather
+// than winning it. Instead it loses the way a person does: it MISREADS one
+// shot. From AI_SLIP_FROM seconds into the round the next ball the patient
+// sends back is steered to the far corner, the star commits to the wrong side
+// (anticipating a return to where the ball just was — the error people
+// actually make), then lunges back at full speed and arrives a fraction
+// short. The patient's shot wins the point, and it looks like it.
+// A game is to PONG_WIN points. The round still has a time limit, but
+// reaching five ends it — a match that finishes on a scoreline finishes,
+// where one that finishes on a clock just stops.
+const PONG_WIN = 5;
+const AI_SLIP_FROM = 80, AI_SLIP_BY = 85;
+// The lunge is released on TIME, not on a fixed fraction of the flight: it
+// breaks the wrong way only when there is just barely enough left to get
+// back. A fixed fraction leaves the paddle still travelling when the ball
+// arrives, which stops it a paddle and a half away and reads as "wasn't
+// close" rather than "so nearly got it".
+const AI_SLIP_LATE = 1.15;     // release with this much of the needed time in hand
+const AI_SLIP_GAP = 0.3;       // how far past the paddle edge the ball slips, in paddle heights
+// The star still tires first, so the slip is not the only thing that changes
+// — but the fade is now gentle and capped: a sluggish opponent is not the
+// mechanism, the misread is.
+const AI_FADE_FROM = 55, AI_FADE_TO = 95, AI_FADE_MAX = 0.4;
 // Modes:
 //   solo       patient arm vs gentle (beatable!) AI — points scored both ways
 //   bimanual   left arm vs right arm (self-rally)
@@ -571,18 +596,46 @@ export class LanternRelease extends GameBase {
 //   team-keys  patient arm + companion on keys defend together vs AI (collaborative)
 export class ArcPong extends GameBase {
   id = "pong";
+  armBehind = true;        // the arm sits UNDER the paddle and ball layer
+  // the tracked arm is drawn over on the side the patient plays from, so it
+  // reads as the thing driving that paddle instead of a shape crossing the
+  // middle of the court
+  _drawArmAndCursor(ctx, c, now) {
+    const sh = this.t.shoulder(this.side);
+    if (!sh) return super._drawArmAndCursor(ctx, c, now);
+    const here = this.t._videoToPx(sh.x, sh.y, c).x;
+    const want = c.width * (this.patientRight ? 0.84 : 0.16);
+    ctx.save();
+    ctx.translate(want - here, 0);       // horizontal only: height still maps to the paddle
+    super._drawArmAndCursor(ctx, c, now);
+    ctx.restore();
+  }
   setup() {
-    this.roundSeconds = this.opts.tellStory ? 80 : 60;   // round 1 fits the tutorial
+    // vs the AI the round has to outlast the star's fade, or the round ends
+    // before the patient ever gets to beat it (see AI_FADE_TO)
+    // vs the AI the round has to outlast the slip, or it would end before the
+    // patient ever got to take the point they earned
+    this.roundSeconds = this.opts.tellStory ? 80
+      : (this.opts.mode || "solo") === "duo" ? 60
+      : AI_SLIP_BY + 20;
     this.mode = this.opts.mode || "solo";
     this.profiles = this.opts.profiles || {};
     this.patientRight = this.side === "right";
     this.isTeam = this.mode.startsWith("team");
     this.hasAI = this.mode === "solo" || this.mode === "coupled" || this.isTeam;
+    // two people, one camera: each player's arm side is fixed for the round
+    // (chosen in the flow) and the bridge locks each to a seat, so nobody
+    // inherits the other's paddle mid-rally
+    this.isDuo = this.mode === "duo";
+    this.p2Side = this.opts.p2Side || "right";
+    this.p2Profile = this.opts.p2Profile || null;
+    this.p2Waiting = 0;
     this.rally = 0; this.bestRally = 0;
     this.score = { us: 0, ai: 0 };
     // skill shots (Zhang's choice element): grip = catch & fire, spin = palm turn
     this.skills = this.opts.skills || { grip: false, spin: false };
     this.gripShots = 0; this.spinShots = 0;
+    this.gripEnergy = 0;     // charges with returns; a full bar buys one catch
     this.caught = null;
     this.skillFlash = null;
     this.court = { top: 0.16, bottom: 0.9, left: 0.1, right: 0.9 };
@@ -609,7 +662,10 @@ export class ArcPong extends GameBase {
     // paddle sweeps double as a speed assessment: the median top<->bottom
     // traversal time sets the ball's crossing time (pongCrossTime), which
     // main.js persists into params.lifetime for the DDA to adjust from.
-    this.tut = this.opts.tellStory
+    // the tutorial is a solo speed measurement (five star touches by ONE
+    // paddle); with two people waiting it just strands player 2, so duo
+    // rounds go straight to the rally
+    this.tut = this.opts.tellStory && !this.isDuo
       ? { step: 0, said: -1, skipDwell: null, touches: [], lastTouch: null, target: "top" }
       : null;
     if (!this.tut) {
@@ -620,8 +676,9 @@ export class ArcPong extends GameBase {
         companion: "A friend plays the other paddle with the arrow keys",
         "team-arms": "Both your arms defend together. Beat the AI!",
         "team-keys": "You and your teammate defend together. Beat the AI!",
+        duo: "Two players, one camera. Stand side by side and rally together!",
       };
-      const skillHint = [this.skills.grip && "squeeze to catch & fire", this.skills.spin && "turn your palm for spin"]
+      const skillHint = [this.skills.grip && "fill the glow bar, then squeeze to catch & fire", this.skills.spin && "turn your palm for spin"]
         .filter(Boolean).join(" · ");
       this._prompt("Rally with the light", SUB[this.mode] + (skillHint ? ` (${skillHint})` : ""));
       setTimeout(() => this._prompt(""), 3200);
@@ -635,24 +692,38 @@ export class ArcPong extends GameBase {
   extra() {
     return {
       pongMode: this.mode, bestRally: this.bestRally, points: this.score.us, aiPoints: this.score.ai,
+      // two-player rounds: whose arm, and whether the camera held them
+      ...(this.isDuo ? { p2Side: this.p2Side, p2Name: this.opts.p2Name ?? null,
+                         p2LostFrames: this._p2LostTotal | 0 } : {}),
       gripShots: this.gripShots, spinShots: this.spinShots,
       skills: { ...this.skills },
       // tutorial warm-up measurement: median lane traversal time and the ball
       // crossing time derived from it (absent when the tutorial was skipped)
       paddleTraversalS: this.paddleTraversalS ?? null,
       pongCrossTime: this.pongCrossTime ? Math.round(this.pongCrossTime * 100) / 100 : null,
+      // did the patient outlast the star far enough to take the misread point
+      slipPoint: !!this._slipUsed,
+      // a match is to PONG_WIN; null when the round ran out of time first
+      matchWon: this.matchOver ? this.score.us >= PONG_WIN : null,
+      target: PONG_WIN,
     };
   }
-  // grip shot step 1: hand closed at contact catches the ball on the paddle
+  // grip shot step 1: a DELIBERATE squeeze at contact catches the ball — the
+  // hand must have closed within the last moment, so a hand that simply rests
+  // closed never catches by accident
   _tryCatch(now, edge, py) {
     if (!this.skills.grip || this.caught) return false;
     if ((edge === "right") !== this.patientRight) return false;   // primary paddle only
     if (!this.t.handClosed(this.side)) return false;
+    if (this._closedAt == null || now - this._closedAt > 900) return false;   // stale grip, not a catch
+    if (this.gripEnergy < 1) return false;    // the catch is earned: full bar only
     const b = this.ball;
+    this.gripEnergy = 0;
     this.caught = { since: now, edge, vx0: Math.abs(b.vx) };
     b.vx = 0; b.vy = 0; b.spin = 0;
     this.rally++; this.bestRally = Math.max(this.bestRally, this.rally);
     this.hit({ reachFrac: 0.7, isFar: false }, this.rally);
+    audio.note(4);
     this.skillFlash = { text: "Caught! Open to fire ✋", until: now + 1600 };
     return true;
   }
@@ -660,6 +731,9 @@ export class ArcPong extends GameBase {
     this.serving = { start: now, beats: -1 };
     this.ball = null;
     this._tired = 0;
+    this.matchOver = 0;       // when someone reached PONG_WIN
+    this._slip = null;        // the misread in progress (see AI_SLIP_FROM)
+    this._slipUsed = false;   // one earned point per round, not a repeating gift
   }
 
   // round-1 tutorial: (0) touch the star at the lane top, then bottom, five
@@ -724,7 +798,10 @@ export class ArcPong extends GameBase {
     }
   }
   _launch(now) {
-    // serve inside the walled lane, aimed gently (see _capVy)
+    // Served from the MIDDLE of the court, travelling towards the opponent:
+    // the point opens with the patient's shot on its way out, so the first
+    // thing they do in a rally is watch their own ball go rather than react
+    // to one arriving.
     const laneMid = (this.wallTop + this.wallBottom) / 2;
     const ty = laneMid + (Math.random() - 0.5) * 0.5 * (this.wallBottom - this.wallTop - this.paddleH);
     // constant rally speed: the ball always crosses in a fixed number of
@@ -732,13 +809,34 @@ export class ArcPong extends GameBase {
     // The tutorial's measured paddle speed overrides the assessment seed.
     const vx0 = (this.court.right - this.court.left) / (this.pongCrossTime || this.params.lifetime);
     this.baseVx = vx0;
-    const fromLeft = this.patientRight;
-    this.ball = {
-      x: fromLeft ? this.court.left + 0.06 : this.court.right - 0.06,
-      y: laneMid, tx: ty, vx: fromLeft ? vx0 : -vx0, born: now,
-    };
-    this.ball.vy = (ty - laneMid) / ((this.court.right - this.court.left - 0.12) / vx0);
+    const x0 = (this.court.left + this.court.right) / 2;
+    const toAI = this.patientRight ? -1 : 1;          // away from the patient
+    this.ball = { x: x0, y: laneMid, tx: ty, vx: toAI * vx0, born: now };
+    // aimed to arrive near ty at the opponent's edge — half a court away, so
+    // the flight time is half a crossing
+    const tFlight = Math.abs(this._aiEdgeX() - x0) / vx0;
+    this.ball.vy = tFlight > 0 ? (ty - laneMid) / tFlight : 0;
     this._capVy(this.ball);
+  }
+
+  // second player's paddle (ZED seat 1). Their own assessed arc drives it, so
+  // a limited range still reaches the whole lane. While they are not tracked
+  // the paddle HOLDS its last position instead of snapping to the middle —
+  // a snap would silently gift a point.
+  _angleToY2() {
+    const a = this.t.armAngle2?.(this.p2Side);
+    if (a == null) {
+      this.p2Waiting++;
+      return this._lastP2Y ?? 0.5 - this.paddleH / 2;
+    }
+    this.p2Waiting = 0;
+    const prof = this.p2Profile;
+    const lo = prof?.arcMinDeg ?? this.profile.arcMinDeg;
+    const hi = prof?.arcMaxDeg ?? this.profile.arcMaxDeg;
+    const f = Math.max(0, Math.min(1, (a - lo) / Math.max(10, hi - lo)));
+    const cLo = this.wallTop + this.paddleH / 2, cHi = this.wallBottom - this.paddleH / 2;
+    this._lastP2Y = cHi - f * (cHi - cLo) - this.paddleH / 2;
+    return this._lastP2Y;
   }
   _angleToY(arm, prof) {
     const a = this.t.armAngle(arm);
@@ -764,6 +862,70 @@ export class ArcPong extends GameBase {
     if (Math.abs(b.vy) > m) b.vy = Math.sign(b.vy) * m;
   }
   // paddles: {leftY, rightY, leftY2?, rightY2?} — the 2s are teammate paddles
+  // Has anyone reached PONG_WIN? Returns true when the match is over, so the
+  // caller stops instead of serving again. The tutorial never counts — it is
+  // a speed measurement, not a game.
+  _checkMatch(now) {
+    if (this.tut) return false;
+    const us = this.score.us, them = this.score.ai;
+    if (us < PONG_WIN && them < PONG_WIN) return false;
+    this.matchOver = now;
+    this.ball = null;
+    this.serving = null;
+    this._slip = null;
+    if (us >= PONG_WIN) {
+      audio.fanfare();
+      this.say(`Game! ${us} to ${them}. You won it.`);
+    } else {
+      // losing is allowed to happen — an opponent that cannot win is not an
+      // opponent — but it is never framed as the patient's failure
+      audio.point();
+      this.say(this.isDuo
+        ? `Game to ${this.opts.p2Name || "player two"}, ${them} to ${us}. Good rallies.`
+        : `The star got there first, ${them} to ${us}. Good rallies — go again?`);
+    }
+    return true;
+  }
+
+  // which edge the AI defends
+  _aiEdgeX() { return this.patientRight ? this.court.left : this.court.right; }
+
+  // Where a ball at (y, vy) ends up t seconds later, bouncing off the rails:
+  // a triangle wave folded into the lane, so the prediction is right even
+  // when the shot to the corner rebounds on the way.
+  _predictY(y, vy, t) {
+    const H = this.wallBottom - this.wallTop;
+    if (!(H > 0)) return y;
+    const period = 2 * H;
+    let d = (y - this.wallTop) + vy * t;
+    d = ((d % period) + period) % period;
+    return this.wallTop + (d <= H ? d : period - d);
+  }
+
+  // Engage the misread, once, on a ball already heading for the AI. Called
+  // early in the flight so the steer still reads as the patient's shot: the
+  // ball is sent to the corner AWAY from the star, and the star reads it as
+  // coming back to the side it is already on.
+  _engageSlip(now) {
+    const b = this.ball;
+    if (!b) return;
+    const laneMid = (this.wallTop + this.wallBottom) / 2;
+    const toTop = this.aiY > laneMid;          // place it away from where it stands
+    const targetY = toTop ? this.wallTop + this.paddleH * 0.35
+                          : this.wallBottom - this.paddleH * 0.35;
+    const tFlight = Math.abs(b.x - this._aiEdgeX()) / Math.abs(b.vx || 0.25);
+    if (tFlight > 0) b.vy = (targetY - b.y) / tFlight;
+    this._capVy(b);                            // the flat-flight rule still holds
+    this._slip = {
+      fromX: b.x,
+      // it holds the side it is already on — anticipating a return to where
+      // the ball just was, which is the error people actually make
+      wrongY: toTop ? this.wallBottom - this.paddleH / 2 : this.wallTop + this.paddleH / 2,
+      missSign: toTop ? 1 : -1,                // ends up just below a high ball, just above a low one
+      at: now,
+    };
+  }
+
   _paddles(now, dt) {
     const other = this.side === "right" ? "left" : "right";
     const p = {};
@@ -777,28 +939,57 @@ export class ArcPong extends GameBase {
     // long rally the star gets sleepy: from 75 s its reactions fade, and past
     // 90 s it drifts to the middle and can no longer keep up — the patient
     // wins the point through ordinary play, never by a timer cutting in.
-    if (this.hasAI && this.ball) {
+    if (this.hasAI && this.ball && !this.caught) {   // a caught ball freezes the AI — the catch buys aiming time
       const s = dt / 1000;
-      const age = (now - this.ball.born) / 1000;
-      const tired = Math.max(0, Math.min(1, (age - 75) / 15));
+      // the star tires over the ROUND, not the current rally: tied to rally
+      // age it almost never fired, because a single rally rarely lasts 75 s.
+      // It fades from AI_FADE_FROM and is fully passed by AI_FADE_TO, so the
+      // patient wins the point through ordinary play at about that mark.
+      const age = this.elapsed(now) / 1000;
+      const tired = Math.max(0, Math.min(1, (age - AI_FADE_FROM) / (AI_FADE_TO - AI_FADE_FROM))) * AI_FADE_MAX;
       this._tired = tired;
-      const gain = 3 * (1 - 0.75 * tired);
-      const vmax = 0.24 * (1 - 0.72 * tired);
-      this.aiLagY += (this.ball.y - this.aiLagY) * Math.min(1, gain * s);
-      if (tired >= 1) this.aiLagY += ((this.wallTop + this.wallBottom) / 2 - this.aiLagY) * 0.6 * s;
-      this.aiY += Math.max(-vmax * s, Math.min(vmax * s, this.aiLagY - this.aiY));
-      this.aiY = Math.max(this.wallTop + this.paddleH / 2, Math.min(this.wallBottom - this.paddleH / 2, this.aiY));
+      const lo = this.wallTop + this.paddleH / 2, hi = this.wallBottom - this.paddleH / 2;
+      if (this._slip) {
+        // The misread. Full speed throughout — a natural miss is a fast,
+        // confident, WRONG commitment, not a slow one. First it holds the
+        // side the ball came from; then it reads the corner, lunges, and
+        // stops at a target that sits AI_SLIP_GAP of a paddle past the ball,
+        // so it arrives a sliver short instead of leaving it to chance.
+        const sl = this._slip;
+        const vmaxS = 0.26;
+        // where the ball will actually arrive, rails included, and the spot
+        // that leaves it a sliver clear of the paddle edge
+        const tRemain = Math.abs(this.ball.x - this._aiEdgeX()) / Math.abs(this.ball.vx || 1e-6);
+        const arrive = this._predictY(this.ball.y, this.ball.vy, tRemain);
+        const missY = Math.max(lo, Math.min(hi,
+          arrive + sl.missSign * (this.paddleH / 2 + this.paddleH * AI_SLIP_GAP)));
+        if (!sl.recover && tRemain <= (Math.abs(missY - this.aiY) / vmaxS) * AI_SLIP_LATE) {
+          sl.recover = true;                       // it has seen it — too late
+        }
+        const want = sl.recover ? missY : sl.wrongY;
+        this.aiY += Math.max(-vmaxS * s, Math.min(vmaxS * s, want - this.aiY));
+        this.aiLagY = this.aiY;                    // no stale lag when it recovers
+        this.aiY = Math.max(lo, Math.min(hi, this.aiY));
+      } else {
+        const gain = 3 * (1 - tired);
+        const vmax = 0.24 * (1 - tired);
+        this.aiLagY += (this.ball.y - this.aiLagY) * Math.min(1, gain * s);
+        this.aiY += Math.max(-vmax * s, Math.min(vmax * s, this.aiLagY - this.aiY));
+        this.aiY = Math.max(lo, Math.min(hi, this.aiY));
+      }
     }
     const aiPad = this.aiY - this.paddleH / 2;
     if (this.patientRight) {
       p.rightY = patientY;
       p.leftY = this.mode === "bimanual" ? this._angleToY(other, this.profiles[other])
+        : this.isDuo ? this._angleToY2()
         : this.mode === "companion" ? this._keysPaddle(dt) : aiPad;
       if (this.mode === "team-arms") p.rightY2 = this._angleToY(other, this.profiles[other]);
       if (this.mode === "team-keys") p.rightY2 = this._keysPaddle(dt);
     } else {
       p.leftY = patientY;
       p.rightY = this.mode === "bimanual" ? this._angleToY(other, this.profiles[other])
+        : this.isDuo ? this._angleToY2()
         : this.mode === "companion" ? this._keysPaddle(dt) : aiPad;
       if (this.mode === "team-arms") p.leftY2 = this._angleToY(other, this.profiles[other]);
       if (this.mode === "team-keys") p.leftY2 = this._keysPaddle(dt);
@@ -812,7 +1003,31 @@ export class ArcPong extends GameBase {
     return null;
   }
   update(now, dt) {
+    // the match is decided: hold the final board for a beat so the scoreline
+    // is read, then finish the round on it rather than on the clock
+    if (this.matchOver) {
+      if (now - this.matchOver > 3000) this._end();
+      this.pads = this._paddles(now, dt);
+      return;
+    }
     this.pads = this._paddles(now, dt);
+
+    // second player out of frame: say so once, gently, and again only after
+    // they have been back. Their paddle is holding still, which otherwise
+    // looks like the game froze.
+    if (this.isDuo) {
+      if (this.p2Waiting) this._p2LostTotal = (this._p2LostTotal | 0) + 1;
+      if (this.p2Waiting === 90 && !this._p2Cued) {
+        this._p2Cued = true;
+        this.say("Second player, step back into the picture when you are ready");
+      } else if (!this.p2Waiting) this._p2Cued = false;
+    }
+
+    // squeeze edge for the grip shot: remember WHEN the hand closed, so a
+    // catch needs a fresh, intentional squeeze at contact
+    const closedNow = this.t.handClosed(this.side);
+    if (closedNow && !this._wasClosed) this._closedAt = now;
+    this._wasClosed = closedNow;
 
     if (this.tut) {
       this._pongTut(now);
@@ -838,7 +1053,12 @@ export class ArcPong extends GameBase {
       if (!this.t.handClosed(this.side) || now - this.caught.since > 1200) {
         const dir = this.caught.edge === "right" ? -1 : 1;
         b.vx = dir * (this.caught.vx0 || 0.25) * 1.35;      // fired back faster
-        b.vy = (Math.random() - 0.5) * 0.16;
+        // aimed, not random: fire toward the lane half AWAY from the AI paddle
+        const laneMid = (this.wallTop + this.wallBottom) / 2;
+        const ty = this.hasAI
+          ? (this.aiY < laneMid ? this.wallBottom - this.paddleH / 2 : this.wallTop + this.paddleH / 2)
+          : laneMid;
+        b.vy = (ty - b.y) / ((this.court.right - this.court.left) / Math.abs(b.vx));
         this._capVy(b);
         this.gripShots++;
         this.stats.stars += 5;
@@ -851,6 +1071,20 @@ export class ArcPong extends GameBase {
     }
 
     const b = this.ball, s = dt / 1000;
+    // The star's one misread of the round. Taken on the first ball heading
+    // its way after AI_SLIP_FROM, and caught early in the flight so the steer
+    // to the corner still reads as the patient's shot rather than the ball
+    // bending on its own. AI_SLIP_BY is the backstop: past it, any flight
+    // will do, however far along it already is.
+    if (this.hasAI && !this.isDuo && !this._slip && !this._slipUsed && !this.tut) {
+      const age = this.elapsed(now);
+      const toAI = this.patientRight ? b.vx < 0 : b.vx > 0;
+      if (toAI && (age >= AI_SLIP_BY || (age >= AI_SLIP_FROM &&
+          Math.abs(b.x - (this.patientRight ? this.court.right : this.court.left)) < 0.3))) {
+        this._slip = { fromX: b.x };            // provisional, replaced below
+        this._engageSlip(now);
+      }
+    }
     b.x += b.vx * s; b.y += b.vy * s;
     if (b.spin) b.vy += b.spin * s;                          // spin curves the flight
     this.trail.push({ x: b.x, y: b.y, t: now });
@@ -866,9 +1100,17 @@ export class ArcPong extends GameBase {
       b.vx = dir * (this.baseVx || Math.abs(b.vx));
       b.vy += ((b.y - (py + this.paddleH / 2)) / this.paddleH) * 0.12;   // gentle deflection: flat rallies
       b.spin = 0;
+      audio.paddle();   // the physical "pock" of the return, both sides
       if (isPlayerSide) {
         this.rally++; this.bestRally = Math.max(this.bestRally, this.rally);
         this.hit({ reachFrac: 0.7, isFar: false }, this.rally);
+        // every return charges the grip gauge; a full bar announces itself
+        const wasFull = this.gripEnergy >= 1;
+        this.gripEnergy = Math.min(1, this.gripEnergy + 0.2);
+        if (this.skills.grip && !wasFull && this.gripEnergy >= 1) {
+          this.skillFlash = { text: "Grip shot charged ✊", until: now + 1600 };
+          audio.note(5);
+        }
         this.burstAtPx(b.x * this.canvas.width, b.y * this.canvas.height, "#e8b98a");
         this.flashUntil = now + 160;
         // spin shot: a rolled palm at contact bends the return
@@ -884,7 +1126,6 @@ export class ArcPong extends GameBase {
           }
         }
       } else {
-        audio.note(0);
         if (this.hasAI) {   // AI aims inside the walled lane, near the middle
           const laneMid = (this.wallTop + this.wallBottom) / 2;
           b.tx = laneMid + (Math.random() - 0.5) * 0.5 * (this.wallBottom - this.wallTop - this.paddleH);
@@ -900,10 +1141,20 @@ export class ArcPong extends GameBase {
       const playerSide = patRight || this.mode === "bimanual";
       if (py != null) { if (!this._tryCatch(now, "right", py)) returnBall(-1, py, patRight || this.mode === "bimanual"); }
       else if (b.x > this.court.right + 0.04) {
-        if (playerSide) { this.miss({ isFar: false }); this.rally = 0; if (this.hasAI && !this.tut) { this.score.ai++; } }
+        const slipped = !!this._slip;
+        if (playerSide) {
+          this.miss({ isFar: false }); this.rally = 0;
+          // in duo the far paddle is a person, not the AI: the same tally
+          // counts their points, and they get named rather than "the star"
+          if ((this.hasAI || this.isDuo) && !this.tut) this.score.ai++;
+          if (this._checkMatch(now)) return;
+          if (this.isDuo) this.say(`Point to ${this.opts.p2Name || "player two"}!`);
+        }
         else {
           this.score.us++; this.pointFlash = now + 1300; audio.point();
-          this.say(this._tired >= 1 ? "You wore the little star out! Point to you!" : "Point to you!");
+          if (this._slip) { this._slipUsed = true; this._slip = null; }
+          if (this._checkMatch(now)) return;
+          this.say(slipped ? "Right into the corner! Point to you!" : "Point to you!");
         }
         this._startServe(now);
         return;
@@ -915,10 +1166,20 @@ export class ArcPong extends GameBase {
       const playerSide = !patRight || this.mode === "bimanual";
       if (py != null) { if (!this._tryCatch(now, "left", py)) returnBall(1, py, !patRight || this.mode === "bimanual"); }
       else if (b.x < this.court.left - 0.04) {
-        if (playerSide) { this.miss({ isFar: false }); this.rally = 0; if (this.hasAI && !this.tut) { this.score.ai++; } }
+        const slipped = !!this._slip;
+        if (playerSide) {
+          this.miss({ isFar: false }); this.rally = 0;
+          // in duo the far paddle is a person, not the AI: the same tally
+          // counts their points, and they get named rather than "the star"
+          if ((this.hasAI || this.isDuo) && !this.tut) this.score.ai++;
+          if (this._checkMatch(now)) return;
+          if (this.isDuo) this.say(`Point to ${this.opts.p2Name || "player two"}!`);
+        }
         else {
           this.score.us++; this.pointFlash = now + 1300; audio.point();
-          this.say(this._tired >= 1 ? "You wore the little star out! Point to you!" : "Point to you!");
+          if (this._slip) { this._slipUsed = true; this._slip = null; }
+          if (this._checkMatch(now)) return;
+          this.say(slipped ? "Right into the corner! Point to you!" : "Point to you!");
         }
         this._startServe(now);
         return;
@@ -984,88 +1245,77 @@ export class ArcPong extends GameBase {
       ctx.globalAlpha = 1;
     }
 
-    // paddles: patient amber, teammate teal, opponent lavender
+    // paddles: patient amber, teammate teal, opponent lavender — and the
+    // app-wide open/closed language: a squeezing hand turns its paddle sage
+    // (glowing while the ball is held)
     const pads = this.pads || {};
-    const drawPad = (x, y, kind) => {
+    const drawPad = (x, y, kind, gripping) => {
       if (y == null) return;
-      const cols = kind === "patient" ? ["#e8b98a", "#c77f4a"] : kind === "mate" ? ["#a8d8d0", "#5f9b93"] : ["#c8b3d9", "#8f76b0"];
+      const cols = gripping ? ["#a8cf92", "#6f9b58"]
+        : kind === "patient" ? ["#e8b98a", "#c77f4a"] : kind === "mate" ? ["#a8d8d0", "#5f9b93"] : ["#c8b3d9", "#8f76b0"];
+      const held = gripping && this.caught;
+      if (held) { ctx.save(); ctx.shadowColor = "rgba(159,192,138,0.9)"; ctx.shadowBlur = 18; }
       roundedRect(ctx, x - 8, Y(y), 16, Y(this.paddleH), 10, cols[0], cols[1]);
+      if (held) ctx.restore();
     };
     const rKind = this.patientRight ? "patient" : (this.mode === "bimanual" ? "patient" : "opp");
     const lKind = !this.patientRight ? "patient" : (this.mode === "bimanual" ? "patient" : "opp");
-    drawPad(X(this.court.left), pads.leftY, lKind);
-    drawPad(X(this.court.right), pads.rightY, rKind);
+    const otherArm = this.side === "right" ? "left" : "right";
+    const gripMain = this.t.handClosed(this.side);
+    const gripOther = this.mode === "bimanual" && this.t.handClosed(otherArm);
+    drawPad(X(this.court.left), pads.leftY, lKind, this.patientRight ? gripOther : gripMain);
+    drawPad(X(this.court.right), pads.rightY, rKind, this.patientRight ? gripMain : gripOther);
     drawPad(X(this.court.left) - 26, pads.leftY2, "mate");
     drawPad(X(this.court.right) + 26, pads.rightY2, "mate");
 
-    // rope rigs: each paddle hangs from a rope over a pulley, and a little
-    // helper hauls it up and down. The patient's helper (the puzzle hero)
-    // mirrors their arm; the dark cloud works the opponent's rope.
-    const rig = (fx, y, token, out) => {
-      if (y == null) return null;
-      const px = X(fx), py = Y(this.wallTop) - 28;
-      const range = Math.max(0.05, this.wallBottom - this.paddleH - this.wallTop);
-      const f = Math.max(0, Math.min(1, (this.wallBottom - this.paddleH - y) / range));
-      // paddle up = rope hauled in = helper rides low; paddle down = helper high
-      const cx = px + out * 58;
-      const cy = Y(this.wallTop + 0.06 + f * Math.max(0.12, this.wallBottom - this.wallTop - 0.18));
+    // No rope rig, pulley or helper characters: they added a dozen moving
+    // lines beside the two the patient must actually watch (their paddle and
+    // the ball). The paddle IS the arm; nothing else needs drawing to say so.
+    const myPadX = X(this.patientRight ? this.court.right : this.court.left);
+
+    // grip-shot charge gauge under the patient's own paddle: fills with
+    // returns, glows sage when a catch is ready, spends on the catch
+    if (this.skills.grip) {
+      const bw = 56, bh = 8, bx = myPadX - bw / 2, by = Y(this.wallBottom) + 22;
+      const full = this.gripEnergy >= 1;
+      const pulse = Math.sin(now / 260) * 0.5 + 0.5;
       ctx.save();
-      ctx.lineCap = "round";
-      // rope: paddle → pulley, then pulley → helper hands (with a little sag)
-      ctx.strokeStyle = "rgba(232,185,138,0.85)"; ctx.lineWidth = 2.5;
-      ctx.beginPath(); ctx.moveTo(px, Y(y)); ctx.lineTo(px, py); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(px, py);
-      ctx.quadraticCurveTo((px + cx) / 2, (py + cy - 26) / 2 + 14, cx, cy - 26);
-      ctx.stroke();
-      // pulley wheel on its mount; the spoke turns as the rope runs
-      ctx.strokeStyle = "rgba(244,236,221,0.35)"; ctx.lineWidth = 3;
-      ctx.beginPath(); ctx.moveTo(px, py - 9); ctx.lineTo(px, 0); ctx.stroke();
-      ctx.fillStyle = "#2a3550"; ctx.strokeStyle = "rgba(244,236,221,0.6)"; ctx.lineWidth = 2.5;
-      ctx.beginPath(); ctx.arc(px, py, 9, 0, TAU); ctx.fill(); ctx.stroke();
-      const sa = f * 5;
-      ctx.beginPath(); ctx.moveTo(px - Math.cos(sa) * 7, py - Math.sin(sa) * 7); ctx.lineTo(px + Math.cos(sa) * 7, py + Math.sin(sa) * 7); ctx.stroke();
-      // the helper, softly haloed so silhouettes read on the night court
-      ctx.fillStyle = "rgba(244,236,221,0.14)";
-      ctx.beginPath(); ctx.arc(cx, cy, 34, 0, TAU); ctx.fill();
-      if (token === "hero") puzzleShape(ctx, cx, cy, 36);
-      else if (token === "cloud") cloudShape(ctx, cx, cy, 26);
-      else friendShape(ctx, token, cx, cy, 32);
-      // little hands gripping the rope
-      ctx.fillStyle = "#e8b98a";
-      ctx.beginPath(); ctx.arc(cx - 5, cy - 26, 4, 0, TAU); ctx.fill();
-      ctx.beginPath(); ctx.arc(cx + 5, cy - 26, 4, 0, TAU); ctx.fill();
+      ctx.fillStyle = "rgba(244,236,221,0.15)";
+      ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 4); ctx.fill();
+      if (this.gripEnergy > 0) {
+        ctx.fillStyle = full ? "#9fc08a" : "#e8b98a";
+        if (full) { ctx.shadowColor = "rgba(159,192,138,0.9)"; ctx.shadowBlur = 10 + pulse * 8; }
+        ctx.beginPath(); ctx.roundRect(bx, by, bw * Math.min(1, this.gripEnergy), bh, 4); ctx.fill();
+        ctx.shadowBlur = 0;
+      }
+      ctx.strokeStyle = "rgba(244,236,221,0.4)"; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 4); ctx.stroke();
+      if (full) {
+        ctx.fillStyle = `rgba(255,242,194,${0.6 + pulse * 0.4})`;
+        ctx.font = `800 ${Math.round(c.height * 0.02)}px Nunito, sans-serif`;
+        ctx.textAlign = "center";
+        ctx.fillText("squeeze to catch ✊", myRig.cx, by + 28);
+      }
       ctx.restore();
-      return { cx, cy };
-    };
-    const charOf = kind => kind === "patient" ? (this.mode === "bimanual" ? "scribble" : "hero")
-      : this.mode === "companion" ? "stack" : "cloud";
-    const rightChar = this.patientRight ? "hero" : charOf(rKind);
-    const leftChar = !this.patientRight ? "hero" : charOf(lKind);
-    const rigR = rig(this.court.right, pads.rightY, rightChar, 1);
-    const rigL = rig(this.court.left, pads.leftY, leftChar, -1);
-    // a whisper of a line from the patient's hand to their helper: your hand
-    // is what pulls the rope
-    const myRig = this.patientRight ? rigR : rigL;
-    const hp = this.t.palmPx(this.side, c);
-    if (myRig && hp) {
-      ctx.strokeStyle = "rgba(244,236,221,0.16)"; ctx.lineWidth = 2; ctx.setLineDash([4, 9]);
-      ctx.beginPath(); ctx.moveTo(hp.x, hp.y); ctx.lineTo(myRig.cx, myRig.cy - 26); ctx.stroke();
-      ctx.setLineDash([]);
     }
 
     // sleepy z's over the AI paddle as a long rally wears the star down —
     // the coming miss reads as earned, not random
-    if (this.hasAI && this.ball && (this._tired || 0) > 0.25) {
+    // the star tiring is flavour, and it must never be showing while it
+    // misreads a shot — a sleepy cue over a lunge tells the patient the point
+    // was given rather than won
+    const yawn = (this._tired || 0) / AI_FADE_MAX;
+    if (this.hasAI && this.ball && !this._slip && yawn > 0.55) {
       const aiEdge = this.patientRight ? this.court.left : this.court.right;
       const ax = X(aiEdge) + (this.patientRight ? -34 : 34);
       const ay = Y(this.aiY) - 30;
       ctx.save();
-      ctx.fillStyle = `rgba(200,179,217,${0.4 + 0.5 * this._tired})`;
+      ctx.fillStyle = `rgba(200,179,217,${0.35 + 0.45 * yawn})`;
       ctx.font = `800 ${Math.round(c.height * 0.032)}px Nunito, sans-serif`;
       ctx.textAlign = "center";
-      for (let i = 0; i < (this._tired >= 1 ? 3 : 2); i++) {
+      for (let i = 0; i < (yawn > 0.85 ? 3 : 2); i++) {
         const ph = (now / 900 + i * 0.33) % 1;
-        ctx.globalAlpha = (1 - ph) * (0.4 + 0.6 * this._tired);
+        ctx.globalAlpha = (1 - ph) * (0.35 + 0.55 * yawn);
         ctx.fillText("z", ax + Math.sin(ph * 6 + i) * 8, ay - ph * 46 - i * 6);
       }
       ctx.restore();
@@ -1110,7 +1360,7 @@ export class ArcPong extends GameBase {
       const t = (now - this.serving.start) / 550;
       const beat = Math.floor(t), f = t - beat;
       if (beat >= 0 && beat < 3) {
-        const p = { x: X(this.patientRight ? this.court.left + 0.06 : this.court.right - 0.06), y: Y((this.wallTop + this.wallBottom) / 2) };
+        const p = { x: X((this.court.left + this.court.right) / 2), y: Y((this.wallTop + this.wallBottom) / 2) };
         ctx.strokeStyle = `rgba(244,236,221,${0.7 * (1 - f)})`;
         ctx.lineWidth = 4;
         ctx.beginPath(); ctx.arc(p.x, p.y, 16 + f * 44, 0, TAU); ctx.stroke();
@@ -1844,105 +2094,555 @@ export class EchoReach extends GameBase {
   }
 }
 
-/* ==================== G10 Lighthouse Lens (wipe-to-reveal) ==================== */
-// Area-coverage training: sweeping the open hand clears sea fog off the
-// lighthouse lens. Forces sweeps across the WHOLE envelope, not point visits
-// (the wiping exercise recurs in Jintronix / Armeo / VirtualRehab catalogs).
+/* ==================== G10 Scratch Cards (levelled reveal) ==================== */
+// Area-coverage training as a scratch card: the open hand scrapes foil off a
+// hidden picture. Sweeping beats point-visiting for coverage work (the wiping
+// exercise recurs in Jintronix / Armeo / VirtualRehab catalogs), and a card
+// that has to be cleared makes the sweep self-directing — the patient can see
+// exactly what they have missed.
+//
+// The LEVEL is the difficulty ladder here, not the DDA: each level widens the
+// card across more of the patient's own measured envelope AND shrinks the
+// scratcher, so the demand moves from "big sweeps close in" to "accurate
+// sweeps at full stretch". It is stored per patient and resumes.
+//
+// What a scratch card is genuinely good at is anticipation and reveal, and
+// that is all this borrows. The rest of the commercial scratch-card playbook
+// - variable-ratio rewards, near-miss teasing, prize framing - is designed to
+// keep somebody playing past the point they meant to stop. In a clinical tool
+// for older stroke patients that is not a mechanic, it is a harm; the reward
+// here is the picture, it is certain, and it arrives when the work is done.
+const SCRATCH_LEVELS = [
+  // reach  = fraction of the assessed envelope the card spans
+  // eraser = scratch radius, SW (the "eraser gets smaller with levels")
+  // need   = fraction of the card that must be cleared to finish it
+  // cell   = foil flake size, SW (finer foil for a finer scratcher)
+  { reach: 0.55, eraser: 0.30, need: 0.80, cell: 0.150 },
+  { reach: 0.70, eraser: 0.25, need: 0.82, cell: 0.130 },
+  { reach: 0.85, eraser: 0.21, need: 0.85, cell: 0.115 },
+  { reach: 1.00, eraser: 0.17, need: 0.87, cell: 0.100 },
+  { reach: 1.00, eraser: 0.14, need: 0.90, cell: 0.090 },
+  { reach: 1.00, eraser: 0.11, need: 0.92, cell: 0.080 },
+];
+const SCRATCH_MAX = SCRATCH_LEVELS.length;
+
+// One picture per level, so levelling up is also "a new card". Each is drawn
+// in canvas units 0..1 across the card's own box, then scaled - so the
+// picture fits whatever shape that patient's reach turns out to be.
+const SCRATCH_CARDS = [
+  { name: "the lighthouse", draw: scratchLighthouse },
+  { name: "a little boat",  draw: scratchBoat },
+  { name: "the night sky",  draw: scratchStars },
+  { name: "a fish",         draw: scratchFish },
+  { name: "the sunrise",    draw: scratchSunrise },
+  { name: "the harbour",    draw: scratchHarbour },
+];
+
 export class LighthouseLens extends GameBase {
   id = "lens";
   setup() {
     this.tips = {
-      objective: "Wipe the fog away with your hand.",
+      objective: "Scrape the silver away and see what is underneath.",
       miss: "Long slow sweeps, like polishing a window.",
     };
-    this.cell = 0.13;                       // fog cell size, SW
-    this.pane = 0;
-    this._newPane();
+    this.level = Math.max(1, Math.min(SCRATCH_MAX, this.opts.level || 1));
+    this.cardsDone = 0;
     this.clearedTotal = 0;
-    this.cellCount = this.fog.length;
+    this.revealAt = 0;              // set when a card completes: the reveal beat
+    this.halfSaid = false;
     this._chunk = 0;
+    this._newCard();
     this.tellStory(STORIES.lens);
   }
-  _newPane() {
-    // fog cells covering the reachable window around CENTER
-    this.fog = [];
-    const R = 1.05 * this.params.rangeScale;
-    for (let gx = -8; gx <= 8; gx++) for (let gy = -8; gy <= 8; gy++) {
-      const x = gx * this.cell, y = gy * this.cell;
-      const th = Math.atan2(y, x);
-      const r = Math.hypot(x, y);
-      if (r > R * this.envAt(th)) continue;
+
+  _lv() { return SCRATCH_LEVELS[this.level - 1]; }
+
+  // The card is the patient's OWN workspace: every flake sits inside the
+  // measured envelope (scaled by the level) and on screen, so there is never
+  // foil in a place they cannot get to - which is what would otherwise make a
+  // "clear the card" goal quietly impossible.
+  _newCard() {
+    const lv = this._lv();
+    this.card = SCRATCH_CARDS[(this.level - 1 + this.cardsDone) % SCRATCH_CARDS.length];
+    this.flakes = [];
+    const box = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
+    const span = Math.ceil(1.2 / lv.cell);
+    for (let gx = -span; gx <= span; gx++) for (let gy = -span; gy <= span; gy++) {
+      const x = gx * lv.cell, y = gy * lv.cell;
+      const th = Math.atan2(y, x), r = Math.hypot(x, y);
+      if (r > lv.reach * this.envAt(th)) continue;
       const pos = { x: CENTER.x + x, y: CENTER.y + y };
       const px = this.toPx(pos);
       if (px.x < 40 || px.x > this.canvas.width - 40 || px.y < 40 || px.y > this.canvas.height - 40) continue;
-      this.fog.push({ ...pos, a: 1, jit: Math.random() });
+      this.flakes.push({ ...pos, a: 1, jit: Math.random() });
+      box.x0 = Math.min(box.x0, pos.x); box.x1 = Math.max(box.x1, pos.x);
+      box.y0 = Math.min(box.y0, pos.y); box.y1 = Math.max(box.y1, pos.y);
     }
-    this.pane++;
+    this.box = this.flakes.length ? box : null;
+    this.cardCells = this.flakes.length || 1;
+    this.cleared = 0;
+    this.halfSaid = false;
   }
+
+  get clearFrac() { return this.cleared / this.cardCells; }
+
   update(now, dt) {
+    // the reveal beat: the card is finished and the picture is on show. No
+    // scratching during it - the point is to look at what they uncovered.
+    if (this.revealAt) {
+      if (now - this.revealAt > 3400) {
+        this.revealAt = 0;
+        this.cardsDone++;
+        if (this.level < SCRATCH_MAX) {
+          this.level++;
+          this.say(`Level ${this.level}. A new card, and a finer scratcher.`);
+        } else {
+          this.say("A new card.");
+        }
+        this._newCard();
+      }
+      return;
+    }
     const h = this.t.palmRel(this.side) || this.t.handRel(this.side);
     if (!h) return;
-    const wipeR = Math.max(0.16, this.params.radius * 1.1);
-    let cleared = 0, remaining = 0;
-    for (const f of this.fog) {
-      if (f.a <= 0) { cleared++; continue; }
-      remaining++;
-      if (Math.hypot(h.x - f.x, h.y - f.y) < wipeR) {
-        f.a -= dt / 420;                    // ~half a second of contact clears a cell
-        if (f.a <= 0) {
-          f.a = 0;
-          this.clearedTotal++;
-          if (++this._chunk >= 6) {         // one chime + star per handful of fog
-            this._chunk = 0;
-            this.hit({ reachFrac: Math.hypot(f.x - CENTER.x, f.y - CENTER.y) / (this.envAt(Math.atan2(f.y - CENTER.y, f.x - CENTER.x)) || 1) });
-            this.burst({ x: f.x, y: f.y }, "#cfe6f0");
-          }
-        }
+    const lv = this._lv();
+    for (const f of this.flakes) {
+      if (f.a <= 0) continue;
+      if (Math.hypot(h.x - f.x, h.y - f.y) > lv.eraser) continue;
+      f.a -= dt / 380;                    // a moment of contact takes a flake off
+      if (f.a > 0) continue;
+      f.a = 0;
+      this.cleared++;
+      this.clearedTotal++;
+      // one chime, star and spark per handful of flakes — a burst per flake
+      // would be hundreds of particles a second and a chime nobody can hear
+      if (++this._chunk >= 6) {
+        this._chunk = 0;
+        const th = Math.atan2(f.y - CENTER.y, f.x - CENTER.x);
+        this.hit({ reachFrac: Math.hypot(f.x - CENTER.x, f.y - CENTER.y) / (this.envAt(th) || 1) });
+        this.burst({ x: f.x, y: f.y }, "#e8dcc0");
       }
     }
-    if (remaining === 0 && this.fog.length) {
-      this.say("The light is shining through. Here comes more fog.");
-      this._newPane();
+    // anticipation, honestly earned: they are told something is appearing
+    // only once enough of it actually is
+    if (!this.halfSaid && this.clearFrac > 0.45) {
+      this.halfSaid = true;
+      this.say("Something is coming through. Keep going.");
+    }
+    if (this.clearFrac >= lv.need) {
+      this.revealAt = now;
+      audio.fanfare();
+      this.say(`It's ${this.card.name}!`);
     }
   }
-  drawBg(ctx, c) {
+
+  drawBg(ctx, c, now) {
     const g = ctx.createRadialGradient(c.width / 2, c.height * 0.45, 60, c.width / 2, c.height * 0.45, c.height * 0.9);
-    g.addColorStop(0, "#3d3a68"); g.addColorStop(1, "#171736");
+    g.addColorStop(0, "#332f5c"); g.addColorStop(1, "#15152f");
     ctx.fillStyle = g; ctx.fillRect(0, 0, c.width, c.height);
-    // the picture behind the fog: the great lamp, seen through the lens
-    const cp = this.toPx(CENTER);
-    const lamp = ctx.createRadialGradient(cp.x, cp.y, 4, cp.x, cp.y, this.sw() * 1.1);
-    lamp.addColorStop(0, "rgba(255,246,216,0.95)");
-    lamp.addColorStop(0.35, "rgba(232,168,106,0.55)");
-    lamp.addColorStop(1, "rgba(232,168,106,0)");
-    ctx.fillStyle = lamp;
-    ctx.fillRect(0, 0, c.width, c.height);
-    // beam rays
-    ctx.save();
-    ctx.translate(cp.x, cp.y);
-    ctx.rotate(performance.now() / 9000);
-    ctx.fillStyle = "rgba(255,246,216,0.06)";
-    for (let i = 0; i < 4; i++) {
-      ctx.rotate(Math.PI / 2);
-      ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(c.width, -c.width * 0.09); ctx.lineTo(c.width, c.width * 0.09); ctx.closePath(); ctx.fill();
-    }
-    ctx.restore();
     twinkles(ctx, c);
+    if (!this.box) return;
+    // the picture, drawn into the card's own box so it fits this patient's
+    // reach rather than a fixed rectangle
+    const a = this.toPx({ x: this.box.x0, y: this.box.y1 });
+    const b = this.toPx({ x: this.box.x1, y: this.box.y0 });
+    ctx.save();
+    ctx.translate(a.x, a.y);
+    ctx.scale((b.x - a.x) || 1, (b.y - a.y) || 1);
+    this.card.draw(ctx, now, this.revealAt ? 1 : 0);
+    ctx.restore();
   }
+
   draw(ctx, c, now) {
-    const s = this.cell * this.sw();
-    for (const f of this.fog) {
+    const lv = this._lv();
+    const s = lv.cell * this.sw();
+    // the foil: brushed silver with a slow sheen, so a scratched patch reads
+    // as removed material rather than as a hole in a flat colour
+    for (const f of this.flakes) {
       if (f.a <= 0) continue;
       const p = this.toPx(f);
-      ctx.globalAlpha = f.a * (0.82 + 0.08 * Math.sin(now / 900 + f.jit * 6));
-      ctx.fillStyle = "#9aa6c0";
-      ctx.beginPath(); ctx.roundRect(p.x - s * 0.62, p.y - s * 0.62, s * 1.24, s * 1.24, s * 0.4); ctx.fill();
+      const sheen = 0.5 + 0.5 * Math.sin(now / 1400 + (p.x + p.y) / 220);
+      ctx.globalAlpha = f.a;
+      ctx.fillStyle = `rgb(${(150 + sheen * 46) | 0},${(155 + sheen * 46) | 0},${(168 + sheen * 42) | 0})`;
+      ctx.beginPath();
+      ctx.roundRect(p.x - s * 0.62, p.y - s * 0.62, s * 1.24, s * 1.24, s * 0.34);
+      ctx.fill();
     }
     ctx.globalAlpha = 1;
+
+    // progress, diegetic: the card's own edge fills in as it clears. No
+    // numbers - the amount of silver left IS the score.
+    if (this.box && !this.revealAt) {
+      const a = this.toPx({ x: this.box.x0, y: this.box.y1 });
+      const b = this.toPx({ x: this.box.x1, y: this.box.y0 });
+      const f = Math.min(1, this.clearFrac / lv.need);
+      ctx.save();
+      ctx.strokeStyle = `rgba(232,168,106,${0.25 + f * 0.6})`;
+      ctx.lineWidth = 4 + f * 4;
+      ctx.setLineDash([(b.x - a.x + b.y - a.y) * f, 99999]);
+      ctx.beginPath();
+      ctx.roundRect(a.x - 10, a.y - 10, b.x - a.x + 20, b.y - a.y + 20, 22);
+      ctx.stroke();
+      ctx.restore();
+    }
     this.drawTimerWhisper(ctx, c, now);
   }
+
   extra() {
-    return { coverage: this.cellCount ? Math.min(1, this.clearedTotal / this.cellCount) : 0, panes: this.pane };
+    return {
+      coverage: Math.min(1, this.clearFrac),
+      scratchLevel: this.level,
+      cardsFinished: this.cardsDone,
+      eraserSW: this._lv().eraser,
+    };
+  }
+}
+
+/* --- the hidden pictures. Drawn in a 0..1 box; `lit` rises on the reveal --- */
+function scratchLighthouse(ctx, now, lit) {
+  ctx.fillStyle = "#1d2a44"; ctx.fillRect(0, 0, 1, 1);
+  ctx.fillStyle = "#243a5c"; ctx.fillRect(0, 0.72, 1, 0.28);            // sea
+  ctx.fillStyle = "#f4ecdd";
+  ctx.beginPath(); ctx.moveTo(0.44, 0.72); ctx.lineTo(0.47, 0.26);
+  ctx.lineTo(0.57, 0.26); ctx.lineTo(0.60, 0.72); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = "#b5503a";
+  ctx.fillRect(0.455, 0.44, 0.095, 0.07);
+  ctx.fillStyle = "#e8a86a";
+  ctx.beginPath(); ctx.arc(0.52, 0.22, 0.055, 0, TAU); ctx.fill();
+  const beam = ctx.createRadialGradient(0.52, 0.22, 0.01, 0.52, 0.22, 0.5);
+  beam.addColorStop(0, `rgba(255,246,216,${0.5 + lit * 0.45})`);
+  beam.addColorStop(1, "rgba(255,246,216,0)");
+  ctx.fillStyle = beam; ctx.fillRect(0, 0, 1, 1);
+}
+function scratchBoat(ctx, now, lit) {
+  ctx.fillStyle = "#1b2340"; ctx.fillRect(0, 0, 1, 1);
+  ctx.fillStyle = "#f4ecdd";
+  ctx.beginPath(); ctx.arc(0.76, 0.2, 0.075, 0, TAU); ctx.fill();       // moon
+  ctx.fillStyle = "#2c4468"; ctx.fillRect(0, 0.66, 1, 0.34);            // sea
+  ctx.fillStyle = "#e8a86a";
+  ctx.beginPath(); ctx.moveTo(0.3, 0.66); ctx.lineTo(0.7, 0.66);
+  ctx.lineTo(0.62, 0.78); ctx.lineTo(0.38, 0.78); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = "#f4ecdd";
+  ctx.beginPath(); ctx.moveTo(0.5, 0.62); ctx.lineTo(0.5, 0.28);
+  ctx.lineTo(0.68, 0.62); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = `rgba(159,192,138,${0.4 + lit * 0.5})`; ctx.lineWidth = 0.012;
+  for (let i = 0; i < 3; i++) {
+    ctx.beginPath(); ctx.moveTo(0.12, 0.84 + i * 0.045);
+    ctx.quadraticCurveTo(0.5, 0.8 + i * 0.045, 0.88, 0.84 + i * 0.045); ctx.stroke();
+  }
+}
+function scratchStars(ctx, now, lit) {
+  ctx.fillStyle = "#141a34"; ctx.fillRect(0, 0, 1, 1);
+  const pts = [[0.2, 0.3], [0.34, 0.18], [0.5, 0.32], [0.63, 0.2], [0.78, 0.36], [0.66, 0.55], [0.44, 0.6], [0.26, 0.5]];
+  ctx.strokeStyle = `rgba(159,192,138,${0.35 + lit * 0.5})`; ctx.lineWidth = 0.008;
+  ctx.beginPath();
+  pts.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]));
+  ctx.stroke();
+  for (const [x, y] of pts) {
+    ctx.fillStyle = "#fff6d8";
+    ctx.beginPath(); ctx.arc(x, y, 0.022, 0, TAU); ctx.fill();
+  }
+  ctx.fillStyle = "rgba(244,236,221,0.5)";
+  for (let i = 0; i < 26; i++) {
+    const x = ((i * 97) % 100) / 100, y = ((i * 61) % 100) / 100;
+    ctx.beginPath(); ctx.arc(x, y * 0.95, 0.005, 0, TAU); ctx.fill();
+  }
+}
+function scratchFish(ctx, now, lit) {
+  ctx.fillStyle = "#123044"; ctx.fillRect(0, 0, 1, 1);
+  ctx.fillStyle = "#e8a86a";
+  ctx.beginPath(); ctx.ellipse(0.48, 0.5, 0.2, 0.115, 0, 0, TAU); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(0.68, 0.5); ctx.lineTo(0.84, 0.38);
+  ctx.lineTo(0.84, 0.62); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = "#9fc08a";
+  ctx.beginPath(); ctx.moveTo(0.44, 0.39); ctx.lineTo(0.56, 0.26); ctx.lineTo(0.58, 0.4); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = "#1b1b3a";
+  ctx.beginPath(); ctx.arc(0.35, 0.47, 0.022, 0, TAU); ctx.fill();
+  ctx.fillStyle = `rgba(207,230,240,${0.4 + lit * 0.4})`;
+  for (let i = 0; i < 5; i++) {
+    ctx.beginPath(); ctx.arc(0.24 - i * 0.035, 0.36 - i * 0.05, 0.016 + i * 0.004, 0, TAU); ctx.fill();
+  }
+}
+function scratchSunrise(ctx, now, lit) {
+  const sky = ctx.createLinearGradient(0, 0, 0, 1);
+  sky.addColorStop(0, "#2b2c56"); sky.addColorStop(0.55, "#8a5b6a"); sky.addColorStop(1, "#e8a86a");
+  ctx.fillStyle = sky; ctx.fillRect(0, 0, 1, 1);
+  ctx.fillStyle = `rgba(255,246,216,${0.75 + lit * 0.25})`;
+  ctx.beginPath(); ctx.arc(0.5, 0.62, 0.14, 0, TAU); ctx.fill();
+  ctx.fillStyle = "#2b3a52";
+  ctx.beginPath(); ctx.moveTo(0, 1); ctx.lineTo(0, 0.78);
+  ctx.lineTo(0.22, 0.62); ctx.lineTo(0.44, 0.8); ctx.lineTo(0.66, 0.58);
+  ctx.lineTo(0.86, 0.76); ctx.lineTo(1, 0.68); ctx.lineTo(1, 1); ctx.closePath(); ctx.fill();
+}
+function scratchHarbour(ctx, now, lit) {
+  ctx.fillStyle = "#181f3c"; ctx.fillRect(0, 0, 1, 1);
+  ctx.fillStyle = "#222c50";
+  const hs = [0.34, 0.5, 0.28, 0.46, 0.38, 0.56, 0.3];
+  hs.forEach((h, i) => ctx.fillRect(0.06 + i * 0.13, 0.74 - h, 0.1, h));
+  ctx.fillStyle = `rgba(232,168,106,${0.6 + lit * 0.4})`;
+  hs.forEach((h, i) => {
+    for (let r = 0; r < 3; r++) {
+      if ((i + r) % 2) continue;
+      ctx.fillRect(0.085 + i * 0.13, 0.74 - h + 0.05 + r * 0.09, 0.022, 0.032);
+    }
+  });
+  ctx.fillStyle = "#2c4468"; ctx.fillRect(0, 0.74, 1, 0.26);
+  ctx.fillStyle = `rgba(232,168,106,${0.25 + lit * 0.3})`;
+  hs.forEach((h, i) => ctx.fillRect(0.085 + i * 0.13, 0.74, 0.022, 0.2));
+}
+
+/* ==================== G25 Connect the Dots ==================== */
+// Sequenced point-to-point reaching with a picture as the payoff: hold on
+// dot 1, then 2, then 3, and a line follows the hand until the shape appears.
+// Clinically this is the opposite of the coverage games - every movement is a
+// discrete reach to a KNOWN target, which is what makes it useful for
+// accuracy and for patients who need a next step they can see rather than a
+// field to sweep.
+//
+// The dots are laid inside the patient's OWN envelope (each one pulled
+// radially in to `spread × envAt` if the shape would push it past their
+// reach), so a picture is never partly unreachable. Levels add dots and
+// shrink the capture radius together, exactly like the paper puzzles that go
+// 1-10, 1-30, 1-150: the same drawing, asked for more precisely.
+const DOT_LEVELS = [
+  // dots = how many points the outline is resampled to
+  // radius = capture radius, SW ; spread = fraction of the envelope used
+  { dots: 10, radius: 0.30, spread: 0.60 },
+  { dots: 14, radius: 0.26, spread: 0.70 },
+  { dots: 20, radius: 0.22, spread: 0.80 },
+  { dots: 26, radius: 0.19, spread: 0.90 },
+  { dots: 34, radius: 0.16, spread: 1.00 },
+  { dots: 44, radius: 0.14, spread: 1.00 },
+];
+const DOT_MAX = DOT_LEVELS.length;
+
+// Outlines in a 0..1 box, y DOWN (so they read like a drawing when written).
+// Dense enough that resampling to any dot count keeps the shape.
+function starOutline() {
+  const p = [];
+  for (let i = 0; i < 10; i++) {
+    const a = -Math.PI / 2 + i * Math.PI / 5;
+    const r = i % 2 ? 0.19 : 0.47;
+    p.push([0.5 + Math.cos(a) * r, 0.5 + Math.sin(a) * r]);
+  }
+  return p;
+}
+function heartOutline() {
+  const p = [];
+  for (let i = 0; i < 36; i++) {          // open ring: the class closes it
+    const t = i / 36 * TAU;
+    const x = 16 * Math.sin(t) ** 3;
+    const y = -(13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t));
+    p.push([0.5 + x / 38, 0.5 + y / 38]);
+  }
+  return p;
+}
+const DOT_PUZZLES = [
+  { name: "a star", pts: starOutline() },
+  { name: "a house", pts: [[0.18, 0.92], [0.18, 0.46], [0.5, 0.14], [0.82, 0.46], [0.82, 0.92]] },
+  { name: "a heart", pts: heartOutline() },
+  { name: "a boat", pts: [[0.14, 0.72], [0.86, 0.72], [0.72, 0.9], [0.28, 0.9], [0.14, 0.72],
+                          [0.5, 0.72], [0.5, 0.14], [0.8, 0.66], [0.5, 0.66]] },
+  { name: "a fish", pts: [[0.2, 0.5], [0.42, 0.3], [0.66, 0.3], [0.8, 0.42], [0.96, 0.24],
+                          [0.96, 0.76], [0.8, 0.58], [0.66, 0.7], [0.42, 0.7]] },
+  { name: "a tree", pts: [[0.5, 0.1], [0.68, 0.4], [0.58, 0.4], [0.76, 0.66], [0.6, 0.66],
+                          [0.6, 0.9], [0.4, 0.9], [0.4, 0.66], [0.24, 0.66], [0.42, 0.4], [0.32, 0.4]] },
+];
+
+// Turning an outline into N dots. Corners FIRST: a picture is recognisable
+// because of its corners, and even arc-length spacing walks straight past
+// them - a star resampled to 8 evenly spaced points stops looking like a
+// star. So every vertex is a dot, and the spare dots go to the longest edges,
+// which is exactly where a long undotted line looks wrong. N is exact either
+// way, so the same drawing at 10 dots and at 44 is the same drawing.
+function dotsFromOutline(pts, n) {
+  if (n <= pts.length) {
+    const out = [];
+    for (let k = 0; k < n; k++) out.push(pts[Math.round(k * pts.length / n) % pts.length]);
+    return out;
+  }
+  const out = pts.slice();
+  while (out.length < n) {
+    let bi = 0, bd = -1;
+    for (let i = 0; i < out.length; i++) {
+      const a = out[i], b = out[(i + 1) % out.length];
+      const d = Math.hypot(a[0] - b[0], a[1] - b[1]);
+      if (d > bd) { bd = d; bi = i; }
+    }
+    const a = out[bi], b = out[(bi + 1) % out.length];
+    out.splice(bi + 1, 0, [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]);
+  }
+  return out;
+}
+
+export class ConnectDots extends GameBase {
+  id = "dots";
+  setup() {
+    this.tips = {
+      objective: "Hold your hand on the next glowing dot.",
+      miss: "Take your time — the next dot is the bright one.",
+    };
+    this.level = Math.max(1, Math.min(DOT_MAX, this.opts.level || 1));
+    this.picturesDone = 0;
+    this.doneAt = 0;
+    this._newPuzzle();
+    this.tellStory(STORIES.dots);
+  }
+
+  _lv() { return DOT_LEVELS[this.level - 1]; }
+
+  _newPuzzle() {
+    const lv = this._lv();
+    this.puzzle = DOT_PUZZLES[(this.level - 1 + this.picturesDone) % DOT_PUZZLES.length];
+    const raw = dotsFromOutline(this.puzzle.pts, lv.dots);
+    // the picture's box: the axis reaches this patient actually has, so a
+    // lopsided envelope gets a lopsided (but complete) picture rather than a
+    // small symmetrical one
+    const hw = Math.min(this.envAt(0), this.envAt(Math.PI)) * lv.spread;
+    const hh = Math.min(this.envAt(Math.PI / 2), this.envAt(-Math.PI / 2)) * lv.spread;
+    const c = this.canvas, M = 60;
+    this.dots = raw.map(([ux, uy]) => {
+      let x = CENTER.x + (ux - 0.5) * 2 * hw;
+      let y = CENTER.y - (uy - 0.5) * 2 * hh;        // outlines are y-down
+      // never place a dot past the measured reach in its own direction: the
+      // corners of any box sit further out than the axes do
+      const dx = x - CENTER.x, dy = y - CENTER.y;
+      const r = Math.hypot(dx, dy), th = Math.atan2(dy, dx);
+      const lim = lv.spread * this.envAt(th);
+      if (r > lim && r > 0) { x = CENTER.x + dx / r * lim; y = CENTER.y + dy / r * lim; }
+      // and keep it on screen, still body-anchored
+      const px = this.toPx({ x, y });
+      if (px.x < M || px.x > c.width - M || px.y < M || px.y > c.height - M) {
+        px.x = Math.min(Math.max(px.x, M), c.width - M);
+        px.y = Math.min(Math.max(px.y, M), c.height - M);
+        return this.t.pxToRel(px, c);
+      }
+      return { x, y };
+    });
+    this.idx = 0;
+    this.trail = [];
+    this._dwells = {};
+  }
+
+  update(now) {
+    // the finished picture gets a moment on screen before the next one
+    if (this.doneAt) {
+      if (now - this.doneAt > 3200) {
+        this.doneAt = 0;
+        this.picturesDone++;
+        if (this.level < DOT_MAX) {
+          this.level++;
+          this.say(`Level ${this.level}. More dots this time.`);
+        } else this.say("Another picture.");
+        this._newPuzzle();
+      }
+      return;
+    }
+    const lv = this._lv();
+    const target = this.dots[this.idx];
+    if (!target) return;
+    const inside = this.handNear(target, lv.radius);
+    // squeeze is a shortcut, never a requirement: a patient with no grasp
+    // still completes every dot on the hold alone
+    const grabbed = inside && this.t.handClosed(this.side);
+    const f = this.dwellProgress(`d${this.idx}`, inside, now);
+    if (f >= 1 || grabbed) {
+      this.trail.push({ ...target });
+      this.idx++;
+      const th = Math.atan2(target.y - CENTER.y, target.x - CENTER.x);
+      this.hit({ reachFrac: Math.hypot(target.x - CENTER.x, target.y - CENTER.y) / (this.envAt(th) || 1) });
+      this.burst(target, "#fff6d8");
+      if (this.idx >= this.dots.length) {
+        this.doneAt = now;
+        audio.fanfare();
+        this.say(`It's ${this.puzzle.name}!`);
+      }
+    }
+  }
+
+  drawBg(ctx, c) {
+    const g = ctx.createRadialGradient(c.width / 2, c.height * 0.45, 60, c.width / 2, c.height * 0.45, c.height * 0.95);
+    g.addColorStop(0, "#2f2c58"); g.addColorStop(1, "#15152f");
+    ctx.fillStyle = g; ctx.fillRect(0, 0, c.width, c.height);
+    twinkles(ctx, c);
+  }
+
+  draw(ctx, c, now) {
+    const lv = this._lv();
+    const sw = this.sw();
+    const done = this.doneAt > 0;
+
+    // the line drawn so far — and, once finished, closed and softly filled so
+    // the shape reads as a picture rather than as a path
+    if (this.trail.length > 1) {
+      const P = this.trail.map(p => this.toPx(p));
+      ctx.save();
+      if (done) {
+        ctx.beginPath();
+        P.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+        ctx.closePath();
+        ctx.fillStyle = "rgba(232,168,106,0.18)";
+        ctx.fill();
+      }
+      ctx.strokeStyle = done ? "#9fc08a" : "#e8a86a";
+      ctx.lineWidth = 6; ctx.lineCap = "round"; ctx.lineJoin = "round";
+      ctx.shadowColor = done ? "rgba(159,192,138,0.7)" : "rgba(232,168,106,0.6)";
+      ctx.shadowBlur = 18;
+      ctx.beginPath();
+      P.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      if (done) ctx.closePath();
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // Only the NEXT dot is bright, and it carries its number. Lighting every
+    // dot equally is what makes a paper puzzle confusing; here there is
+    // always exactly one thing to go to.
+    ctx.save();
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.font = `800 ${Math.round(c.height * 0.022)}px Nunito, sans-serif`;
+    for (let i = 0; i < this.dots.length; i++) {
+      const p = this.toPx(this.dots[i]);
+      const past = i < this.idx, next = i === this.idx && !done;
+      if (next) {
+        const pulse = Math.sin(now / 360) * 0.5 + 0.5;
+        ctx.strokeStyle = `rgba(232,168,106,${0.45 + pulse * 0.4})`;
+        ctx.lineWidth = 4; ctx.setLineDash([8, 9]);
+        ctx.beginPath(); ctx.arc(p.x, p.y, lv.radius * sw, 0, TAU); ctx.stroke();
+        ctx.setLineDash([]);
+        // read the dwell, never advance it: dwellProgress() has side effects
+        // and calling it from draw() would count the hold twice a frame
+        const f = Math.min(1, (this._dwells?.[`d${i}`]?.acc ?? 0) / A11Y.dwellMs);
+        if (f > 0) {
+          ctx.strokeStyle = "#9fc08a"; ctx.lineWidth = 6;
+          ctx.beginPath(); ctx.arc(p.x, p.y, lv.radius * sw + 9, -Math.PI / 2, -Math.PI / 2 + TAU * f); ctx.stroke();
+        }
+        const gd = ctx.createRadialGradient(p.x, p.y, 2, p.x, p.y, 20);
+        gd.addColorStop(0, "#fff6d8"); gd.addColorStop(1, "#e8a86a");
+        ctx.fillStyle = gd;
+        ctx.shadowColor = "rgba(232,168,106,0.9)"; ctx.shadowBlur = 26;
+        ctx.beginPath(); ctx.arc(p.x, p.y, 13, 0, TAU); ctx.fill();
+        ctx.shadowBlur = 0;
+      } else {
+        ctx.fillStyle = past ? "rgba(159,192,138,0.9)" : "rgba(244,236,221,0.34)";
+        ctx.beginPath(); ctx.arc(p.x, p.y, past ? 8 : 6, 0, TAU); ctx.fill();
+      }
+      if (!past && !done) {
+        ctx.fillStyle = next ? "#1b1b3a" : "rgba(244,236,221,0.5)";
+        ctx.fillText(String(i + 1), p.x, p.y + (next ? 0 : -18));
+      }
+    }
+    ctx.restore();
+    this.drawTimerWhisper(ctx, c, now);
+  }
+
+  extra() {
+    return {
+      dotsLevel: this.level,
+      picturesFinished: this.picturesDone,
+      dotsPlaced: this.idx,
+      dotRadiusSW: this._lv().radius,
+    };
   }
 }
 
@@ -4089,25 +4789,26 @@ export const GAMES = [
   { id: "lantern", name: "Lantern Release", cls: LanternRelease, disabled: true, trains: "Carry and release" },
   { id: "pong", name: "Arc Pong", cls: ArcPong, trains: "Continuous control" },
   { id: "rhythm", name: "Melody Tiles", cls: MelodyTiles, disabled: true, trains: "Timed reaching" },
-  { id: "boxes", name: "Harbor Crates", cls: HarborCrates, trains: "Grasp and carry" },
+  { id: "boxes", name: "Harbor Crates", cls: HarborCrates, disabled: true, trains: "Grasp and carry" },
   { id: "compass", name: "Compass Rose", cls: CompassRose, disabled: true, trains: "Center-out reach" },
-  { id: "echo", name: "Echo Reach", cls: EchoReach, trains: "Position sense" },
+  { id: "echo", name: "Echo Reach", cls: EchoReach, disabled: true, trains: "Position sense" },
   // --- Aug 2026 additions: Tier 1 (no new tracking needed) ---
-  { id: "lens", name: "Lighthouse Lens", cls: LighthouseLens, trains: "Sweeping coverage" },
-  { id: "crane", name: "Crane Keeper", cls: CraneKeeper, trains: "Hold high + squeeze" },
-  { id: "feather", name: "Feather Lantern", cls: FeatherLantern, trains: "Slow lowering" },
-  { id: "buoys", name: "Two Lights", cls: TwoLights, trains: "Speed and accuracy" },
-  { id: "oars", name: "Ferry Oars", cls: FerryOars, trains: "Both arms together" },
-  { id: "ferry", name: "Night Ferry", cls: NightFerry, trains: "Steering control" },
-  { id: "stars", name: "Falling Stars", cls: FallingStars, trains: "Quick sweeps" },
-  { id: "flare", name: "Signal Flare", cls: SignalFlare, trains: "Aim, hold, release" },
-  { id: "shelf", name: "Pantry Shelves", cls: PantryShelves, trains: "Lift to height" },
-  { id: "windows", name: "Light Every Window", cls: LightWindows, trains: "Scanning reach" },
-  { id: "sorting", name: "Harbor Lights", cls: HarborSorting, trains: "Think and reach" },
+  { id: "lens", name: "Scratch Cards", cls: LighthouseLens, trains: "Sweeping coverage" },
+  { id: "dots", name: "Connect the Dots", cls: ConnectDots, trains: "Point-to-point reach" },
+  { id: "crane", name: "Crane Keeper", cls: CraneKeeper, disabled: true, trains: "Hold high + squeeze" },
+  { id: "feather", name: "Feather Lantern", cls: FeatherLantern, disabled: true, trains: "Slow lowering" },
+  { id: "buoys", name: "Two Lights", cls: TwoLights, disabled: true, trains: "Speed and accuracy" },
+  { id: "oars", name: "Ferry Oars", cls: FerryOars, disabled: true, trains: "Both arms together" },
+  { id: "ferry", name: "Night Ferry", cls: NightFerry, disabled: true, trains: "Steering control" },
+  { id: "stars", name: "Falling Stars", cls: FallingStars, disabled: true, trains: "Quick sweeps" },
+  { id: "flare", name: "Signal Flare", cls: SignalFlare, disabled: true, trains: "Aim, hold, release" },
+  { id: "shelf", name: "Pantry Shelves", cls: PantryShelves, disabled: true, trains: "Lift to height" },
+  { id: "windows", name: "Light Every Window", cls: LightWindows, disabled: true, trains: "Scanning reach" },
+  { id: "sorting", name: "Harbor Lights", cls: HarborSorting, disabled: true, trains: "Think and reach" },
   // --- Tier 2 (hand-model dependent: hand should be nearer the camera) ---
-  { id: "teapot", name: "Teapot Turn", cls: TeapotTurn, trains: "Palm rotation" },
-  { id: "glide", name: "Firefly Glide", cls: FireflyGlide, trains: "Gentle squeeze control" },
-  { id: "bloom", name: "Night Blooms", cls: NightBlooms, trains: "Hand shaping" },
-  { id: "pinch", name: "Firefly Pinch", cls: FireflyPinch, trains: "Fingertip pinch" },
-  { id: "rainbow", name: "Rainbow Crossing", cls: RainbowCrossing, trains: "Outward sweep + grasp" },
+  { id: "teapot", name: "Teapot Turn", cls: TeapotTurn, disabled: true, trains: "Palm rotation" },
+  { id: "glide", name: "Firefly Glide", cls: FireflyGlide, disabled: true, trains: "Gentle squeeze control" },
+  { id: "bloom", name: "Night Blooms", cls: NightBlooms, disabled: true, trains: "Hand shaping" },
+  { id: "pinch", name: "Firefly Pinch", cls: FireflyPinch, disabled: true, trains: "Fingertip pinch" },
+  { id: "rainbow", name: "Rainbow Crossing", cls: RainbowCrossing, disabled: true, trains: "Outward sweep + grasp" },
 ];

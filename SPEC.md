@@ -1,4 +1,4 @@
-# Upper-Limb Rehab Game Suite — Design Specification (v0.1 draft)
+# Upper-Limb Rehab Game Suite — Design Specification (v2, Aug 2026)
 
 Camera-tracked upper-limb rehabilitation for inpatient rooms: patient seated on
 bed/at desk, TV ~10–12 ft away, webcam (MediaPipe) or ZED 2 for tracking.
@@ -50,6 +50,32 @@ bridge absent → webcam + MediaPipe, unchanged. Staff drawer setting "Camera
 source" (Auto / Webcam only, device-level). Depth is not yet consumed in-game;
 a depth-aware envelope is the natural v3.
 
+**Depth is now consumed (Aug 2026).** The bridge streams `lm3` beside `lm` —
+the same joints in metres, camera frame — which `tracker._ingest3` /
+`hand3(side)` / `has3D` expose. The assessment turns it into a real workspace
+**volume**; a webcam has no depth, so the volume is simply absent there rather
+than estimated.
+
+**Who the tracker follows (Aug 2026).** Asking MediaPipe for a single pose
+means the model silently hands over whoever it scored highest *that frame*, so
+a therapist or a second patient in the room can become "the" body mid-round.
+It now runs at `numPoses: 3` and we pick the patient ourselves: cost = per-frame
+shoulder-midpoint displacement + shoulder-width mismatch + build ratio
+(torso/shoulder-width) mismatch, gated; no acceptable match means **pause,
+never swap**, and only after a grace window is a new (most central) person
+accepted. On the ZED the bridge does the same job better, because it has real
+positions: only bodies inside the **play volume** (`--play-near/--play-far`
+depth, `--play-width` about the camera axis) are candidates at all, so a
+bystander is excluded by *where they are* before any tracking reasoning gets a
+chance to prefer them; and each seat remembers a **build signature**
+(biacromial width, torso length, height, in metres, EMA-smoothed) so a patient
+who leaves and returns reclaims their own seat, which tracking ids cannot do.
+
+This is deliberately **not face recognition**. That would mean shipping an
+embedding model and storing patient biometrics — an IRB question, not a code
+change — for no gain in a room containing two or three people. Position and
+build separate them at zero cost.
+
 Grasp signal (v1 target): binary open/closed from hand-landmark finger
 curl, smoothed over ~300 ms. Recorded per event with position along the arc.
 
@@ -60,8 +86,18 @@ curl, smoothed over ~300 ms. Recorded per event with position along the arc.
     (shoulder→elbow) vs. the **trunk axis** (shoulder-mid→hip-mid). Matches
     goniometry and is immune to camera distance and trunk lean (a lean does
     not inflate measured shoulder ROM).
-  - **Shoulder-widths** for distances/sizes (hand offset, target radius),
+  - **Shoulder-widths (SW)** for distances/sizes (hand offset, target radius),
     measured live each frame → scale-invariant across sessions.
+  - **Arm lengths for reach demand (Aug 2026).** SW normalises camera
+    distance, but the arm-length/SW ratio varies ~1.2–1.7 between people and SW
+    is a *projected* width that shrinks a few percent when the trunk turns —
+    so "0.9 SW" is a different fraction of reach for different patients and
+    different postures. `tracker.armLenSW(side)` keeps arm length
+    (shoulder→elbow→wrist summed, bend-invariant) as a decaying session max;
+    the assessment stores it as `armLenSW` and each game start computes
+    `armScale = clamp(live/stored, 0.8..1.25)`, which the envelope lookup
+    applies. `rangeScale` therefore means the same fraction of *this* reach
+    every session.
   - Pixels are used only at render time (body units → screen) and for
     "in-frame" checks.
 - **Anchor:** all world geometry hangs off the shoulder midpoint, smoothed
@@ -76,20 +112,101 @@ curl, smoothed over ~300 ms. Recorded per event with position along the arc.
     >~15%, or tracking loss): **graceful pause** — timer freezes, no misses
     counted, scene dims to a waiting state; auto **re-baseline** after ~2 s
     of stability, then resume. No staff action needed.
+  - *Distance change below that threshold (Aug 2026):* the render frame's
+    **origin** stays locked for the round (a reach must never drag the world
+    with it) but its **scale** re-snaps after ~1.5 s of >10% change — otherwise
+    rolling the chair back quietly makes every target a larger fraction of the
+    patient's reach. A re-snap requires the **torso length** to have moved the
+    same way: biacromial width shortens on trunk yaw without the patient
+    moving, torso length barely does, so a turn can never be mistaken for a
+    distance change.
 - Compensation references (trunk position/rotation, shoulder-ear distance)
   are relative to the patient's own recent baseline, re-baselined at round
   start and after any pause — never to a fixed spot in the room.
 
 ## 4. Assessment (the shared "Clinical" step)
 
-> **v1.1 (per the approved design exploration, option 2a):** the multi-step
-> Dawn Painter flow was replaced by a **single-screen circle trace** — "Draw
-> the biggest circle you can." The traced circle IS the ROM readout
-> (horizontal + vertical in one ~30 s motion, 16-direction envelope +
-> arm-elevation min/max in degrees), followed by 3 "squeeze to grab the
-> light" points on the traced circle for grasp + hold-stability. Path jitter
-> feeds target size; loop time feeds target lifetime. The original Dawn
-> Painter protocol below is retained for reference.
+> **v2 (Aug 2026) — the AROM protocol as built.** One screen, **both arms
+> back to back, left then right, with nothing to choose.** Asking a patient
+> which arm to measure is a decision they should not have to make, and the
+> suite needs both anyway: the unaffected arm is the comparison the therapist
+> reads the affected one against.
+>
+> 1. **Hold still** → the resting hand position becomes the work centre
+>    (`profile.center`). The rest position IS zero; limited-motion patients
+>    never travel to a preset spot.
+> 2. **Squeeze calibration** — "open wide… now squeeze" captures this hand's
+>    own curl range (`tracker.setCurlCal` + `profile.curlCal`), so a hand that
+>    can only partially close still registers a squeeze. Skipped gracefully
+>    without hand-model detection.
+> 3. **Demo** — a figure on screen sweeps the full circle before the patient
+>    is asked for it, at the pace to copy. Words alone make an older patient
+>    translate "the biggest circle you can" into a movement; showing it
+>    removes that step. Nothing is measured while they watch.
+> 4. **Sweep — 90 s of free reach**, and the patient is told plainly why:
+>    *"wherever you reach is where your targets will appear."* It ends early
+>    only when there is genuinely nothing left to find (14 of 16 directions
+>    covered **and** no new ground for 20 s), so nobody is rushed off the
+>    measurement everything else is scaled from, nor made to flail at a
+>    finished one. Not 16 of 16: the directions straight below the work centre
+>    sit inside the minimum recording radius and can never register.
+> 5. **Six held positions** — `out`, `up-out`, `overhead`, `up-across`,
+>    `across`, `down-out`, mirrored per arm so both arms are asked for the same
+>    *movements* rather than the same screen spots. Each is a reach to 95% of
+>    the true arm-length boundary, **held 5 s**, with an **open-and-close of
+>    the hand** cued partway into the hold. Progress is scored on the
+>    *projection* onto the direction, so drifting off-axis can never look like
+>    a longer reach. The sweep records where the patient *went*; only this
+>    records whether they *can* get to the edge and work there.
+>
+> **Reaching is the pass/fail and grasping never is** — a patient with no hand
+> function completes every position — and a short reach is a measurement, not
+> a failure on screen. Nobody is cut off mid-reach: the per-position clock only
+> starts biting once the reach has stopped growing.
+>
+> This replaced the separate 3-orb grasp phase entirely. `profile.grasp` is now
+> a *view* of the held positions (one source of truth), plus
+> `reachablePositions` / `graspPositions` — knowing **where** a patient can
+> grasp, not just whether, is what game allocation needs.
+>
+> **Workspace readouts.** All computed from the *unfloored* envelope: the
+> stored envelope is floored so games always have somewhere to put a target,
+> and area must not inherit that or every limited patient would be credited
+> with the floor.
+> - `areaSW2` — shoelace over the 16 bin triangles; × shoulder-cm² for cm².
+> - `coverage` — area ÷ π·armLen², the fraction of the arm's full reachable
+>   disc. A full-reach circle reads 97%; the 2.6% is the inscribed 16-gon,
+>   which is honest rather than a rounding error.
+> - `quadrants` — `{upOut, upAcross, downAcross, downOut}`, named for the
+>   assessed arm. Which quadrant is lost is the reading that matters in
+>   hemiparesis; raw screen quadrants would compare the two arms wrongly.
+> - `volumeM3` + `depthRangeM` — **ZED only.** A per-sector prism sum: each
+>   wedge of the painted area extruded by how far the hand actually travelled
+>   forward and back *in that sector*, rather than one global depth stretched
+>   over the whole shape.
+>
+> **A stored ROM is reused, never redone.** An arm that already has a profile
+> is skipped and its saved measurements stand; only an explicit re-measure
+> replaces it, and the replaced profile still goes to history. Re-measuring
+> **one arm** is the common case — range changes on the affected side while the
+> other stays put, and making a therapist sit a patient through six minutes to
+> refresh three numbers is how a re-measure stops happening at all. Staff drawer
+> offers *Measure both arms* and *Re-measure this arm*; the profile screen's
+> button redoes the arm it is showing.
+>
+> **Finishing lands on a comparison, not the menu.** Per arm: the previous
+> envelope drawn dashed under the current one *at a shared scale* (scaling each
+> to its own box would make a workspace that grew look identical to one that
+> did not), then arc / area / coverage / volume / longest reach / edges reached
+> / grasped-there as `was → now` with a signed delta. With no previous
+> measurement every row reads *baseline*, never a blank — a first assessment
+> should not look like missing data. A re-measure that never shows the
+> difference is just a delay.
+>
+> **Cost:** ~3 min per arm, ~6 min for both. That is a lot for this population;
+> the knobs are the sweep duration and the hold duration.
+>
+> The original Dawn Painter protocol below is retained for reference.
 
 Run per arm, first session and re-run any session (doubles as monitoring, per
 RGS daily calibration). **Gamified as "Dawn Painter"** — the patient's sweeps
@@ -110,21 +227,52 @@ Protocol (one plane, ~3 min):
    movement time, endpoint error.
 
 ### Profile schema (per patient, per arm, per plane)
+As built (v2, Aug 2026):
 ```json
 {
-  "arm": "right", "plane": "frontal-shoulder", "date": "...",
-  "arcMinDeg": -20, "arcMaxDeg": 95,
-  "holdStability": [0.9, 0.7, 0.3],
-  "grasp": { "available": true, "byPosition": [true, true, false], "closeTimeMs": 640 },
-  "meanRT": 0.62, "meanMT": 1.1, "endpointErr": 0.14,
+  "arm": "right", "date": "...",
+  "center": { "x": 0.02, "y": 0.21 },
+  "envelope": [16 radii, SW],
+  "covered": 0.81,
+  "armLenSW": 1.42,
+  "areaSW2": 2.35, "coverage": 0.37,
+  "quadrants": { "upOut": 0.62, "upAcross": 0.21, "downAcross": 0.11, "downOut": 0.48 },
+  "volumeM3": 0.0413, "depthRangeM": 0.32, "shoulderM": 0.38,
+  "arcMinDeg": 22, "arcMaxDeg": 118, "arcMeasured": true,
+  "extremes": [
+    { "key": "out", "deg": 0, "reached": true, "frac": 1.0, "reachSW": 1.31,
+      "holdMs": 5010, "stability": 0.82,
+      "squeeze": true, "release": true, "graspOk": true }
+  ],
+  "reachablePositions": ["out", "up-out", "down-out"],
+  "graspPositions": ["out", "up-out"],
+  "grasp": [ { "deg": 0, "key": "out", "ok": true, "stability": 0.82, "squeeze": true } ],
+  "curlCal": { "lo": 1.08, "hi": 1.91 },
+  "jitter": 0.11, "loopSeconds": 11.4,
   "params": { "rangeScale": 0.7, "radius": 0.30, "lifetime": 4.2 }
 }
 ```
+`params` here is the **assessment-seeded starting difficulty** and is
+deliberately never overwritten by the DDA — see §5.
 
-## 5. Difficulty (shared across all games)
+## 5. Difficulty (per game, per arm)
 
 - **Initial** params from assessment: target zone = `rangeScale ×` measured
   arc; target size from endpoint error; target lifetime from RT + MT.
+- **Stored per game and per arm (Aug 2026).** One shared set across every game
+  meant Pong's long rallies dragged Scratch Cards' targets around and vice
+  versa: the games make different demands, and a patient doing well at one is
+  not necessarily ready for a harder version of another. A game never played
+  falls back to the profile's params, and **`profile.params` is deliberately
+  never overwritten by the DDA** — it stays the assessment-seeded value, so a
+  first play starts from what the patient was measured at rather than
+  inheriting wherever the last game drifted to. The therapist profile screen
+  shows a *Difficulty by game* panel, so "why is Pong harder than it was" has
+  an answer on screen.
+- **Ladder levels are separate from the DDA.** Scratch Cards and Connect the
+  Dots progress on levels (stored per patient, resumed between sessions);
+  Pong stores a skill-unlock level. Where a game has a ladder, the ladder is
+  the difficulty progression and the DDA is not fighting it.
 - **DDA between rounds** (Zhang/Cameirão rule): success >70% → harder,
   <50% → easier, else hold. When easing, use miss locations: mostly misses
   near arc extremes → shrink `rangeScale`; otherwise → bigger/slower targets.
@@ -315,12 +463,37 @@ arcs used in bimanual.
   at the next paddle contact.
 - **Flat flight:** vertical speed capped at 38% of horizontal; AI aims near
   the lane middle. Rallies cross in shallow diagonals rather than ricocheting.
-- **Long-rally resolution ("the sleepy star"):** in vs-AI modes a rally past
-  75 s visibly tires the AI (reaction gain and speed fade, sleep marks
-  appear); past 90 s it drifts to the lane middle and can no longer chase, so
-  the patient wins the point through ordinary physics — never a visible timer.
-  Spoken as "You wore the little star out!". No AI in bimanual/companion, so
-  no cap there.
+- **Match to 5 points (Aug 2026):** reaching five ends the round on a
+  scoreline instead of on a clock — a match that finishes on a scoreline
+  finishes, one that finishes on a clock just stops. The AI can win; an
+  opponent that cannot win is not an opponent. Losing is never framed as the
+  patient's failure ("Good rallies — go again?").
+- **Serve from the middle, travelling to the opponent (Aug 2026):** the point
+  opens with the patient's ball on its way out rather than one arriving at
+  them.
+- **Long-rally resolution — the misread (Aug 2026, replaces "the sleepy
+  star"):** the old behaviour faded the AI's reactions and then drifted it to
+  the lane middle, which reads as being *handed* the point rather than winning
+  it. Instead the star now loses the way a person does — it misreads one shot.
+  From 80 s (backstop 85 s) the next ball heading its way is steered to the
+  corner *away* from it, and it holds the side the ball came from, anticipating
+  a return to where the ball just was: the error people actually make. Then it
+  breaks late and lunges at full speed. Full speed matters — a natural miss is
+  a fast, confident, *wrong* commitment, not a sluggish one.
+  The lunge is released on **time, not on a fixed fraction of the flight**: it
+  goes when there is just barely enough left to get back, targeting a spot 0.3
+  of a paddle past the ball (with a rail-folding arrival predictor). A fixed
+  fraction leaves the paddle still travelling when the ball arrives and stops
+  it ~1.5 paddle-heights away, which reads as "wasn't close" rather than "so
+  nearly got it". Simulated over 480 configurations: **0 accidental saves,
+  median miss 0.29 paddle-heights**, 99% within one paddle.
+  It fires once per round; a misread that did not pay off (the patient missed
+  first) is dropped at the serve rather than banked. Tiredness survives as
+  capped flavour and the sleep marks are **suppressed during a misread** — a
+  sleepy cue over a lunge would say the point was given rather than won.
+  *Interaction to watch:* a 5-point game usually finishes well before 80 s, so
+  the misread only fires in genuinely long matches. Lower the trigger if it
+  should be the normal ending. No AI in bimanual/companion, so none there.
 - **Round-1 tutorial doubling as a speed assessment:** replaces the story.
   Step 1: touch a pulsing star at the lane top, then bottom, five times —
   teaches the mapping AND measures paddle speed (median top↔bottom traversal,
@@ -368,19 +541,85 @@ steering, ballistic swipes, pronation/supination, pinch, cognitive sorting…)
 are specified in `GAME_IDEAS.md` and implemented in `games.js` with a
 `trains:` label per card so therapists can prescribe by movement.
 
+### Enabled set (Aug 2026, by request)
+Only **the assessment, Arc Pong, Scratch Cards and Connect the Dots** are
+enabled. Every other game carries a `disabled` flag — the code is all still
+there, so re-enabling one is deleting that flag.
+
+### G10 — "Scratch Cards" (levelled coverage, was Lighthouse Lens)
+The open hand scrapes foil off a hidden picture. Sweeping beats point-visiting
+for coverage work, and a card that has to be *cleared* makes the sweep
+self-directing: the patient can see exactly what they have missed.
+- **The level is the difficulty ladder, not the DDA.** Six levels widen the
+  card across more of the patient's own measured envelope *and* shrink the
+  scratcher together (0.30 → 0.11 SW), so demand moves from big sweeps close in
+  to accurate sweeps at full stretch — literally "the eraser gets smaller with
+  levels".
+- Every flake sits inside the measured envelope and on screen, so "clear the
+  card" is never quietly impossible.
+- One picture per level, drawn into the card's own box so it fits whatever
+  shape that patient's reach turns out to be. Level stored per patient and
+  resumed.
+- **What it borrows from commercial scratch cards, and what it refuses.**
+  Anticipation and reveal are genuinely good mechanics and are the whole of
+  what is taken. The rest of that playbook — variable-ratio rewards, near-miss
+  teasing, prize framing — exists to keep somebody playing past the point they
+  meant to stop. In a clinical tool for older stroke patients that is a harm,
+  not a mechanic. The reward is the picture, it is certain, and it arrives when
+  the work is done.
+
+### G26 — "Connect the Dots" (sequenced point-to-point reach)
+Hold on dot 1, then 2, then 3, and a line follows the hand until the picture
+closes. The opposite of the coverage games: every movement is a discrete reach
+to a *known* target, which is what makes it useful for accuracy and for
+patients who need a next step they can see rather than a field to sweep.
+- **Levels 10 → 44 dots with a shrinking capture radius** — the same drawing
+  asked for more precisely, like the paper puzzles that go 1-10 / 1-30 / 1-150.
+- **Every outline vertex is a dot**, and spare dots go to the longest edges.
+  Even arc-length spacing walks straight past corners, and a star resampled to
+  8 evenly spaced points stops looking like a star; corners are what make a
+  picture recognisable.
+- Dots are laid in the patient's own envelope and each is pulled radially in to
+  `spread × envelope` if the picture's box would push it past their reach — the
+  corners of any box sit further out than its axes — so a picture is never
+  partly unreachable.
+- **Only the next dot is lit and numbered.** Lighting them all is what makes a
+  paper puzzle confusing; here there is always exactly one thing to go to.
+  Squeeze is a shortcut over the dwell, never a requirement.
+
 ### Orientation rule (all games)
 Layouts mirror by trained arm: Pong paddle side, Lantern carries cross the
 midline from the trained side, Harbor Crates source side, Compass/Echo home
 position, Star Cascade lane order.
 
-Session flow: pick arm → (Dawn Painter if due) → therapist or patient picks a
-game → rounds with DDA until stop rule (fatigue check / time / patient exit).
+Session flow: login → welcome/framing → (AROM assessment if an arm is
+unmeasured, or an explicit re-measure) → previous-vs-current comparison →
+therapist or patient picks a game → rounds with per-game DDA until stop rule
+(fatigue check / time / patient exit).
 
 ## 8. Data & therapist view
 
 - Per round: game, params, hit rate, kinematic metrics above, grasp events.
-- Trends screen: arc range over sessions, % arc used, smoothness, grasp map.
+- Trends screen: arc range over sessions, % arc used, smoothness, reach & grasp
+  map over the six held positions, workspace area/coverage/volume, and
+  difficulty by game.
 - Export JSON (v1); CSV later. All local; no PHI beyond a chosen ID string.
+- **Therapist contact (Aug 2026).** A static page cannot send email, and the
+  two alternatives both fail this project: a third-party email API needs its
+  key embedded in a public page and routes patient data through somebody else's
+  server, and a `mailto:` link only opens a client and waits for a human. So
+  mail goes the way body tracking does — through a small local service
+  (`tools/mail_bridge.py`) that the clinic machine runs beside the game. The
+  SMTP credential lives in a gitignored config read only by that process and
+  never reaches the browser. Staff drawer gets *Send test email* (connectivity
+  + diagnostics), *Report a problem* (typed description + camera/tracking/
+  browser diagnostics, no PHI), and *Email progress* (the arm's assessment,
+  workspace metrics, edges reached, grasp, recent rounds, compensation). With
+  the relay down every button falls back to a prefilled `mailto:` so nothing
+  dead-ends.
+- **Nothing sends automatically** — not on login, not at round end. Patient
+  data leaving the machine is always a deliberate press, which is a consent
+  question and not a feature to optimise away.
 
 ## 9. Milestones
 
@@ -392,12 +631,32 @@ game → rounds with DDA until stop rule (fatigue check / time / patient exit).
 3. **M3 — Grasp R&D:** wrist-crop hand tracking at distance; fallback dwell.
 4. **M4 — Drift + Lantern Release** (grasp-dependent stages gated on M3).
 5. **M5 — Ember Watch + reward economy across games.**
-6. **M6 — ZED 2 backend** ✅ shipped as the localhost bridge (see §3);
-   second plane (toward-TV flexion) still open — the bridge streams 2D today,
-   so depth-plane games are the remaining work.
+6. **M6 — ZED 2 backend** ✅ shipped as the localhost bridge (see §3).
+   Depth is now consumed: the bridge streams metric `lm3` and the assessment
+   reports a real workspace volume. Depth-plane *games* (toward-TV flexion)
+   remain the open work.
+7. **M7 — AROM v2** ✅ both arms, demo, 90 s free reach, six held positions
+   with grasp, workspace area/volume/coverage/quadrants, stored-and-reused ROM
+   with a previous-vs-current comparison (see §4).
+8. **M8 — Identity & scale robustness** ✅ multi-body lock on the webcam path,
+   play-volume gate + build signature on the ZED, arm-length reach
+   normalisation, distance-aware frame rescaling (see §3, §3.1).
+9. **M9 — Per-game difficulty + ladders** ✅ difficulty stored per game and per
+   arm; Scratch Cards and Connect the Dots progress on levels (see §5).
 
 Open questions: exact joint-angle definition per plane (goniometry-matched?),
 pain-scale wording per clinical team, patient ID scheme, bilateral/mirror
 modes later? Since Pong's spin shot uses pronation/supination, should the
-assessment add a "rotate palm up/down" step at the grasp-test positions to
-record available rotation range?
+assessment add a "rotate palm up/down" step at the held positions to record
+available rotation range?
+
+New open questions (Aug 2026):
+- **Assessment length.** ~6 min for both arms is a lot for this population.
+  Needs a real session before the sweep and hold durations are fixed.
+- **Game allocation.** `reachablePositions` / `graspPositions` are recorded
+  but nothing consumes them yet. What is the rule — hide games that need a
+  position the patient cannot reach, or offer them at reduced range?
+- **Consent for the progress email.** Button-only and staff-initiated today.
+  If it ever becomes automatic, that is an IRB conversation first.
+- **`numPoses: 3` GPU cost.** Tracking three bodies is real work on a modest
+  clinic machine; needs an fps check on the target hardware.

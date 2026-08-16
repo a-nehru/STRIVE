@@ -59,9 +59,17 @@ export const store = {
 
   saveProfile(name, arm, profile) {
     const db = load(); const p = patient(db, name);
-    if (p.profiles[arm]) p.history[arm].push({
-      date: p.profiles[arm].date, arcMinDeg: p.profiles[arm].arcMinDeg,
-      arcMaxDeg: p.profiles[arm].arcMaxDeg, envelope: p.profiles[arm].envelope,
+    // The replaced profile is kept, and kept WHOLE enough to compare against:
+    // an arc and an envelope alone cannot answer "is their workspace bigger
+    // than last time", which is the question a re-measure exists to ask.
+    const old = p.profiles[arm];
+    if (old) p.history[arm].push({
+      date: old.date,
+      arcMinDeg: old.arcMinDeg, arcMaxDeg: old.arcMaxDeg,
+      envelope: old.envelope, covered: old.covered,
+      armLenSW: old.armLenSW, areaSW2: old.areaSW2, coverage: old.coverage,
+      volumeM3: old.volumeM3, quadrants: old.quadrants,
+      extremes: old.extremes, grasp: old.grasp,
     });
     p.history[arm] = p.history[arm].slice(-6);
     p.profiles[arm] = profile;
@@ -107,12 +115,51 @@ export const store = {
     if (p.unlocks.cursor.includes(id)) { p.equippedCursor = id; save(db); }
   },
 
-  // One-time real-world scale: therapist-measured shoulder width in cm.
-  // Everything internal stays in SW units; this only converts for display
-  // and export (SW × shoulderCm = cm).
-  setShoulderCm(name, cm) {
+  // Real-world scale: shoulder width in cm, tape-measured by the therapist
+  // OR auto-measured by the ZED's depth (auto = true). Everything internal
+  // stays in SW units; this only converts for display and export
+  // (SW × shoulderCm = cm). A manual tape measurement always wins: auto
+  // writes never overwrite it (shoulderCmAuto records which kind is stored).
+  setShoulderCm(name, cm, auto = false) {
     const db = load(); const p = patient(db, name);
+    if (auto && p.shoulderCm && !p.shoulderCmAuto) return;
     p.shoulderCm = (cm && cm > 0) ? cm : null;
+    p.shoulderCmAuto = !!p.shoulderCm && auto;
+    save(db);
+  },
+
+  // Difficulty, PER GAME and per arm. One shared set of params across every
+  // game meant Pong's long rallies dragged Scratch Cards' targets around and
+  // vice versa: the games make different demands, so a patient who is doing
+  // well at one is not necessarily ready for a harder version of another.
+  // A game never played keeps returning null, and the caller falls back to
+  // the assessment-seeded profile params — the assessment is still the seed
+  // for every game, it just stops being the only memory.
+  getGameParams(name, arm, gameId) {
+    return patient(load(), name).gameParams?.[arm]?.[gameId] || null;
+  },
+  saveGameParams(name, arm, gameId, params) {
+    const db = load(); const p = patient(db, name);
+    p.gameParams = p.gameParams || {};
+    p.gameParams[arm] = p.gameParams[arm] || {};
+    p.gameParams[arm][gameId] = { ...params, at: new Date().toISOString() };
+    save(db);
+  },
+  // everything a therapist would want to see at once: which games this
+  // patient has a difficulty on, and where each one sits
+  listGameParams(name, arm) {
+    const g = patient(load(), name).gameParams?.[arm] || {};
+    return Object.entries(g).map(([game, params]) => ({ game, ...params }));
+  },
+
+  // Per-game level, kept per patient so a ladder resumes where it stopped
+  // instead of restarting every session (the point of a ladder is that it
+  // remembers). `max` is the game's own cap.
+  getLevel(name, key) { return patient(load(), name).progress?.[key] || 1; },
+  setLevel(name, key, lvl, max = 9) {
+    const db = load(); const p = patient(db, name);
+    p.progress = p.progress || {};
+    p.progress[key] = Math.max(1, Math.min(max, lvl));
     save(db);
   },
 

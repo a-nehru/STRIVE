@@ -29,28 +29,51 @@ Stand or sit 1–2 m from the camera with your whole upper body visible.
 
 ## Flow
 
-1. **Assessment** (per arm — the RGS "calibration" / CFI "Clinical" step):
-   choose hand → hold still (rest position becomes the work center) →
-   squeeze calibration ("open wide… now squeeze") → **trace the biggest
-   circle you can** (the trace IS the ROM readout: a 16-direction reach
-   envelope + arm-elevation arc, path jitter, loop time) → 3 grasp orbs.
-   All distances are in *shoulder-width units relative to the shoulder
-   midpoint*, so results are camera-distance independent and comparable
-   across sessions.
-2. **Games** — a suite of ~20 short activities (reach, catch, carry, pong,
-   rowing, steering, wiping, pinching, external rotation…), each labeled
-   with the movement it trains so therapists prescribe by movement. Targets
-   only ever appear inside the assessed envelope. Round-1 tutorials are
-   learn-by-doing and skippable; Pong's doubles as a paddle-speed
-   measurement that sets its ball speed.
+1. **Assessment** (the RGS "calibration" / CFI "Clinical" step) — **both
+   arms, left then right, nothing to choose**: hold still (rest position
+   becomes the work center) → squeeze calibration ("open wide… now
+   squeeze") → **a figure demonstrates the movement** → **90 s of free
+   reach**, with the patient told plainly why ("wherever you reach is where
+   your targets will appear") → **six held positions**, each reached, held
+   5 s, and with an open-and-close of the hand.
+   Out of it: a 16-direction reach envelope, arm length, workspace **area**
+   and **coverage** (and a real **volume** on the ZED), which quadrant is
+   lost, the arm-elevation arc, and per position whether they could reach
+   there *and* grasp there. Reaching is the pass/fail and grasping never is,
+   so a patient with no hand function completes every position.
+   Distances are in *shoulder-width units relative to the shoulder midpoint*
+   and reach demand is scaled by *arm length*, so results are
+   camera-distance independent and comparable across sessions.
+   **Your ROM is stored and reused** — you never redo it just to start a
+   session. Re-measure one arm or both when you want to, and finishing shows
+   **previous vs current** side by side.
+2. **Games** — currently **Arc Pong**, **Scratch Cards** and **Connect the
+   Dots** are enabled (about twenty more are written and one flag away).
+   Each is labeled with the movement it trains so therapists prescribe by
+   movement, and targets only ever appear inside the assessed envelope.
+   Scratch Cards and Connect the Dots progress on levels that widen across
+   your own measured reach while the scratcher / capture radius shrinks.
+   Round-1 tutorials are learn-by-doing and skippable; Pong's doubles as a
+   paddle-speed measurement that sets its ball speed.
 3. **Round summary → dynamic difficulty adjustment → next round.**
+   Difficulty is remembered **per game and per arm** — the games make
+   different demands, so doing well at one does not make another harder.
 
 Story world: the village of **Strivealon**, whose stars the evil dark clouds
 are covering — play earns the stars back.
 
 **ZED 2 (optional):** run `python tools/zed_bridge.py` and the game uses the
 ZED SDK's depth-based skeleton instead of MediaPipe (staff-drawer "Camera
-source" setting; falls back to the webcam automatically).
+source" setting; falls back to the webcam automatically). With the ZED the
+assessment also reports a real workspace **volume**, and bystanders are
+excluded by a **play volume** — only people standing inside it can be
+players, so a therapist behind the patient is never picked up.
+
+**Therapist contact (optional):** run `python tools/mail_bridge.py` and the
+staff drawer can send a test email, a problem report with camera/tracking
+diagnostics, or a progress summary. The mail credential stays on the clinic
+machine and never reaches the browser. Nothing sends automatically — a
+person presses the button.
 
 ## How the papers map to the code
 
@@ -70,7 +93,8 @@ source" setting; falls back to the webcam automatically).
 | Reward **cycle** with consumption (points must buy something) | Star Shop: catcher & bubble skins; village lanterns light with lifetime stars |
 | Calm story for older stroke population | Night harbor / lantern-lighting theme, gentle generative BGM |
 | BGM tempo +10% on miss (CFI case study) | `audio.pulseTempo()` |
-| Monitoring + data for the therapist | Progress table + JSON export per patient |
+| Monitoring + data for the therapist | Progress table + JSON export per patient; optional emailed progress summary (`tools/mail_bridge.py`) |
+| Re-calibration as monitoring | Stored ROM is reused, never auto-redone; a re-measure shows previous vs current side by side |
 
 ## Notes / limits
 
@@ -81,5 +105,11 @@ source" setting; falls back to the webcam automatically).
   a self-calibrating pose-fingertip heuristic is the fallback — so games that
   ask for a squeeze always accept a steady hold instead, and patients without
   grasp still complete everything.
+- With more than one person in view the tracker locks onto the patient by
+  position and build (not by face — that would mean an embedding model and
+  storing patient biometrics) and pauses rather than swapping if it loses
+  them.
+- The full two-arm assessment takes about six minutes. It is stored and
+  reused, so you do this rarely, not every session.
 - Data stays in the browser's localStorage; use **Export** for a JSON copy.
 - Not a medical device; use under clinician guidance.

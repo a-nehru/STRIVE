@@ -207,6 +207,30 @@ button { font-family: inherit; cursor: pointer; }
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   font-weight: 700; font-size: 15px; color: var(--cream-dim); gap: 6px;
 }
+/* a mode that needs hardware the room does not have: still readable and
+   still selectable, so it can explain itself instead of just refusing */
+.gcard.locked { opacity: 0.62; }
+
+/* two-player Pong setup: one question per row, large targets */
+.duo-setup {
+  grid-column: 1 / -1;
+  background: rgba(20, 16, 40, 0.4);
+  border-radius: 18px; padding: 22px 26px;
+  display: flex; flex-direction: column; gap: 14px;
+}
+.duo-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 18px; font-size: 20px; font-weight: 700;
+}
+.duo-row select {
+  font-size: 19px; padding: 10px 14px; border-radius: 12px;
+  min-width: 220px;
+  background: var(--ink-soft, #241f45); color: var(--cream);
+  border: 2px solid rgba(244, 236, 221, 0.25);
+}
+.duo-row select:focus-visible, .duo-row select.kbd-focus {
+  outline: 3px solid var(--amber); outline-offset: 2px;
+}
 
 /* ---------- stage (canvas gameplay + assessment) ---------- */
 #stage { position: fixed; inset: 0; background: #000; }
@@ -261,6 +285,12 @@ body.hc #caption { background: rgba(8, 6, 18, 0.97); border-color: rgba(244,236,
   background: rgba(16, 12, 30, 0.72); backdrop-filter: blur(3px);
   font-weight: 800; font-size: clamp(26px, 3vw, 48px); color: var(--cream);
   text-align: center;
+}
+
+/* assessment hand choice: real buttons alongside the hold-on-light gesture */
+#assess-hand-btns {
+  position: absolute; left: 50%; bottom: 7vh; transform: translateX(-50%);
+  display: flex; gap: 20px; z-index: 5;
 }
 
 #btn-quit {
@@ -415,9 +445,10 @@ table.log td { padding: 7px 4px; font-size: 13px; font-weight: 700; border-top: 
 #drawer .btn { font-size: 14px; padding: 11px 16px; }
 #drawer .dwr-sub { margin-top: 6px; padding-top: 12px; border-top: 1px solid rgba(244,236,221,.15); font-size: 16px; }
 #drawer input[type=range] { accent-color: var(--amber); }
-#camstate { font-weight: 700; font-size: 13px; }
-#camstate.ok { color: var(--green); }
-#camstate.bad { color: #ff9d8a; }
+#camstate, #mailstate { font-weight: 700; font-size: 13px; }
+#camstate.ok, #mailstate.ok { color: var(--green); }
+#camstate.bad, #mailstate.bad { color: #ff9d8a; }
+#mailstate { margin-bottom: 8px; }
 
 /* ---------- loading ---------- */
 #loading {
@@ -440,3 +471,22 @@ table.log td { padding: 7px 4px; font-size: 13px; font-weight: 700; border-top: 
 @media (prefers-reduced-motion: reduce) {
   .blob, #welcome-firefly, .star-tw, .rc-ring, .spinner { animation-duration: 0.01s; animation-iteration-count: 1; }
 }
+
+/* assessment result: previous vs current ROM (P6b) */
+#screen-romcompare { overflow-y: auto; padding: 3vh 4vw 4vh; }
+.rom-cards { display: flex; flex-wrap: wrap; gap: 22px; justify-content: center; margin: 22px 0 26px; width: 100%; }
+.rom-card { background: rgba(244,236,221,.06); border: 1px solid rgba(244,236,221,.14);
+  border-radius: 22px; padding: 20px 22px; min-width: 320px; max-width: 420px; flex: 1 1 340px; }
+.rom-card h3 { margin: 0 0 4px; font-size: 20px; color: var(--cream); }
+.rom-card .when { font-size: 13px; font-weight: 700; opacity: .6; margin-bottom: 12px; }
+.rom-shape { display: block; width: 100%; height: auto; margin-bottom: 10px; }
+.rom-row { display: flex; justify-content: space-between; align-items: baseline; gap: 10px;
+  padding: 7px 0; border-top: 1px solid rgba(244,236,221,.1); font-size: 15px; }
+.rom-row .lab { opacity: .75; }
+.rom-row .was { opacity: .5; font-weight: 700; }
+.rom-row .now { font-weight: 800; color: var(--cream); }
+.rom-row .dlt { font-weight: 800; font-size: 13px; padding: 2px 8px; border-radius: 999px; }
+.rom-row .up { color: #9fc08a; background: rgba(159,192,138,.16); }
+.rom-row .dn { color: #ffb0a0; background: rgba(181,80,58,.18); }
+.rom-row .sm { color: rgba(244,236,221,.65); background: rgba(244,236,221,.1); }
+.rom-legend { font-size: 13px; font-weight: 700; opacity: .6; margin-top: 8px; }

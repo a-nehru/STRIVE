@@ -1,0 +1,9 @@
+{
+  "_comment": "Copy to mail_config.json and fill in. mail_config.json is gitignored - the app password must never be committed. Gmail needs an APP password (Google Account -> Security -> App passwords), not the account password.",
+  "host": "smtp.gmail.com",
+  "port": 587,
+  "user": "the.sending.account@gmail.com",
+  "password": "abcd efgh ijkl mnop",
+  "from": "the.sending.account@gmail.com",
+  "to": "nehru.aravind@gmail.com"
+}

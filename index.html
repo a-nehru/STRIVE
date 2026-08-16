@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>STRIVE</title>
-<link rel="stylesheet" href="css/style.css?v=20">
+<link rel="stylesheet" href="css/style.css?v=27">
 </head>
 <body>
 
@@ -84,6 +84,10 @@
   <div id="prompt"></div>
   <div id="cue" class="hidden"></div>
   <div id="paused" class="hidden">One moment.<br>Settle in, and we'll continue</div>
+  <div id="assess-hand-btns" class="hidden">
+    <button class="btn big" id="btn-hand-left">Left arm</button>
+    <button class="btn big" id="btn-hand-right">Right arm</button>
+  </div>
   <button id="btn-quit" title="Back">&#10005;</button>
 </div>
 
@@ -113,6 +117,14 @@
       <button class="btn ghost" id="btn-finish">Finish for today</button>
     </div>
   </div>
+</div>
+
+<!-- P6b assessment result: previous vs current ROM -->
+<div id="screen-romcompare" class="screen hidden">
+  <h1>Your measurements</h1>
+  <div class="select-sub" id="rom-sub">Here is what changed since last time</div>
+  <div class="rom-cards" id="rom-cards"></div>
+  <button class="btn" id="btn-rom-done" data-dwell="1">Continue</button>
 </div>
 
 <!-- P7 collections -->
@@ -152,7 +164,7 @@
       </div>
       <div class="pcard">
         <h3>Grasp map</h3>
-        <div class="psub">Grab ✓/✗ and hold-stability at 3 positions</div>
+        <div class="psub">Six held positions · reach, steadiness, and whether the hand worked there</div>
         <svg id="prof-grasp" viewBox="0 0 400 232" style="width:100%;margin-top:6px"></svg>
       </div>
     </div>
@@ -161,6 +173,8 @@
       <div class="pcard">
         <h3 style="margin-bottom:12px">Compensation (recent)</h3>
         <div id="prof-comp"></div>
+        <h3 style="margin:18px 0 10px">Difficulty by game</h3>
+        <div id="prof-diff"></div>
       </div>
       <div class="pcard">
         <h3 style="margin-bottom:10px">Session log</h3>
@@ -198,15 +212,16 @@
         <option value="companion">Vs companion (arrow keys)</option>
         <option value="team-arms">Team: both arms vs AI</option>
         <option value="team-keys">Team: you + companion vs AI</option>
+        <option value="duo">Two players (ZED, two seats)</option>
       </select>
     </label>
     <label>Pong skills
       <select id="in-pongskills">
+        <option value="both" selected>Grip + spin</option>
         <option value="auto">Auto (level up with play)</option>
         <option value="none">Off (basic rally only)</option>
         <option value="grip">Grip shot</option>
         <option value="spin">Spin shot</option>
-        <option value="both">Grip + spin</option>
       </select>
     </label>
   </div>
@@ -280,7 +295,12 @@
     </select>
   </label>
   <div id="camstate">Camera: not started</div>
-  <div class="row"><button class="btn" id="btn-drawer-assess">Assessment</button><button class="btn ghost-light" id="btn-drawer-profile">Profile</button></div>
+  <h2 class="dwr-sub">Therapist contact</h2>
+  <div id="mailstate">Mail: checking</div>
+  <div class="row"><button class="btn ghost-light" id="btn-mail-test">Send test email</button><button class="btn ghost-light" id="btn-mail-help">Report a problem</button></div>
+  <div class="row"><button class="btn ghost-light" id="btn-mail-progress">Email progress</button></div>
+  <div class="row"><button class="btn" id="btn-drawer-assess">Measure both arms</button><button class="btn ghost-light" id="btn-drawer-assess-one">Re-measure this arm</button></div>
+  <div class="row"><button class="btn ghost-light" id="btn-drawer-profile">Profile</button></div>
   <div class="row"><button class="btn ghost-light" id="btn-drawer-collections">Collections</button><button class="btn ghost-light" id="btn-drawer-close">Close</button></div>
 </div>
 
@@ -290,6 +310,6 @@
 
 <div id="loading" class="hidden"><div class="spinner"></div><div id="loading-text">Waking up the camera&hellip;</div></div>
 
-<script type="module" src="js/main.js?v=20"></script>
+<script type="module" src="js/main.js?v=27"></script>
 </body>
 </html>
