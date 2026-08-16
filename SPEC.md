@@ -471,6 +471,13 @@ arcs used in bimanual.
   at the next paddle contact.
 - **Flat flight:** vertical speed capped at 38% of horizontal; AI aims near
   the lane middle. Rallies cross in shallow diagonals rather than ricocheting.
+- **Smoothed paddle (Aug 2026):** the paddle was driven raw from the arm
+  angle, so a degree or two of landmark noise showed as chatter — amplified by
+  the arc mapping, since a narrow assessed arc stretches a small angular error
+  across the whole lane. It now runs through an adaptive (One-Euro) filter:
+  heavy when the arm is held still, opening up with arm speed, because a fixed
+  filter has to choose between holding steady and rallying. A frame with no
+  angle **holds position** instead of snapping to mid-lane.
 - **No arm drawn, a hand on the paddle instead (Aug 2026):** the translated
   arm skeleton was a second moving shape competing with the ball. Pong now
   draws only a small, translucent hand sitting on the paddle it drives, still
