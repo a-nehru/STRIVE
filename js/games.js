@@ -575,6 +575,12 @@ export class LanternRelease extends GameBase {
 // reaching five ends it — a match that finishes on a scoreline finishes,
 // where one that finishes on a clock just stops.
 const PONG_WIN = 5;
+// the hand drawn on the paddle: small and faint on purpose — it is a
+// reminder of what drives the paddle, not a thing to watch
+const PONG_HAND_SCALE = 0.42, PONG_HAND_ALPHA = 0.38;
+// nudged OUTWARD from the court so the hand hugs the back of its paddle
+// rather than spilling into the play area (the paddle itself is only 16px)
+const PONG_HAND_OUT = 16;
 const AI_SLIP_FROM = 80, AI_SLIP_BY = 85;
 // The lunge is released on TIME, not on a fixed fraction of the flight: it
 // breaks the wrong way only when there is just barely enough left to get
@@ -596,19 +602,57 @@ const AI_FADE_FROM = 55, AI_FADE_TO = 95, AI_FADE_MAX = 0.4;
 //   team-keys  patient arm + companion on keys defend together vs AI (collaborative)
 export class ArcPong extends GameBase {
   id = "pong";
-  armBehind = true;        // the arm sits UNDER the paddle and ball layer
-  // the tracked arm is drawn over on the side the patient plays from, so it
-  // reads as the thing driving that paddle instead of a shape crossing the
-  // middle of the court
+  armBehind = false;       // a hand ON the paddle has to be on top of it
+  // Pong draws NO arm. The full skeleton translated across the court was a
+  // second moving shape competing with the ball, and the capture ring means
+  // nothing in a game driven by a paddle. What is left is the one useful
+  // part: a small, translucent hand sitting ON the paddle it drives, still
+  // curling and closing live, so the arm→paddle mapping stays visible
+  // without anything crossing the play area. Each paddle gets the hand that
+  // actually drives it — left paddle, left hand.
+  _handPads() {
+    const other = this.side === "right" ? "left" : "right";
+    const c = this.canvas;
+    const lx = this.court.left * c.width, rx = this.court.right * c.width;
+    const O = PONG_HAND_OUT;
+    const out = [{ x: this.patientRight ? rx + O : lx - O,
+                   y: this.patientRight ? this.pads?.rightY : this.pads?.leftY,
+                   side: this.side }];
+    if (this.mode === "bimanual") {
+      out.push({ x: this.patientRight ? lx - O : rx + O,
+                 y: this.patientRight ? this.pads?.leftY : this.pads?.rightY,
+                 side: other });
+    } else if (this.mode === "team-arms") {
+      out.push({ x: this.patientRight ? rx + 26 + O : lx - 26 - O,
+                 y: this.patientRight ? this.pads?.rightY2 : this.pads?.leftY2,
+                 side: other });
+    }
+    return out.filter(h => h.y != null);
+  }
+
   _drawArmAndCursor(ctx, c, now) {
-    const sh = this.t.shoulder(this.side);
-    if (!sh) return super._drawArmAndCursor(ctx, c, now);
-    const here = this.t._videoToPx(sh.x, sh.y, c).x;
-    const want = c.width * (this.patientRight ? 0.84 : 0.16);
-    ctx.save();
-    ctx.translate(want - here, 0);       // horizontal only: height still maps to the paddle
-    super._drawArmAndCursor(ctx, c, now);
-    ctx.restore();
+    if (!this.pads) return;
+    for (const h of this._handPads()) {
+      const cy = (h.y + this.paddleH / 2) * c.height;
+      const pm = this.t.palmPx(h.side, c);
+      ctx.save();
+      ctx.globalAlpha = PONG_HAND_ALPHA;
+      // the hand's own landmarks, shrunk and re-centred onto the paddle: the
+      // shape is still the patient's real hand, it has just been moved to
+      // where the thing it controls is
+      const map = pm ? (q => ({ x: (q.x - pm.x) * PONG_HAND_SCALE + h.x,
+                                y: (q.y - pm.y) * PONG_HAND_SCALE + cy })) : null;
+      const drawn = map && drawHand(ctx, c, this.t, h.side, { map, scale: PONG_HAND_SCALE, fallback: false });
+      if (!drawn) {
+        // no hand model: a small open/closed disc says the same thing
+        const closed = this.t.handClosed(h.side);
+        ctx.fillStyle = closed ? "#9fc08a" : "rgba(244,236,221,0.65)";
+        ctx.strokeStyle = "rgba(244,236,221,0.65)"; ctx.lineWidth = 2.5;
+        ctx.beginPath(); ctx.arc(h.x, cy, closed ? 9 : 11, 0, TAU);
+        closed ? ctx.fill() : ctx.stroke();
+      }
+      ctx.restore();
+    }
   }
   setup() {
     // vs the AI the round has to outlast the star's fade, or the round ends

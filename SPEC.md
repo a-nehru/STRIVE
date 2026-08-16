@@ -463,6 +463,18 @@ arcs used in bimanual.
   at the next paddle contact.
 - **Flat flight:** vertical speed capped at 38% of horizontal; AI aims near
   the lane middle. Rallies cross in shallow diagonals rather than ricocheting.
+- **No arm drawn, a hand on the paddle instead (Aug 2026):** the translated
+  arm skeleton was a second moving shape competing with the ball. Pong now
+  draws only a small, translucent hand sitting on the paddle it drives, still
+  curling and closing live, nudged outward so it hugs the back of the paddle
+  rather than spilling into the court. Each paddle gets the hand that actually
+  drives it — in bimanual the left paddle shows the left hand.
+- **Grip Shot is level-gated again (Aug 2026):** the staff default was "grip +
+  spin from round 1", which handed a brand-new patient a mechanic where
+  squeezing as the ball arrives *catches* it and pins it to the paddle until
+  the hand opens. Unexplained, that reads as the ball sticking to your hand.
+  Default is now "auto" (1 rally → 2 +grip → 3 +spin); staff can still force
+  any combination.
 - **Match to 5 points (Aug 2026):** reaching five ends the round on a
   scoreline instead of on a clock — a match that finishes on a scoreline
   finishes, one that finishes on a clock just stops. The AI can win; an

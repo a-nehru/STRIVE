@@ -19,7 +19,12 @@ const state = {
   patient: "guest",
   coachSens: "gentle",
   pongMode: "solo",
-  pongSkills: "both",     // grip + spin available from the first round
+  // "auto" follows the level unlock (1 rally -> 2 +grip -> 3 +spin). It used
+  // to default to "both", which handed a brand-new patient the Grip Shot in
+  // round 1: squeezing as the ball arrives CATCHES it and pins it to the
+  // paddle until the hand opens, which without warning just reads as the ball
+  // sticking to your hand. Staff can still force any combination.
+  pongSkills: "auto",
   oarsMode: "together",
   ferryMode: "solo",
   song: "mary",
