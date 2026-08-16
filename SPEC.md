@@ -206,6 +206,14 @@ curl, smoothed over ~300 ms. Recorded per event with position along the arc.
 > **Cost:** ~3 min per arm, ~6 min for both. That is a lot for this population;
 > the knobs are the sweep duration and the hold duration.
 >
+> **On-screen restraint.** The sweep screen carries a start dot, small
+> direction dots (the only "what have I not covered yet" signal), the painted
+> envelope drawn thin, a short pacer firefly that fades once the patient is
+> clearly going round on their own, and the hand cursor. It deliberately does
+> *not* draw the arm-length boundary: the demo step, the pacer and the hold
+> targets already imply it, and drawing it as a dashed circle plus a framing
+> square meant one idea appeared three times over a live camera feed.
+>
 > The original Dawn Painter protocol below is retained for reference.
 
 Run per arm, first session and re-run any session (doubles as monitoring, per

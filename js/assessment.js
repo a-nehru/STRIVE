@@ -792,27 +792,28 @@ export class Assessment {
           const r = Math.max(0.6, this.envelope[i] + 0.3);   // sit a touch beyond the reach so far — an invitation outward
           const p = this.t.relToPx({ x: CENTER.x + Math.cos(th) * r, y: CENTER.y + Math.sin(th) * r }, c);
           const done = this.visited[i] >= 2;
-          ctx.fillStyle = done ? "#e8a86a" : "rgba(244,236,221,0.25)";
-          if (done) { ctx.shadowColor = "rgba(232,168,106,.8)"; ctx.shadowBlur = 10; }
-          ctx.beginPath(); ctx.arc(p.x, p.y, done ? 6 : 4, 0, TAU); ctx.fill();
-          ctx.shadowBlur = 0;
+          // small on purpose: this is a checklist, not scenery
+          ctx.fillStyle = done ? "rgba(232,168,106,0.9)" : "rgba(244,236,221,0.16)";
+          ctx.beginPath(); ctx.arc(p.x, p.y, done ? 4 : 2.5, 0, TAU); ctx.fill();
         }
-        // demo firefly circling the boundary — "go around, like me" — an
-        // animation to MIMIC: slow, prominent, and it stays with them most of
-        // the way around before fading (the motion, not a required size)
+        // A pacer firefly on the boundary — only until the patient is clearly
+        // going round on their own. The demo step now teaches the motion, so
+        // this is a short reminder rather than the lesson: it used to run to
+        // 12 of 16 bins with a seven-blob tail, which is a large moving
+        // object on screen for most of the sweep.
         const covered = this.visited.filter(v => v >= 2).length;
-        if (covered < 12) {
+        if (covered < 6) {
           const a = now / 3400;                        // a calm, mimicable pace
-          const alpha = covered < 8 ? 0.95 : 0.95 * (1 - (covered - 8) / 4);
-          for (let k = 0; k < 7; k++) {                // long trail: the path reads as a circle
+          const alpha = 0.8 * (1 - covered / 6);
+          for (let k = 0; k < 4; k++) {
             const ta = a - k * 0.1;
             const rr = this._demoR(ta);                // ride the REAL arm-length boundary
             const p = this.t.relToPx({ x: CENTER.x + Math.cos(ta) * rr, y: CENTER.y + Math.sin(ta) * rr }, c);
-            ctx.globalAlpha = alpha * (1 - k / 7);
-            const dg = ctx.createRadialGradient(p.x, p.y, 1, p.x, p.y, 16 - k * 1.8);
+            ctx.globalAlpha = alpha * (1 - k / 4);
+            const dg = ctx.createRadialGradient(p.x, p.y, 1, p.x, p.y, 12 - k * 1.8);
             dg.addColorStop(0, "#fff6d8"); dg.addColorStop(1, "rgba(159,192,138,0.9)");
             ctx.fillStyle = dg;
-            ctx.beginPath(); ctx.arc(p.x, p.y, 14 - k * 1.6, 0, TAU); ctx.fill();
+            ctx.beginPath(); ctx.arc(p.x, p.y, 10 - k * 1.6, 0, TAU); ctx.fill();
           }
           ctx.globalAlpha = 1;
         }
@@ -883,27 +884,12 @@ export class Assessment {
       }
       ctx.restore();
 
-      // the REAL arm space, so the goal is honest: a faint circle at arm's
-      // length around the shoulder, and the square that frames it
-      if (this.armLen != null && this.shoulderRel &&
-          (this.state === "countdown" || this.state === "sweep" ||
-           this.state === "hold" || this.state === "hold-move")) {
-        const sp = this.t.relToPx(this.shoulderRel, c);
-        const R = this.armLen * sw;
-        ctx.save();
-        ctx.strokeStyle = "rgba(244,236,221,0.35)"; ctx.lineWidth = 3; ctx.setLineDash([14, 12]);
-        ctx.beginPath(); ctx.arc(sp.x, sp.y, R, 0, TAU); ctx.stroke();
-        ctx.setLineDash([5, 9]); ctx.strokeStyle = "rgba(244,236,221,0.2)";
-        ctx.strokeRect(sp.x - R, sp.y - R, R * 2, R * 2);
-        ctx.restore();
-      }
-
       // painted ROM shape (amber, glowing) through envelope points — grows
       // outward from the center as the patient traces each direction; the
       // soft fill is the "area you have painted so far"
       ctx.save();
-      ctx.strokeStyle = "rgba(232,168,106,0.75)"; ctx.lineWidth = 7;
-      ctx.shadowColor = "rgba(232,168,106,0.6)"; ctx.shadowBlur = 26;
+      ctx.strokeStyle = "rgba(232,168,106,0.7)"; ctx.lineWidth = 4;
+      ctx.shadowColor = "rgba(232,168,106,0.35)"; ctx.shadowBlur = 10;
       ctx.beginPath();
       for (let i = 0; i <= BINS; i++) {
         const th = (i % BINS) / BINS * TAU + TAU / BINS / 2;
@@ -952,10 +938,6 @@ export class Assessment {
       if (!closed) ctx.setLineDash([6, 7]);
       ctx.beginPath(); ctx.arc(hp.x, hp.y, closed ? 18 : 26, 0, TAU); ctx.stroke();
       ctx.setLineDash([]);
-    } else if (hp && handDrawn) {
-      // small cream point marking the exact interaction spot
-      ctx.fillStyle = "rgba(255,242,194,0.85)";
-      ctx.beginPath(); ctx.arc(hp.x, hp.y, 5, 0, TAU); ctx.fill();
     }
 
     // while circling or reaching, the hand reads as a bright red cursor dot on
