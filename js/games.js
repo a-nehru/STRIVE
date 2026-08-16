@@ -28,6 +28,7 @@ const STORIES = {
   boxes: { title: "The last ferry", text: "The harbor crates must cross before the ferry leaves. Carry them over, one by one." },
   compass: { title: "The compass rose", text: "From the heart of the compass, light every point, and always return home." },
   echo: { title: "The star's echo", text: "A star leaves an invisible echo where it shone. Remember the spot, and find it again." },
+  sling: { title: "Cloud slingshot", text: "The dark clouds have built towers over the village. Pull the sling right back, hold it, and let go." },
   rgs: { title: "Catch together", text: "Lights are drifting in from the harbour. Cup both hands to catch one, then set it in a basket." },
   dots: { title: "Connect the dots", text: "There is a picture hiding in these dots. Go from one to the next and it will draw itself." },
   lens: { title: "Scratch cards", text: "Under the silver there is a picture. Scrape it away with your hand and see what it is." },
@@ -2472,6 +2473,314 @@ function scratchHarbour(ctx, now, lit) {
   ctx.fillStyle = "#2c4468"; ctx.fillRect(0, 0.74, 1, 0.26);
   ctx.fillStyle = `rgba(232,168,106,${0.25 + lit * 0.3})`;
   hs.forEach((h, i) => ctx.fillRect(0.085 + i * 0.13, 0.74, 0.022, 0.2));
+}
+
+/* ==================== G28 Cloud Slingshot (Angry Birds) ==================== */
+// The Angry Birds mechanic, rebuilt for the arm. Reach to the pouch, close
+// the hand, PULL BACK against the sling, hold the stretch, then open to fire.
+//
+// It earns its place clinically because the pull is the exercise: a graded,
+// held, eccentric reach with a release at the end of it - which is exactly
+// the grasp event Harbor Crates trains, but with a reason to hold at full
+// stretch rather than snatch. The aim trains directional control, and the
+// arc gives a reason to look up.
+//
+// The one change that matters: POWER IS NORMALISED TO THE PATIENT'S OWN
+// REACH. Full power is a full pull to the edge of their measured envelope in
+// the pull direction, not a fixed pixel distance - so a patient with a small
+// envelope can still hit the far stack at full stretch, and a patient with a
+// large one is not rewarded for a lazy tug. The original scales power by a
+// fixed SHOOT_FACTOR against screen pixels, which would make this game
+// literally unwinnable for the people it is meant for.
+//
+// The physics is written here rather than imported: the reference carries
+// Phaser and p2 (about 3 MB) to do this, and a projectile plus toppling boxes
+// is a couple of hundred lines. Nothing in this game needs a solver.
+const SL_GROUND = 0.84;          // canvas-normalised y of the ground line
+const SL_G = 1.15;               // gravity, canvas units per second squared
+// Tuned by simulation, not by feel: at 1.8 the tower becomes reachable from a
+// pull of about 40% of the patient's own reach, so there is a wide band of
+// success above that. A shot below 40% still FLIES and visibly lands short,
+// which is feedback; only below SL_MIN_PULL does nothing leave the sling.
+const SL_POWER = 1.8;            // launch speed per unit of normalised pull
+const SL_MIN_PULL = 0.22;        // below this fraction of full stretch, nothing fires
+const SL_HOLD_MS = 800;          // held still at stretch = release (the no-grasp path)
+const SL_SHOT_MAX = 6000;        // ms before a lost shot is given up on
+
+export class CloudSlingshot extends GameBase {
+  id = "sling";
+  setup() {
+    this.tips = {
+      objective: "Reach the pouch, pull back, then open your hand to fire.",
+      miss: "Pull further back for more power, and aim a little higher.",
+    };
+    this.shots = 0; this.popped = 0; this.emptyShots = 0; this.rounds = 0;
+    this.pulls = [];                 // normalised pull strength per shot, for the log
+    this.held = false; this.holdSince = null; this.stillSince = null;
+    this.shot = null;
+    this._layout();
+    this.tellStory(STORIES.sling);
+  }
+
+  // The sling sits on the patient's own side and the stack on the far side,
+  // so every shot is a reach out and across - the direction that matters.
+  _layout() {
+    this.facing = this.side === "right" ? -1 : 1;      // fire towards midline & beyond
+    this.slingPx = { x: this.side === "right" ? 0.82 : 0.18, y: SL_GROUND - 0.13 };
+    this.blocks = []; this.clouds = [];
+    const bx = this.side === "right" ? 0.22 : 0.78;
+    const w = 0.05, h = 0.075;
+    // a small tower: two uprights, a lintel, and a cloud perched on top. Kept
+    // deliberately simple - the target is a reason to reach, not a puzzle.
+    const cols = 2 + Math.min(2, this.rounds);
+    for (let c = 0; c < cols; c++) {
+      const x = bx + (c - (cols - 1) / 2) * (w * 2.4) * this.facing * -1;
+      const levels = 2 + (c % 2);
+      for (let l = 0; l < levels; l++) {
+        this.blocks.push({ x, y: SL_GROUND - h * (l + 1), w, h, vx: 0, vy: 0, rest: true });
+      }
+      this.clouds.push({ x: x + w / 2, y: SL_GROUND - h * levels - 0.035, r: 0.032, alive: true });
+    }
+    this.maxPullSW = null;
+  }
+
+  // Full stretch = the edge of the measured envelope in the pull direction.
+  _maxPull() {
+    const th = this.facing > 0 ? Math.PI : 0;          // pull is away from the target
+    return Math.max(0.35, this.envAt(th) * this.params.rangeScale);
+  }
+
+  update(now, dt) {
+    const s = Math.min(0.05, dt / 1000);
+    if (this.shot) { this._flyShot(now, s); return; }
+
+    const h = this.t.palmRel(this.side) || this.t.handRel(this.side);
+    if (!h) return;
+    const anchor = { x: CENTER.x, y: CENTER.y };
+    const grabR = (this.params.radius + 0.12) * A11Y.radiusScale;
+
+    if (!this.held) {
+      // pick the pouch up: a squeeze takes it at once, a steady hold also
+      // does, so nobody is gated on grasp detection
+      const near = Math.hypot(h.x - anchor.x, h.y - anchor.y) < grabR;
+      const f = this.dwellProgress("pouch", near, now);
+      if (near && (this.t.handClosed(this.side) || f >= 1)) {
+        this.held = true; this.holdSince = now; this.stillSince = null;
+        this._dwells = {};
+        audio.note(3);
+        this.say("Now pull back, and hold it.");
+      }
+      this.pull = null;
+      return;
+    }
+
+    // held: the pouch follows the hand, clamped to full stretch
+    const maxP = this._maxPull();
+    let dx = h.x - anchor.x, dy = h.y - anchor.y;
+    const d = Math.hypot(dx, dy);
+    if (d > maxP && d > 0) { dx = dx / d * maxP; dy = dy / d * maxP; }
+    this.pull = { x: dx, y: dy, f: Math.min(1, d / maxP) };
+
+    // release: opening the hand fires it. For a patient with no grasp,
+    // holding the stretch still for SL_HOLD_MS fires it instead - and that
+    // hold is a useful thing to ask for in its own right.
+    const opened = !this.t.handClosed(this.side) && now - this.holdSince > 350;
+    const moving = this._lastPull != null && Math.abs(this.pull.f - this._lastPull) > 0.03;
+    if (moving || this.pull.f < SL_MIN_PULL) this.stillSince = null;
+    else this.stillSince ??= now;
+    this._lastPull = this.pull.f;
+    const heldStill = this.stillSince && now - this.stillSince > SL_HOLD_MS;
+
+    if ((opened || heldStill) && this.pull.f >= SL_MIN_PULL) this._fire(now);
+    else if (opened && this.pull.f < SL_MIN_PULL) {
+      this.held = false; this.pull = null;
+      this.say("Pull back a little further before you let go.");
+    }
+  }
+
+  _fire(now) {
+    const p = this.pull;
+    this.held = false; this.stillSince = null; this._lastPull = null;
+    this.pulls.push(Math.round(p.f * 100) / 100);
+    this.shots++;
+    // the launch is the OPPOSITE of the pull, at a speed set by how far they
+    // stretched as a fraction of their own reach
+    const mag = Math.hypot(p.x, p.y) || 1e-6;
+    const sp = SL_POWER * p.f;
+    this.shot = {
+      x: this.slingPx.x, y: this.slingPx.y,
+      vx: -p.x / mag * sp, vy: p.y / mag * sp,   // SW y is up, canvas y is down
+      born: now, hits: 0, trail: [],
+    };
+    this.pull = null;
+    audio.note(6);
+  }
+
+  _flyShot(now, s) {
+    const b = this.shot;
+    b.vy += SL_G * s;
+    b.x += b.vx * s; b.y += b.vy * s;
+    b.trail.push({ x: b.x, y: b.y });
+    if (b.trail.length > 40) b.trail.shift();
+
+    for (const bl of this.blocks) {
+      if (b.x > bl.x && b.x < bl.x + bl.w && b.y > bl.y && b.y < bl.y + bl.h) {
+        bl.vx += b.vx * 0.55; bl.vy += b.vy * 0.35 - 0.25; bl.rest = false;
+        b.vx *= 0.35; b.vy *= 0.35; b.hits++;
+        audio.bounce();
+      }
+    }
+    for (const c of this.clouds) {
+      if (c.alive && Math.hypot(b.x - c.x, b.y - c.y) < c.r + 0.012) this._pop(c);
+    }
+    this._settle(s);
+
+    const gone = b.y > SL_GROUND + 0.05 || b.x < -0.1 || b.x > 1.1 || now - b.born > SL_SHOT_MAX;
+    if (!gone) return;
+    // the shot is over: a shot that popped nothing is the miss, not the round
+    if (this._shotPopped) { this._shotPopped = 0; }
+    else { this.emptyShots++; this.miss({ isFar: false }); }
+    this.shot = null;
+    if (this.clouds.every(c => !c.alive)) {
+      this.rounds++;
+      audio.fanfare();
+      this.say("The sky is clear! Here comes another.");
+      this._layout();
+    }
+  }
+
+  _pop(c) {
+    c.alive = false;
+    this.popped++;
+    this._shotPopped = (this._shotPopped || 0) + 1;
+    this.stats.stars += 3;
+    this.burstAtPx(c.x * this.canvas.width, c.y * this.canvas.height, "#c8b3d9");
+    audio.hit();
+    // scored against the pull that earned it, so a full-stretch shot that
+    // lands reads as a bigger reach in the round record
+    this.hit({ reachFrac: this.pulls.length ? this.pulls[this.pulls.length - 1] : 0.7, isFar: false });
+  }
+
+  // Toppling, not a solver: blocks fall, rest on the ground or on whatever is
+  // under them, and pass a share of their motion to what they land on.
+  _settle(s) {
+    for (const bl of this.blocks) {
+      if (bl.rest) continue;
+      bl.vy += SL_G * s;
+      bl.x += bl.vx * s; bl.y += bl.vy * s;
+      bl.vx *= 0.99;
+      if (bl.y + bl.h >= SL_GROUND) {
+        bl.y = SL_GROUND - bl.h;
+        if (Math.abs(bl.vy) < 0.08) { bl.vy = 0; bl.vx *= 0.6; if (Math.abs(bl.vx) < 0.02) { bl.vx = 0; bl.rest = true; } }
+        else bl.vy *= -0.25;
+      }
+      for (const o of this.blocks) {
+        if (o === bl) continue;
+        if (bl.x < o.x + o.w && bl.x + bl.w > o.x && bl.y < o.y + o.h && bl.y + bl.h > o.y) {
+          o.vx += bl.vx * 0.4; o.vy += bl.vy * 0.25; o.rest = false;
+          bl.vx *= 0.6; bl.vy *= 0.4;
+          bl.y = o.y - bl.h;
+        }
+      }
+      for (const c of this.clouds) {
+        if (c.alive && Math.abs(bl.vx) + Math.abs(bl.vy) > 0.25 &&
+            Math.hypot(bl.x + bl.w / 2 - c.x, bl.y + bl.h / 2 - c.y) < c.r + bl.w) this._pop(c);
+      }
+    }
+  }
+
+  drawBg(ctx, c) {
+    const g = ctx.createLinearGradient(0, 0, 0, c.height);
+    g.addColorStop(0, "#2a2b55"); g.addColorStop(0.7, "#1e1c42"); g.addColorStop(1, "#161636");
+    ctx.fillStyle = g; ctx.fillRect(0, 0, c.width, c.height);
+    twinkles(ctx, c);
+    ctx.fillStyle = "rgba(90,110,90,0.35)";
+    ctx.fillRect(0, SL_GROUND * c.height, c.width, c.height);
+    ctx.strokeStyle = "rgba(159,192,138,0.5)"; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(0, SL_GROUND * c.height); ctx.lineTo(c.width, SL_GROUND * c.height); ctx.stroke();
+  }
+
+  draw(ctx, c, now) {
+    const X = f => f * c.width, Y = f => f * c.height;
+    // blocks
+    for (const bl of this.blocks) {
+      roundedRect(ctx, X(bl.x), Y(bl.y), X(bl.w), Y(bl.h), 6, "#c9a06a", "#8a6a44");
+    }
+    // clouds
+    for (const cl of this.clouds) {
+      if (!cl.alive) continue;
+      const p = { x: X(cl.x), y: Y(cl.y) }, r = cl.r * c.height;
+      ctx.save();
+      ctx.fillStyle = "#6a5f86"; ctx.shadowColor = "rgba(120,100,160,.7)"; ctx.shadowBlur = 16;
+      ctx.beginPath();
+      ctx.arc(p.x - r * 0.5, p.y, r * 0.7, 0, TAU);
+      ctx.arc(p.x + r * 0.5, p.y, r * 0.6, 0, TAU);
+      ctx.arc(p.x, p.y - r * 0.4, r * 0.8, 0, TAU);
+      ctx.fill();
+      ctx.shadowBlur = 0; ctx.fillStyle = "#1b1b3a";
+      ctx.beginPath(); ctx.arc(p.x - r * 0.25, p.y - r * 0.15, r * 0.13, 0, TAU); ctx.fill();
+      ctx.beginPath(); ctx.arc(p.x + r * 0.3, p.y - r * 0.15, r * 0.13, 0, TAU); ctx.fill();
+      ctx.restore();
+    }
+    // the sling, and the band stretched to wherever the hand has pulled it
+    const sp = { x: X(this.slingPx.x), y: Y(this.slingPx.y) };
+    ctx.save();
+    ctx.strokeStyle = "#8a6a44"; ctx.lineWidth = 9; ctx.lineCap = "round";
+    ctx.beginPath(); ctx.moveTo(sp.x, Y(SL_GROUND)); ctx.lineTo(sp.x, sp.y); ctx.stroke();
+    if (this.held && this.pull) {
+      // the pouch is drawn where the HAND is, in body coords, so the stretch
+      // the patient feels and the stretch they see are the same thing
+      const pouch = this.toPx({ x: CENTER.x + this.pull.x, y: CENTER.y + this.pull.y });
+      ctx.strokeStyle = `rgba(232,168,106,${0.5 + this.pull.f * 0.5})`;
+      ctx.lineWidth = 5 + this.pull.f * 4;
+      ctx.beginPath(); ctx.moveTo(sp.x - 14, sp.y); ctx.lineTo(pouch.x, pouch.y);
+      ctx.lineTo(sp.x + 14, sp.y); ctx.stroke();
+      this.glow(ctx, pouch.x, pouch.y, 14, "#fff6d8", "#e8a86a", 26);
+      // a power bar that is a fraction of THEIR reach, not of the screen
+      const bw = 120, bx = pouch.x - bw / 2, by = pouch.y - 46;
+      ctx.fillStyle = "rgba(27,27,58,.55)"; ctx.beginPath(); ctx.roundRect(bx, by, bw, 10, 5); ctx.fill();
+      ctx.fillStyle = this.pull.f >= SL_MIN_PULL ? "#9fc08a" : "#b5503a";
+      ctx.beginPath(); ctx.roundRect(bx, by, bw * this.pull.f, 10, 5); ctx.fill();
+      if (this.stillSince) {
+        const f = Math.min(1, (now - this.stillSince) / SL_HOLD_MS);
+        ctx.strokeStyle = "#9fc08a"; ctx.lineWidth = 4;
+        ctx.beginPath(); ctx.arc(pouch.x, pouch.y, 26, -Math.PI / 2, -Math.PI / 2 + TAU * f); ctx.stroke();
+      }
+    } else if (!this.shot) {
+      // the pouch waiting to be picked up, at the work centre
+      const a = this.toPx(CENTER);
+      const pulse = Math.sin(now / 420) * 0.5 + 0.5;
+      ctx.strokeStyle = `rgba(232,168,106,${0.4 + pulse * 0.4})`;
+      ctx.lineWidth = 4; ctx.setLineDash([8, 9]);
+      ctx.beginPath(); ctx.arc(a.x, a.y, (this.params.radius + 0.12) * this.sw(), 0, TAU); ctx.stroke();
+      ctx.setLineDash([]);
+      this.glow(ctx, a.x, a.y, 12, "#fff6d8", "#e8a86a", 22);
+    }
+    ctx.restore();
+    // the shot and its arc
+    if (this.shot) {
+      ctx.save();
+      ctx.strokeStyle = "rgba(255,246,216,0.35)"; ctx.lineWidth = 3; ctx.setLineDash([4, 8]);
+      ctx.beginPath();
+      this.shot.trail.forEach((t, i) => i ? ctx.lineTo(X(t.x), Y(t.y)) : ctx.moveTo(X(t.x), Y(t.y)));
+      ctx.stroke(); ctx.setLineDash([]);
+      this.glow(ctx, X(this.shot.x), Y(this.shot.y), 13, "#fff6d8", "#e8a86a", 28);
+      ctx.restore();
+    }
+    this.drawTimerWhisper(ctx, c, now);
+  }
+
+  extra() {
+    const mean = this.pulls.length ? this.pulls.reduce((a, b) => a + b, 0) / this.pulls.length : 0;
+    return {
+      shots: this.shots, cloudsPopped: this.popped, emptyShots: this.emptyShots,
+      towersCleared: this.rounds,
+      // how far into their OWN reach each pull went: the number this game
+      // exists to move
+      meanPullFrac: Math.round(mean * 100) / 100,
+      bestPullFrac: this.pulls.length ? Math.max(...this.pulls) : 0,
+    };
+  }
 }
 
 /* ==================== G27 Catch Together (RGS) ==================== */
@@ -5145,6 +5454,7 @@ export const GAMES = [
   { id: "lens", name: "Scratch Cards", cls: LighthouseLens, trains: "Sweeping coverage" },
   { id: "dots", name: "Connect the Dots", cls: ConnectDots, trains: "Point-to-point reach" },
   { id: "rgs", name: "Catch Together", cls: CatchTogether, trains: "Both arms together" },
+  { id: "sling", name: "Cloud Slingshot", cls: CloudSlingshot, trains: "Pull, hold and release" },
   { id: "crane", name: "Crane Keeper", cls: CraneKeeper, disabled: true, trains: "Hold high + squeeze" },
   { id: "feather", name: "Feather Lantern", cls: FeatherLantern, disabled: true, trains: "Slow lowering" },
   { id: "buoys", name: "Two Lights", cls: TwoLights, disabled: true, trains: "Speed and accuracy" },

@@ -379,6 +379,20 @@ const CARD_ART = {
       <line x1="163" y1="167" x2="183" y2="140" stroke="rgba(244,236,221,.5)" stroke-width="3" stroke-dasharray="5 6"/>
       <circle cx="120" cy="290" r="30" fill="none" stroke="rgba(159,192,138,.6)" stroke-width="3" stroke-dasharray="8 8"/>
     </svg></div>`,
+  sling: `<div class="art" style="background:linear-gradient(180deg,#2a2b55,#161636)">
+    <svg viewBox="0 0 300 400" style="position:absolute;inset:0;width:100%;height:100%">
+      <rect x="0" y="318" width="300" height="82" fill="rgba(90,110,90,.35)"/>
+      <line x1="0" y1="318" x2="300" y2="318" stroke="#9fc08a" stroke-width="4"/>
+      <rect x="60" y="270" width="34" height="48" rx="5" fill="#c9a06a"/>
+      <rect x="60" y="222" width="34" height="48" rx="5" fill="#b8905c"/>
+      <g fill="#6a5f86"><circle cx="66" cy="200" r="15"/><circle cx="90" cy="202" r="13"/><circle cx="78" cy="188" r="17"/></g>
+      <circle cx="72" cy="185" r="3.5" fill="#1b1b3a"/><circle cx="86" cy="185" r="3.5" fill="#1b1b3a"/>
+      <path d="M232 318 L232 250" stroke="#8a6a44" stroke-width="9" stroke-linecap="round"/>
+      <path d="M222 250 L268 288 L242 250" fill="none" stroke="#e8a86a" stroke-width="6" stroke-linecap="round"/>
+      <circle cx="268" cy="288" r="12" fill="#fff6d8"/>
+      <path d="M232 246 Q160 150 96 196" fill="none" stroke="rgba(255,246,216,.4)"
+        stroke-width="3" stroke-dasharray="4 8"/>
+    </svg></div>`,
   rgs: `<div class="art" style="background:linear-gradient(180deg,#2b2c56,#15152f)">
     <svg viewBox="0 0 300 400" style="position:absolute;inset:0;width:100%;height:100%">
       <g stroke="rgba(244,236,221,.18)" stroke-width="2">
