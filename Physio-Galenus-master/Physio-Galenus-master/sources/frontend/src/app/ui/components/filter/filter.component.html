@@ -1,0 +1,222 @@
+<div class="row">
+  <div class="col-lg-12">
+    <!-- Table -->
+    <form #formFilter>
+      <div class="p-1">
+        <div class="form-inline">
+          <button
+            *ngIf="
+              !isTextFilterEditing &&
+              !isDateFilterEditing &&
+              !isTimeFilterEditing &&
+              !isBoolFilterEditing &&
+              !isNumberFilterEditing &&
+              !isSelectFilterEditing
+            "
+            [matMenuTriggerFor]="menu"
+            mat-icon-button
+            class="mr-2"
+            matTooltip="Click to filter data!"
+          >
+            {{ label || null }}
+            <mat-icon class="{{ label ? 'ml-1' : '' }}">filter_list</mat-icon>
+          </button>
+          <mat-menu #menu="matMenu">
+            <mat-list>
+              <ng-container *ngFor="let section of filterCriteria.criteria">
+                <h3 matSubheader *ngIf="section.group">
+                  <b>{{ section.group.toUpperCase() }}</b>
+                </h3>
+                <ng-container
+                  *ngFor="let filter of section.filters"
+                  [ngTemplateOutlet]="menuItem"
+                  [ngTemplateOutletContext]="{ item: filter }"
+                >
+                </ng-container>
+              </ng-container>
+            </mat-list>
+          </mat-menu>
+          <mat-chip-list class="ml-1" *ngFor="let filter of state.list">
+            <mat-chip
+              #chip="matChip"
+              class="mr-3"
+              (click)="chip.select()"
+              (selectionChange)="onEdit(filter)"
+              (removed)="onDelete(filter.filter, filter.content!)"
+              matTooltip="{{ 'Click to edit filter:' + ' ' + filter.name }}"
+            >
+              {{ nameToDisplay(filter) }}
+              <mat-icon matChipRemove>cancel</mat-icon>
+            </mat-chip>
+          </mat-chip-list>
+
+          <mat-form-field
+            class="unset-padding-mat-form-field"
+            appearance="outline"
+            *ngIf="isTextFilterEditing"
+          >
+            <input
+              matInput
+              type="text"
+              name="searchTerm"
+              (keyup.enter)="onRun()"
+              [(ngModel)]="state.data.value"
+              placeholder="Search term"
+            />
+          </mat-form-field>
+
+          <mat-form-field
+            class="unset-padding-mat-form-field"
+            appearance="outline"
+            *ngIf="isDateFilterEditing"
+          >
+            <mat-label>Choose a date</mat-label>
+            <input
+              matInput
+              [matDatepicker]="picker"
+              max="9999-12-31"
+              name="searchTermDate"
+              (keyup.enter)="onRun()"
+              [(ngModel)]="state.data.value"
+            />
+            <mat-datepicker-toggle
+              matSuffix
+              [for]="picker"
+            ></mat-datepicker-toggle>
+            <mat-datepicker #picker></mat-datepicker>
+          </mat-form-field>
+
+          <mat-form-field
+            class="unset-padding-mat-form-field"
+            appearance="outline"
+            *ngIf="isTimeFilterEditing"
+          >
+            <input
+              matTimepicker
+              name="searchTermDate"
+              #timePicker="matTimepicker"
+              [strict]="false"
+              (keyup.enter)="onRun()"
+              [(ngModel)]="state.data.value"
+              placeholder="Please select time..."
+            />
+            <button
+              type="button"
+              mat-icon-button
+              matSuffix
+              (click)="timePicker.showDialog()"
+            >
+              <mat-icon matSuffix>access_time</mat-icon>
+            </button>
+          </mat-form-field>
+
+          <mat-form-field
+            class="unset-padding-mat-form-field"
+            appearance="outline"
+            *ngIf="isNumberFilterEditing"
+          >
+            <input
+              matInput
+              type="number"
+              name="searchTermNumber"
+              (keyup.enter)="onRun()"
+              [(ngModel)]="state.data.value"
+              placeholder="Search term"
+            />
+          </mat-form-field>
+
+          <mat-form-field
+            class="unset-padding-mat-form-field"
+            appearance="outline"
+            *ngIf="isSelectFilterEditing"
+          >
+            <mat-label>Pick one</mat-label>
+            <mat-select
+              [(ngModel)]="state.data.value"
+              name="searchTermDropDown"
+              (keyup.enter)="onRun()"
+            >
+              <mat-option *ngFor="let opt of selectOptions" [value]="opt.id">
+                {{ opt.content }}
+              </mat-option>
+            </mat-select>
+          </mat-form-field>
+
+          <div *ngIf="isBoolFilterEditing">
+            <label>{{ state.data.name }}</label>
+            <mat-radio-group
+              class="ml-2"
+              labelPosition="before"
+              aria-label="Select an option"
+              name="searchTermBool"
+              [(ngModel)]="state.data.value"
+              (change)="onRun()"
+            >
+              <mat-radio-button value="true">{{
+                forOrder ? "Asc" : "Yes"
+              }}</mat-radio-button>
+              <mat-radio-button value="false">{{
+                forOrder ? "Desc" : "No"
+              }}</mat-radio-button>
+            </mat-radio-group>
+          </div>
+
+          <button
+            *ngIf="
+              isTextFilterEditing ||
+              isBoolFilterEditing ||
+              isDateFilterEditing ||
+              isTimeFilterEditing ||
+              isSelectFilterEditing ||
+              isNumberFilterEditing
+            "
+            mat-icon-button
+            (click)="onRun()"
+            class="ml-2"
+            matTooltip="Apply filter"
+          >
+            <mat-icon>check</mat-icon>
+          </button>
+          <button
+            *ngIf="
+              isTextFilterEditing ||
+              isBoolFilterEditing ||
+              isDateFilterEditing ||
+              isTimeFilterEditing ||
+              isSelectFilterEditing ||
+              isNumberFilterEditing
+            "
+            mat-icon-button
+            (click)="onCancel()"
+            class="ml-2"
+            matTooltip="Cancel filter"
+          >
+            <mat-icon>close</mat-icon>
+          </button>
+
+          <span class="spacer"></span>
+          <button
+            *ngIf="state.list.length > 0"
+            mat-button
+            (click)="onClear()"
+            matTooltip="Undo all filters"
+          >
+            Clear filters
+          </button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+<ng-template #menuItem let-item="item">
+  <mat-list-item>
+    <button
+      mat-menu-item
+      [disabled]="!canBeUsed(item.filter, item.options?.isMultiple)"
+      (click)="onStart(item)"
+    >
+      {{ item.name }}
+    </button>
+  </mat-list-item>
+</ng-template>

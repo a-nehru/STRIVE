@@ -1,0 +1,24 @@
+<app-loading [isLoading]="isLoading"></app-loading>
+<app-page-heading
+  [heading]="state.heading"
+  [subheading]="state.subheading"
+  [icon]="state.headingIcon"
+></app-page-heading>
+<div class="d-flex">
+  <div class="mb-5 container">
+    <mat-card class="row mat-elevation-z3">
+      <app-filter
+        [filterCriteria]="imports.filterCriteria"
+        (filterChange)="updateRoutineList($event)"
+      >
+      </app-filter>
+      <app-table-routines #tableRoutines (deleteEvent)="onRefresh()">
+      </app-table-routines>
+      <app-pagination
+      [paginationData]="paginationData"
+      [paginationOptions]="paginationOptions"
+      (pageChange)="onPageChange()"
+    ></app-pagination>
+    </mat-card>
+  </div>
+</div>

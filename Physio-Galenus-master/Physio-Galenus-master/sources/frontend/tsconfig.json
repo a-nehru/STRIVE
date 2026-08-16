@@ -1,0 +1,75 @@
+/* To learn more about this file see: https://angular.io/config/tsconfig. */
+{
+  "compileOnSave": false,
+  "compilerOptions": {
+    "paths": {
+      "@config/*": [
+        "../backend/src/config/*"
+      ],
+      "@common-request-dto/*": [
+        "../backend/src/common/dto/request/*"
+      ],
+      "@common-response-dto/*": [
+        "../backend/src/common/dto/response/*"
+      ],
+      "@common-types-dto/*": [
+        "../backend/src/common/dto/types/*"
+      ],
+      "@client-services/*": [
+        "src/app/services/*"
+      ],
+      "@common/*": [
+        "../backend/src/common/*"
+      ],
+      "@common-utils/*": [
+        "../backend/src/common/utils/*"
+      ],
+      "@common-config/*": [
+        "../backend/src/common/config/*"
+      ],
+      "@common-request-dto-interfaces/*": [
+        "../backend/src/shared/dto/request/*"
+      ],
+      "@common-response-dto-interfaces/*": [
+        "../backend/src/shared/dto/response/*"
+      ],
+      "@common-types/*": [
+        "../backend/src/shared/types/*"
+      ],
+      "@common-enums/*": [
+        "../backend/src/shared/enums/*"
+      ],
+      "@common-interfaces/*": [
+        "../backend/src/common/interfaces/*"
+      ],
+      "@custom-decorators/*": [
+        "src/app/decorators/*"
+      ],
+    },
+    "baseUrl": "./",
+    "outDir": "./dist/out-tsc",
+    "forceConsistentCasingInFileNames": true,
+    "strict": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "sourceMap": true,
+    "declaration": false,
+    "downlevelIteration": true,
+    "experimentalDecorators": true,
+    "moduleResolution": "node",
+    "importHelpers": true,
+    "target": "es2017",
+    "module": "es2020",
+    "lib": [
+      "es2018",
+      "dom"
+    ],
+    "strictPropertyInitialization": false
+  },
+  "angularCompilerOptions": {
+    "enableI18nLegacyMessageIdFormat": false,
+    "strictInjectionParameters": true,
+    "strictInputAccessModifiers": true,
+    "strictTemplates": true
+  }
+}

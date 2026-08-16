@@ -1,0 +1,23 @@
+
+This game need 16:9 screen ratio.
+
+W,A,S,D to move left hand,
+I,J,K,L(or Up,Down,Left,Right) to move right hand.
+Space to catch,
+Shift to drop the catched ball.
+
+Two hands must be adjacent when click Space to catch, if two hands are too far, single hand can't catch the ball.
+
+First start the game, then you can pause, resume, and stop the game.
+
+The condition 2 is observation condition, player can't control anything.
+
+Interval time between conditions is 5 seconds.
+
+The condition 4 can't use Shift to drop, but move hand down to the groove, and the ball will be dropped automatically.
+
+In option you can change the amount of ball colors,the size,speed and gap time of balls, and make these attributes randomly with turning the random button on.(When it's random, the value will be the max value of range)
+
+The scoreboard: 
+Loops:when the whole 4 conditions repeat 20 times, the game will be over.
+Score:catch a ball +1$,miss a ball -1$.

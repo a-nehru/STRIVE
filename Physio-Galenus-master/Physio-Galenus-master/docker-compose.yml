@@ -1,0 +1,66 @@
+services:
+  postgres:
+    container_name: postgres-physio
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    build:
+      context: ./init-db-image
+      dockerfile: Dockerfile
+    environment:
+      POSTGRES_USER: ${DATABASE_USERNAME}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
+      POSTGRES_DB: ${DATABASE_DBNAME}
+    volumes:
+      - ./postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - app-network-physio
+
+  empty-db:
+    image: postgres:12
+    container_name: empty-db-physio
+    ports:
+      - "5555:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    networks:
+      - app-network-physio
+
+  nodejs:
+    build:
+      context: ./sources
+      dockerfile: Dockerfile
+    image: nodejs
+    container_name: nodejs-physio
+    restart: unless-stopped
+    tty: true
+    env_file: .env
+    entrypoint: ./scripts/start-app.sh
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_USER: ${DATABASE_USERNAME}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
+      POSTGRES_DB: ${DATABASE_DBNAME}
+    ports:
+      - "8080:8080"
+      - "8081:8081"
+    volumes:
+      - type: bind
+        source: ./sources
+        target: /opt/app/
+    networks:
+      - app-network-physio
+
+networks:
+  app-network-physio:
+    driver: bridge

@@ -1,0 +1,253 @@
+<app-loading [isLoading]="isLoading"></app-loading>
+<app-page-heading
+  [heading]="state.heading"
+  [subheading]="state.subheading"
+  [icon]="state.headingIcon"
+></app-page-heading>
+<div class="d-flex">
+  <div class="container">
+    <mat-card class="row">
+      <mat-card-header>
+        <mat-card-title>Exiting users</mat-card-title>
+      </mat-card-header>
+      <mat-card-content>
+        <div>
+          <mat-form-field appearance="outline" class="col-12">
+            <mat-label>Choose a user</mat-label>
+
+            <mat-select #matSelectUser (selectionChange)="onChangeUser($event)">
+              <mat-option>Choose a user</mat-option>
+              <mat-option *ngFor="let r of this.state.users" [value]="r.id">
+                {{ r.username + " - " + r.username }}
+              </mat-option>
+            </mat-select>
+          </mat-form-field>
+        </div>
+        <div *ngIf="this.state.selectedUser">
+          <mat-card class="mat-elevation-z3">
+            <mat-card-header>
+              <mat-card-subtitle
+                >Manage User Permission
+                <b
+                  *ngIf="
+                    this.state.permissionToAdd.length > 0 ||
+                    this.state.permissionToEdit.length > 0 ||
+                    this.state.permissionToDelete.length > 0
+                  "
+                  >(Unsaved changes)</b
+                >
+              </mat-card-subtitle>
+            </mat-card-header>
+            <mat-card-content>
+              <mat-accordion class="headers-align" multi>
+                <mat-expansion-panel
+                  *ngFor="
+                    let c of this.state.selectedUser.categories_with_permissions
+                  "
+                >
+                  <mat-expansion-panel-header>
+                    <mat-panel-title>
+                      {{ c.name }}
+                    </mat-panel-title>
+                    <mat-panel-description>
+                      {{ c.description }}
+                    </mat-panel-description>
+                    <mat-panel-description class="right-aligned">
+                      {{ c.permissions.length }}/{{
+                        getNPermissionOfCategory(c)
+                      }}
+                      <mat-icon class="ml-2">security</mat-icon>
+                    </mat-panel-description>
+                  </mat-expansion-panel-header>
+                  <!-- Content of permission category-->
+                  <div>
+                    <table
+                      class="mat-table mat-elevation-z3"
+                      style="width: 100%"
+                    >
+                      <tr class="mat-header-row">
+                        <th class="mat-header-cell">Permission</th>
+                        <th class="mat-header-cell text-center">Create</th>
+                        <th class="mat-header-cell text-center">Edit</th>
+                        <th class="mat-header-cell text-center">Read</th>
+                        <th class="mat-header-cell text-center">Delete</th>
+                        <th class="mat-header-cell text-center">List</th>
+                        <th class="mat-header-cell text-center">Actions</th>
+                      </tr>
+                      <tr class="mat-row" *ngFor="let p of c.permissions">
+                        <ng-template #elseBlock>
+                          <mat-icon>horizontal_rule</mat-icon>
+                        </ng-template>
+                        <td class="mat-cell">
+                          {{ p.name }}
+                        </td>
+                        <td class="mat-cell text-center">
+                          <mat-checkbox
+                            *ngIf="p.can_create !== undefined; else elseBlock"
+                            color="primary"
+                            [checked]="p.can_create"
+                            (change)="p.can_create = !p.can_create"
+                            (change)="onChangePermissionAction(p)"
+                          >
+                          </mat-checkbox>
+                        </td>
+                        <td class="mat-cell text-center">
+                          <mat-checkbox
+                            *ngIf="p.can_edit !== undefined; else elseBlock"
+                            color="primary"
+                            [checked]="p.can_edit"
+                            (change)="p.can_edit = !p.can_edit"
+                            (change)="onChangePermissionAction(p)"
+                          >
+                          </mat-checkbox>
+                        </td>
+                        <td class="mat-cell text-center">
+                          <mat-checkbox
+                            *ngIf="p.can_read !== undefined; else elseBlock"
+                            color="primary"
+                            [checked]="p.can_read"
+                            (change)="p.can_read = !p.can_read"
+                            (change)="onChangePermissionAction(p)"
+                          >
+                          </mat-checkbox>
+                        </td>
+                        <td class="mat-cell text-center">
+                          <mat-checkbox
+                            *ngIf="p.can_delete !== undefined; else elseBlock"
+                            color="primary"
+                            [checked]="p.can_delete"
+                            (change)="p.can_delete = !p.can_delete"
+                            (change)="onChangePermissionAction(p)"
+                          >
+                          </mat-checkbox>
+                        </td>
+                        <td class="mat-cell text-center">
+                          <mat-checkbox
+                            *ngIf="p.can_list !== undefined; else elseBlock"
+                            color="primary"
+                            [checked]="p.can_list"
+                            (change)="p.can_list = !p.can_list"
+                            (change)="onChangePermissionAction(p)"
+                          >
+                          </mat-checkbox>
+                        </td>
+                        <td class="mat-cell text-center">
+                          <button
+                            mat-icon-button
+                            color="warn"
+                            matTooltip="Click to delete this permission!"
+                            (click)="onDeletePermission(p, c)"
+                          >
+                            <mat-icon>delete</mat-icon>
+                          </button>
+                        </td>
+                      </tr>
+                    </table>
+                  </div>
+                  <div>
+                    <mat-form-field class="col-8">
+                      <mat-label>Add new permission to this category</mat-label>
+
+                      <mat-select
+                        (selectionChange)="
+                          onChangeNewPermissionToCategory($event, c)
+                        "
+                      >
+                        <mat-option
+                          >Add new permission to this category</mat-option
+                        >
+                        <mat-option
+                          *ngFor="let p of getPermissionsNotAdded(c)"
+                          [value]="p"
+                        >
+                          {{ p.name }}
+                        </mat-option>
+                      </mat-select>
+                    </mat-form-field>
+                  </div>
+                </mat-expansion-panel>
+              </mat-accordion>
+              <div>
+                <mat-form-field class="col-10">
+                  <mat-label
+                    >Add new category permission to this user</mat-label
+                  >
+
+                  <mat-select
+                    (selectionChange)="onChangeNewCategoryPermission($event)"
+                  >
+                    <mat-option
+                      >Add new category permission to this user</mat-option
+                    >
+                    <mat-option
+                      *ngFor="let c of this.state.emptyUserCategoriesPermission"
+                      [value]="c"
+                    >
+                      {{ c.name + " - " + c.description }}
+                    </mat-option>
+                  </mat-select>
+                </mat-form-field>
+                <button
+                  mat-flat-button
+                  color="primary"
+                  (click)="onSaveSelectedUser()"
+                  [disabled]="
+                    !(
+                      this.state.permissionToAdd.length > 0 ||
+                      this.state.permissionToEdit.length > 0 ||
+                      this.state.permissionToDelete.length > 0
+                    )
+                  "
+                  matTooltip="Click to save selected user!"
+                >
+                  Save permissions
+                </button>
+              </div>
+            </mat-card-content>
+          </mat-card>
+          <mat-card class="mt-3 mat-elevation-z3">
+            <mat-card-header>
+              <mat-card-subtitle>
+                Manage User Roles
+                <b *ngIf="this.state.selectedRolesForm.dirty"
+                  >(Unsaved changes)</b
+                >
+              </mat-card-subtitle>
+            </mat-card-header>
+            <mat-card-content>
+              <mat-form-field class="col-10">
+                <mat-label
+                  >Roles assigned to
+                  {{ this.state.selectedUser.username }}</mat-label
+                >
+                <mat-select
+                  [formControl]="this.state.selectedRolesForm"
+                  multiple
+                >
+                  <mat-option
+                    *ngFor="let role of this.state.roles"
+                    [value]="role.id"
+                    >{{ role.id }}
+                  </mat-option>
+                </mat-select>
+              </mat-form-field>
+              <button
+                mat-flat-button
+                color="primary"
+                (click)="onSaveRoleChanges()"
+                [disabled]="!this.state.selectedRolesForm.dirty"
+                matTooltip="Click to save roles!"
+              >
+                Save roles
+              </button>
+            </mat-card-content>
+          </mat-card>
+        </div>
+      </mat-card-content>
+    </mat-card>
+  </div>
+</div>
+<!-- FIX TO FORCE THE MAT-TABLE STYLE TO LOAD-->
+<mat-table style="display: none">
+  <mat-header-row *matHeaderRowDef="[]"></mat-header-row>
+</mat-table>

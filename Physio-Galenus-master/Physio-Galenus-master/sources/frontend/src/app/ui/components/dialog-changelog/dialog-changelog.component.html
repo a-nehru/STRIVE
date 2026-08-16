@@ -1,0 +1,57 @@
+<app-loading [isLoading]="isLoading"></app-loading>
+
+<div class="modal-header">
+  <h1 mat-dialog-title>
+    Physio Galenus has been updated!
+  </h1>
+  <button type="button" class="close" [mat-dialog-close]="true">&times;</button>
+</div>
+
+<div mat-dialog-content>
+  <ng-container
+    *ngFor="
+      let changelog of changelogs;
+      let lastChangelog = last;
+      let firstChangelog = first
+    "
+  >
+    <h2>
+      v{{ changelog.version }} ({{ changelog.date | date: "dd/MM/yyyy" }})
+      <span *ngIf="firstChangelog" class="badge badge-success">Latest</span>
+    </h2>
+    <ng-container *ngFor="let block of changelog.blocks">
+      <h3>{{ block.label }}</h3>
+      <ul>
+        <li *ngFor="let entry of block.entries">
+          {{ entry.description
+          }}<ng-container *ngIf="entry.jira && entry.jira.length > 0"
+            >, closes
+            <!-- <ng-container
+              *ngFor="let ticket of entry.jira; let lastTicket = last"
+            >
+              <a
+                href="url/{{ ticket }}"
+                target="_blank"
+                >{{ ticket }}</a
+              ><span *ngIf="!lastTicket">, </span>
+            </ng-container> -->
+          </ng-container>
+        </li>
+      </ul>
+    </ng-container>
+    <hr *ngIf="!lastChangelog" />
+  </ng-container>
+</div>
+
+<div class="modal-footer" mat-dialog-actions align="end">
+  <button mat-flat-button matTooltip="Export as CSV" (click)="exportToCsv()">
+    <i class="fas fa-file-csv fa-2x"></i>
+  </button>
+  <button
+    mat-flat-button
+    color="primary"
+    [mat-dialog-close]="true"
+  >
+    Close
+  </button>
+</div>

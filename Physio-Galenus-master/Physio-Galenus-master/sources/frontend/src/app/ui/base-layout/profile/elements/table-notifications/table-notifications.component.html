@@ -1,0 +1,180 @@
+<div class="table-responsive">
+  <ng-container *ngIf="canDelete && selection.selected.length > 0">
+    <button
+      [appIfPermissionsEnable]="deleteNotificationPermissions"
+      [disabled]="!hasPermissions(deleteNotificationPermissions)"
+      (click)="onDelete()"
+      mat-button
+    >
+      Delete permanently
+    </button>
+    <mat-divider class="style-fix" [vertical]="true"></mat-divider>
+  </ng-container>
+  <ng-container *ngIf="selection.hasValue() && selection.selected.length > 0">
+    <button
+      [appIfPermissionsEnable]="updateNotificationPermissions"
+      [disabled]="!canArchive || !hasPermissions(updateNotificationPermissions)"
+      mat-icon-button
+      color="accent"
+      (click)="
+        onBulkUpdate({
+          key: 'is_archived',
+          value: true
+        })
+      "
+      matTooltip="Archive"
+    >
+      <mat-icon>archive</mat-icon>
+    </button>
+    <button
+      [appIfPermissionsEnable]="deleteNotificationPermissions"
+      [disabled]="!canRemove || !hasPermissions(deleteNotificationPermissions)"
+      mat-icon-button
+      color="accent"
+      (click)="
+        onBulkUpdate({
+          key: 'is_removed',
+          value: true
+        })
+      "
+      matTooltip="Remove"
+    >
+      <mat-icon>delete</mat-icon>
+    </button>
+    <button
+      [appIfPermissionsEnable]="updateNotificationPermissions"
+      [disabled]="!canRead || !hasPermissions(updateNotificationPermissions)"
+      mat-icon-button
+      color="accent"
+      (click)="
+        onBulkUpdate({
+          key: 'is_read',
+          value: !isAllSelectedRead()
+        })
+      "
+      matTooltip="{{ isAllSelectedRead() ? 'Mark as unread' : 'Mark as read' }}"
+    >
+      <mat-icon>{{ isAllSelectedRead() ? "mail" : "drafts" }}</mat-icon>
+    </button>
+  </ng-container>
+  <ng-container *ngIf="canRestore && selection.selected.length > 0">
+    <mat-divider class="style-fix" [vertical]="true"></mat-divider>
+    <button
+      [appIfPermissionsEnable]="updateNotificationPermissions"
+      [disabled]="!hasPermissions(updateNotificationPermissions)"
+      mat-icon-button
+      color="accent"
+      (click)="onRestore()"
+      matTooltip="Restore"
+    >
+      <mat-icon>restore_from_trash</mat-icon>
+    </button>
+  </ng-container>
+  <table class="table">
+    <thead>
+      <tr>
+        <th class="mat-header-cell">
+          <mat-checkbox
+            (change)="$event ? masterToggle() : null"
+            [checked]="selection.hasValue() && isAllSelected()"
+            [indeterminate]="selection.hasValue() && !isAllSelected()"
+          >
+          </mat-checkbox>
+        </th>
+        <th class="mat-header-cell">Date</th>
+        <th class="mat-header-cell">Message</th>
+        <th class="mat-header-cell">Subject</th>
+        <th class="mat-header-cell text-center">Actions</th>
+      </tr>
+    </thead>
+    <tbody class="notificationTableBody">
+      <tr
+        *ngFor="let notification of notifications?.data; let row = index"
+        (click)="selection.toggle(notification.id)"
+      >
+        <td class="mat-cell">
+          <mat-checkbox
+            (click)="$event.stopPropagation()"
+            (change)="$event ? selection.toggle(notification.id) : null"
+            [checked]="selection.isSelected(notification.id)"
+          >
+          </mat-checkbox>
+        </td>
+        <td
+          [ngStyle]="{
+            'font-weight': !notification.is_read ? 'bold' : 'initial'
+          }"
+          class="clickable-cell mat-cell"
+        >
+          {{ notification.notification_date | date: "dd/MM/yyyy" }}
+        </td>
+        <td
+          [ngStyle]="{
+            'font-weight': !notification.is_read ? 'bold' : 'initial'
+          }"
+          class="clickable-cell mat-cell"
+        >
+          {{ notification.message }}
+        </td>
+        <td
+          [ngStyle]="{
+            'font-weight': !notification.is_read ? 'bold' : 'initial'
+          }"
+          class="clickable-cell mat-cell"
+        >
+          {{ notification.subject }}
+        </td>
+        <td (click)="$event.stopPropagation()" class="mat-cell text-center">
+          <button
+            [appIfPermissionsEnable]="updateNotificationPermissions"
+            [disabled]="
+              !canArchive || !hasPermissions(updateNotificationPermissions)
+            "
+            mat-icon-button
+            color="accent"
+            (click)="
+              archiveEvent.emit({
+                id: notification.id,
+                is_archived: !notification.is_archived
+              })
+            "
+            matTooltip="Archive"
+          >
+            <mat-icon>archive</mat-icon>
+          </button>
+          <button
+            [appIfPermissionsEnable]="deleteNotificationPermissions"
+            [disabled]="
+              !canRemove || !hasPermissions(deleteNotificationPermissions)
+            "
+            mat-icon-button
+            color="accent"
+            (click)="removeEvent.emit(notification.id)"
+            matTooltip="Remove"
+          >
+            <mat-icon>delete</mat-icon>
+          </button>
+          <button
+            [appIfPermissionsEnable]="updateNotificationPermissions"
+            [disabled]="
+              !canRead || !hasPermissions(updateNotificationPermissions)
+            "
+            mat-icon-button
+            color="accent"
+            (click)="
+              readEvent.emit({
+                id: notification.id,
+                is_read: !notification.is_read
+              })
+            "
+            matTooltip="{{
+              notification.is_read ? 'Mark as unread' : 'Mark as read'
+            }}"
+          >
+            <mat-icon>{{ notification.is_read ? "mail" : "drafts" }}</mat-icon>
+          </button>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+</div>

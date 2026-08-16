@@ -1,0 +1,159 @@
+<app-loading [isLoading]="state.isLoading"></app-loading>
+<app-page-heading
+  [heading]="state.heading"
+  [subheading]="state.subheading"
+  [icon]="state.headingIcon"
+></app-page-heading>
+<div class="d-flex mb-4">
+  <div class="container">
+    <mat-card
+      *ngIf="this.imports.isDefined(this.state.difficultyAdjustment?.original_routine_id); else noInferenceSection"
+      class="row"
+    >
+      <mat-card-header>
+        <mat-card-title>
+          This is the new routine suggested
+        </mat-card-title>
+        <mat-card-subtitle>
+          You may accept or discard the suggested routine after evaluating it
+        </mat-card-subtitle>
+      </mat-card-header>
+
+      <table mat-table [dataSource]="this.state.difficultyAdjustment?.new_exercise_configurations || []" class="my-4 w-100">
+        <ng-container matColumnDef="exercise">
+          <th mat-header-cell *matHeaderCellDef> Exercise </th>
+          <td mat-cell *matCellDef="let config"> {{config.exercise?.name}} </td>
+        </ng-container>
+
+        <ng-container matColumnDef="sets">
+          <th mat-header-cell *matHeaderCellDef> Sets </th>
+          <td mat-cell *matCellDef="let config"> {{config.sets}} </td>
+        </ng-container>
+
+        <ng-container matColumnDef="reps">
+          <th mat-header-cell *matHeaderCellDef> Reps </th>
+          <td mat-cell *matCellDef="let config"> {{config.reps}} </td>
+        </ng-container>
+
+        <ng-container matColumnDef="time">
+          <th mat-header-cell *matHeaderCellDef> Time </th>
+          <td mat-cell *matCellDef="let config"> {{config.time}} </td>
+        </ng-container>
+
+        <ng-container matColumnDef="rest_between_sets">
+          <th mat-header-cell *matHeaderCellDef> Rest Between Sets </th>
+          <td mat-cell *matCellDef="let config"> {{config.rest_between_sets}} </td>
+        </ng-container>
+
+        <tr mat-header-row *matHeaderRowDef="['exercise', 'sets', 'reps', 'time', 'rest_between_sets']"></tr>
+        <tr mat-row *matRowDef="let row; columns: ['exercise', 'sets', 'reps', 'time', 'rest_between_sets']"></tr>
+      </table>
+
+      <ng-container *ngIf="this.imports.Object.keys(this.explanationClusters).length">
+        <h2 class="ml-4 mt-4">Explanations</h2>
+
+        <mat-expansion-panel *ngFor="let i of explanationClustersIndexes" class="mt-4">
+          <mat-expansion-panel-header>
+            <mat-panel-title class="text-truncate text-nowrap overflow-hidden">
+              {{ getExerciseNames(explanationClustersItems[i].exercises).join(', ') }}
+            </mat-panel-title>
+          </mat-expansion-panel-header>
+
+          <ul>
+            <li *ngFor="let exercise of getExerciseNames(explanationClustersItems[i].exercises)">
+              {{ exercise }}
+            </li>
+          </ul>
+
+          <div *ngIf="!this.imports.isDefined(getClusterRepresentativeId(explanationClustersItems[i].cluster)) || !getExerciseExplanations(getClusterRepresentativeId(explanationClustersItems[i].cluster) || ''); else explanationAvailable" class="m-4">
+            This exercise has been added to the routine with the default data.
+          </div>
+
+          <ng-template #explanationAvailable>
+            <mat-card *ngFor="let explanation of compactExplanations(getExerciseExplanations(getClusterRepresentativeId(explanationClustersItems[i].cluster) || ''))" class="row h-50 w-100 p-4 mx-2 my-2">
+              <div class="row p-2">
+                <div class="col-4 d-flex flex-column justify-content-center">
+                  <div *ngFor="let antecedent of this.explanation.antecedents">
+                    <app-difficulty-variable-display [clause]="antecedent"></app-difficulty-variable-display>
+                  </div>
+                </div>
+
+                <div class="col-4 d-flex flex-column justify-content-center">
+                  <mat-icon class="w-100 inference-arrow">
+                    arrow_right_alt
+                  </mat-icon>
+                </div>
+
+                <div class="col-4 d-flex flex-column justify-content-center">
+                  <div *ngFor="let consequent of this.explanation.consequents">
+                    <app-difficulty-variable-display [clause]="consequent"></app-difficulty-variable-display>
+                  </div>
+                </div>
+              </div>
+            </mat-card>
+          </ng-template>
+        </mat-expansion-panel>
+      </ng-container>
+
+      <div class="mt-5 mr-2 row d-flex justify-content-end">
+        <button
+          mat-stroked-button
+          type="button"
+          (click)="onDiscardAdjustment()"
+          class="bg-white"
+          [appIfPermissionsEnable]="editRoutinePermission"
+        >
+          Discard
+        </button>
+        <button
+          mat-flat-button
+          color="primary"
+          class="ml-2"
+          (click)="onAcceptAdjustment()"
+          [appIfPermissionsEnable]="editRoutinePermission"
+        >
+          Apply
+        </button>
+      </div>
+    </mat-card>
+
+
+    <ng-template #noInferenceSection>
+        <mat-card class="row">
+          <mat-card-header>
+            <mat-card-title>
+              No adjustment has been performed
+            </mat-card-title>
+            <mat-card-subtitle>
+              It is necessary to request the difficulty adjustment before it can be accepted
+            </mat-card-subtitle>
+          </mat-card-header>
+
+          <button
+            *ngIf="!this.state.isPerformingInference; else performingInferenceButton"
+            mat-flat-button
+            type="button"
+            color="primary"
+            (click)="onPerformInference()"
+            [appIfPermissionsEnable]="editRoutinePermission"
+            class="inference-button"
+          >
+            Adjust Difficulty
+          </button>
+
+          <ng-template #performingInferenceButton>
+            <button
+              #performingInferenceButton
+              mat-flat-button
+              type="button"
+              color="primary"
+              class="inference-button"
+              disabled
+            >
+              Adjusting Difficulty
+            </button>
+          </ng-template>
+        </mat-card>
+    </ng-template>
+  </div>
+</div>

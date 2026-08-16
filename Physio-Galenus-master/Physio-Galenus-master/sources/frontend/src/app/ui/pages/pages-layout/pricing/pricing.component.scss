@@ -1,0 +1,24 @@
+@media (min-width: 768px) {
+  html {
+    font-size: 16px;
+  }
+}
+
+.mat-display-2 {
+  margin-top: 0px;
+  margin-right: 0px;
+  margin-bottom: 40px;
+  margin-left: 0px;
+}
+
+.container {
+  max-width: 970px;
+}
+
+.pricing-header {
+  max-width: 700px;
+}
+
+.card-deck .card {
+  min-width: 220px;
+}

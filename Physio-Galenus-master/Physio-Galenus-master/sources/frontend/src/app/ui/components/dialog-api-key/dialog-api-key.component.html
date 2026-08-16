@@ -1,0 +1,91 @@
+<app-loading [isLoading]="state.isLoading"></app-loading>
+<div class="modal-header">
+  <h1 mat-dialog-title>
+    {{ isEditing ? "Edit" : "Create" }} API Key
+    <b *ngIf="isEditing"> - {{ apiKey?.username }}</b>
+  </h1>
+  <button type="button" class="close" [mat-dialog-close]="false">&times;</button>
+</div>
+
+<form [formGroup]="state.upsertApiKeyForm">
+  <div modal-dialog-content>
+    <div class="row">
+      <div class="col">
+        <div class="row mt-3 m-1">
+          <div class="col-12">
+            <mat-form-field
+              class="w-100"
+              appearance="outline"
+              *ngIf="!isEditing"
+            >
+              <mat-label>User</mat-label>
+              <mat-select formControlName="username" required>
+                <mat-option *ngFor="let user of state.users" [value]="user.id">
+                  {{ user.username }}
+                </mat-option>
+              </mat-select>
+              <mat-error *ngIf="state.upsertApiKeyForm"
+                >User is required</mat-error
+              >
+            </mat-form-field>
+          </div>
+          <div class="col-12">
+            <mat-form-field class="w-100" appearance="outline">
+              <mat-label>Description</mat-label>
+              <input
+                matInput
+                id="description"
+                type="text"
+                placeholder="Short description of the purpose"
+                formControlName="description"
+              />
+            </mat-form-field>
+          </div>
+          <div class="col-6">
+            <mat-form-field class="w-100" appearance="outline">
+              <mat-label>Quota</mat-label>
+              <input
+                matInput
+                id="quota"
+                placeholder="Maximun number of request"
+                name="quota"
+                type="number"
+                min="1"
+                formControlName="quota"
+              />
+            </mat-form-field>
+          </div>
+          <div class="col-6">
+            <mat-form-field class="w-100" appearance="outline">
+              <mat-label>Quota reset</mat-label>
+              <mat-select formControlName="quotaReset">
+                <mat-option
+                  *ngFor="let quotaReset of imports.EApiKeyQuotaReset | keyvalue"
+                  [value]="quotaReset.value"
+                >
+                  {{ quotaReset.key }}
+                </mat-option>
+              </mat-select>
+            </mat-form-field>
+          </div>
+          <div class="col-12">
+            <mat-checkbox
+              id="isRevoked"
+              name="isRevoked"
+              formControlName="isRevoked"
+              >Is revoked</mat-checkbox
+            >
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="modal-footer" mat-dialog-actions align="end">
+    <button mat-flat-button color="primary" [mat-dialog-close]="false">
+      Cancel
+    </button>
+    <button type="submit" mat-flat-button color="accent" (click)="onSubmit()">
+      Save
+    </button>
+  </div>
+</form>

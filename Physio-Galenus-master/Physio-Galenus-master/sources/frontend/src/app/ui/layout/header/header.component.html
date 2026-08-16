@@ -1,0 +1,63 @@
+<mat-toolbar *ngIf="!showSearch" class="mat-elevation-z6" color="primary">
+  <ng-content></ng-content>
+  <ng-container *ngFor="let item of buttonList">
+    <button
+      *appIfPermissionsShow="item.permissions || []"
+      type="button"
+      class="button-hover"
+      mat-button
+      [routerLink]="item.link"
+    >
+      <mat-icon class="mr-1">{{ item.icon }}</mat-icon
+      >{{ item.displayName }}
+    </button>
+  </ng-container>
+  <span class="toolbar-spacer"></span>
+  <button
+    type="button"
+    matTooltip="Click to search!"
+    (click)="showSearch = !showSearch"
+    mat-icon-button
+  >
+    <mat-icon>search</mat-icon>
+  </button>
+  <app-help-menu></app-help-menu>
+  <mat-divider class="style-fix" [vertical]="true"></mat-divider>
+  <app-user-menu></app-user-menu>
+  <button
+    type="button"
+    matTooltip="Click to see your events!"
+    class="ml-2"
+    mat-icon-button
+  >
+    <mat-icon>calendar_today</mat-icon>
+  </button>
+</mat-toolbar>
+
+<mat-toolbar *ngIf="showSearch" class="mat-elevation-z6" color="primary">
+  <button
+    type="button"
+    matTooltip="Click to perform search!"
+    (click)="search()"
+    mat-icon-button
+  >
+    <mat-icon>search</mat-icon>
+  </button>
+  <mat-form-field class="ml-2 w-100" floatLabel="never">
+    <mat-label>Search</mat-label>
+    <input
+      matInput
+      type="search"
+      [(ngModel)]="searchWord"
+      (keyup.enter)="search()"
+    />
+  </mat-form-field>
+  <button
+    type="button"
+    matTooltip="Click to close search!"
+    (click)="showSearch = !showSearch; searchWord = ''"
+    mat-icon-button
+  >
+    <mat-icon>close</mat-icon>
+  </button>
+</mat-toolbar>

@@ -1,0 +1,9 @@
+<mat-slider
+  [min]="imports.explanationVariableText[clause.variable].min"
+  [max]="imports.explanationVariableText[clause.variable].max"
+  [step]="imports.explanationVariableText[clause.variable].step"
+  [value]="clause.value"
+  class="w-100"
+  disabled
+></mat-slider>
+<p>{{ imports.explanationVariableText[clause.variable].displayText }}</p>

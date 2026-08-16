@@ -1,0 +1,34 @@
+<button
+  mat-icon-button
+  [matMenuTriggerFor]="menu"
+  matTooltip="Click to show help & feedback!"
+  aria-label="Help menu"
+>
+  <mat-icon>help</mat-icon>
+</button>
+<mat-menu #menu="matMenu">
+  <mat-list>
+    <ng-container *ngFor="let menu of filteredMenuList">
+      <h3 matSubheader *ngIf="menu.header">
+        <b>{{ menu.header.toUpperCase() }}</b>
+      </h3>
+      <ng-container
+        *ngFor="let item of menu.entries"
+        [ngTemplateOutlet]="menuItem"
+        [ngTemplateOutletContext]="{ item: item }"
+      >
+      </ng-container>
+    </ng-container>
+  </mat-list>
+</mat-menu>
+
+<ng-template #menuItem let-item="item">
+  <mat-list-item>
+    <button mat-menu-item [routerLink]="item.link">
+      <ng-container *ngIf="item.icon">
+        <mat-icon>{{ item.icon }}</mat-icon>
+      </ng-container>
+      <span>{{ item.title }}</span>
+    </button>
+  </mat-list-item>
+</ng-template>

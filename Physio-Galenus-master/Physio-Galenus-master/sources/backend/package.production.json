@@ -1,0 +1,51 @@
+{
+  "name": "physio-galenus-backend",
+  "version": "0.4.1+build20240703T182718.119",
+  "description": "Backend for Physio Galenus Therapist",
+  "author": "",
+  "engines": {
+    "node": "14.18.2"
+  },
+  "scripts": {
+    "prestart": "bash replace-env-vars-in-ecosystem.sh ecosystem.config.js $SSM_ENV_NAME $AWS_REGION && npm install && npm install pm2 && pm2 install pm2-logrotate && pm2 set pm2-logrotate:max_size 10M && pm2 set pm2-logrotate:retain 3 && pm2 set pm2-logrotate:compress true",
+    "start": "TZ=UTC pm2 start ecosystem.config.js --update-env --name pg-backend",
+    "poststart": "pm2 logs"
+  },
+  "dependencies": {
+    "@nestjs/common": "^7.6.15",
+    "@nestjs/core": "^7.6.15",
+    "@nestjs/passport": "^8.0.0",
+    "@nestjs/platform-express": "^7.6.15",
+    "@nestjs/swagger": "^4.8.2",
+    "@nestjs/typeorm": "^7.1.5",
+    "@types/express-session": "^1.17.4",
+    "@types/faker": "^5.5.9",
+    "aws-sdk": "^2.1148.0",
+    "bcryptjs": "^2.4.3",
+    "class-transformer": "^0.4.0",
+    "class-validator": "^0.13.2",
+    "colors": "^1.4.0",
+    "connect-typeorm": "^1.1.4",
+    "date-fns": "^2.27.0",
+    "express-session": "^1.17.2",
+    "faker": "^5.5.3",
+    "helmet": "^4.6.0",
+    "lint-staged": "^11.1.2",
+    "lodash": "^4.17.21",
+    "logform": "^2.2.0",
+    "nest-emitter": "^1.1.1",
+    "nest-winston": "^1.5.0",
+    "passport": "^0.5.2",
+    "passport-custom": "^1.1.1",
+    "passport-headerapikey": "^1.2.2",
+    "passport-local": "^1.0.0",
+    "pg": "^8.6.0",
+    "reflect-metadata": "^0.1.13",
+    "rimraf": "^3.0.2",
+    "rxjs": "^6.6.6",
+    "swagger-ui-express": "^4.1.6",
+    "typeorm": "^0.2.34",
+    "winston": "^3.3.3",
+    "xlsx": "^0.18.5"
+  }
+}

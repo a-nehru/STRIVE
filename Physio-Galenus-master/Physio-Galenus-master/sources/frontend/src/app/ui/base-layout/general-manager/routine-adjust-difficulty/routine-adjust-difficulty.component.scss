@@ -1,0 +1,24 @@
+.scrollable {
+  min-height: 22rem;
+  overflow-y: scroll;
+}
+
+.inference-button-spinner {
+  display: inline-block;
+  transform: scale(0.4);
+}
+
+.inference-button {
+  display: block;
+  margin: 3rem auto 2rem auto;
+  min-height: 75px;
+  min-width: 175px;
+}
+
+.inference-arrow {
+  user-select: none;
+  text-align: center;
+  vertical-align:middle;
+  overflow: hidden;
+  transform: scale(5);
+}

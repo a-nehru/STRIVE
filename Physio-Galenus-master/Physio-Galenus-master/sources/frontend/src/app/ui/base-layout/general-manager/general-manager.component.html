@@ -1,0 +1,83 @@
+<div *ngIf="router.url === '/' + generalManagerRoute; else elseBlock">
+  <div #container class="grid-container">
+    <mat-grid-list
+      [cols]="breakpoint"
+      rowHeight="150px"
+      (window:resize)="onResize()"
+    >
+      <mat-grid-tile
+        *ngFor="let card of cards"
+        [colspan]="card.colspan"
+        [rowspan]="card.rowspan"
+      >
+        <mat-card
+          class="dashboard-card"
+          [style.background-color]="card.backgroundColor"
+        >
+          <mat-card-content class="dashboard-card-content">
+            <div class="text-div" [style.color]="card.textColor">
+              {{ card.text }}
+            </div>
+            <div class="data-div" [style.color]="card.dataColor">
+              {{ card.data }}
+            </div>
+          </mat-card-content>
+        </mat-card>
+      </mat-grid-tile>
+    </mat-grid-list>
+
+    <mat-grid-list
+      [cols]="breakpointCharts"
+      rowHeight="500px"
+      (window:resize)="onResize()"
+    >
+      <mat-grid-tile [colspan]="1" [rowspan]="1">
+        <mat-card class="dashboard-card">
+          <mat-card-header>
+            <mat-card-title>New Patients (Month)</mat-card-title>
+          </mat-card-header>
+          <mat-card-content class="dashboard-card-content">
+            <div #containerRef class="chart-class">
+              <ngx-charts-bar-vertical
+                *ngIf="patientsByMonth"
+                [view]="[containerRef.offsetWidth, containerRef.offsetHeight]"
+                [results]="patientsByMonth"
+                [gradient]="false"
+                [xAxis]="true"
+                [yAxis]="true"
+                [legend]="false"
+                [showXAxisLabel]="false"
+                [showYAxisLabel]="false"
+              ></ngx-charts-bar-vertical>
+            </div>
+          </mat-card-content>
+        </mat-card>
+      </mat-grid-tile>
+      <mat-grid-tile [colspan]="1" [rowspan]="1">
+        <mat-card class="dashboard-card">
+          <mat-card-header>
+            <mat-card-title>New Patients (Year)</mat-card-title>
+          </mat-card-header>
+          <mat-card-content class="dashboard-card-content">
+            <div #containerRef class="chart-class">
+              <ngx-charts-bar-vertical
+                *ngIf="patientsByYear"
+                [view]="[containerRef.offsetWidth, containerRef.offsetHeight]"
+                [results]="patientsByYear"
+                [gradient]="false"
+                [xAxis]="true"
+                [yAxis]="true"
+                [legend]="false"
+                [showXAxisLabel]="false"
+                [showYAxisLabel]="false"
+              ></ngx-charts-bar-vertical>
+            </div>
+          </mat-card-content>
+        </mat-card>
+      </mat-grid-tile>
+    </mat-grid-list>
+  </div>
+</div>
+<ng-template #elseBlock>
+  <router-outlet></router-outlet>
+</ng-template>

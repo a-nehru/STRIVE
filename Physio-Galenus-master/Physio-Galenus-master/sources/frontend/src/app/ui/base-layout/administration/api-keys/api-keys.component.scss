@@ -1,0 +1,16 @@
+.clickable-cell {
+  font-weight: bold;
+  cursor: pointer;
+}
+
+.table td {
+  vertical-align: middle;
+}
+
+.mat-header-cell {
+  font-size: 15px;
+}
+
+.apiKeyTableBody tr:hover {
+  background-color: rgba($color: #000000, $alpha: 0.05);
+}

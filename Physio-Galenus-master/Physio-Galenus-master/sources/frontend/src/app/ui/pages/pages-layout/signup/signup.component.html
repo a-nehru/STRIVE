@@ -1,0 +1,104 @@
+<app-loading [isLoading]="state.isLoading"></app-loading>
+
+<div class="container">
+  <mat-card class="card-container mat-elevation-z3">
+    <mat-icon aria-hidden="true" class="main-icon" color="primary"
+      >account_circle</mat-icon
+    >
+    <mat-card-subtitle class="text-center"
+      >Sign up to obtain an account in</mat-card-subtitle
+    >
+    <mat-card-title class="mb-4 text-center">Physio Galenus</mat-card-title>
+    <form [formGroup]="state.signUpForm" (ngSubmit)="onSubmit()">
+      <mat-form-field class="w-100" appearance="outline">
+        <mat-label>Enter your email</mat-label>
+        <input matInput id="email" type="text" formControlName="username" />
+        <mat-error
+          *ngIf="state.signUpForm.get('username')?.hasError('required')"
+          >Email is required</mat-error
+        >
+        <mat-error *ngIf="state.signUpForm.get('username')?.invalid">{{
+          state.signUpForm.get('username')?.hasError('email')
+            ? "Invalid email address"
+            : ""
+        }}</mat-error>
+      </mat-form-field>
+
+      <mat-form-field class="w-100" appearance="outline">
+        <mat-label>Enter a new password</mat-label>
+        <input matInput type="password" formControlName="password" />
+        <mat-error
+          *ngIf="state.signUpForm.get('password')?.hasError('required')"
+          >Password is required</mat-error
+        >
+        <mat-error
+          *ngIf="state.signUpForm.get('password')?.errors?.password?.minLength"
+          >Password requires a min length of
+          {{
+            state.signUpForm.get("password")?.errors?.password?.minLength
+          }}
+          characters</mat-error
+        >
+        <mat-error
+          *ngIf="state.signUpForm.get('password')?.errors?.password?.uppercase"
+        >
+          Password must contain at least one upper case letter
+        </mat-error>
+        <mat-error
+          *ngIf="state.signUpForm.get('password')?.errors?.password?.nonletter"
+        >
+          Password must contain at least one number or symbol
+        </mat-error>
+      </mat-form-field>
+
+      <mat-form-field class="w-100" appearance="outline">
+        <mat-label>Repeat your password</mat-label>
+        <input matInput type="password" formControlName="validatePassword" />
+        <mat-error
+          *ngIf="state.signUpForm.get('validatePassword')?.hasError('required')"
+          >Repeat password is required</mat-error
+        >
+        <mat-error
+          *ngIf="state.signUpForm.get('validatePassword')?.errors?.mustMatchWithControl"
+        >
+          Password must match with the previous field
+        </mat-error>
+      </mat-form-field>
+
+      <mat-form-field class="w-100" appearance="outline">
+        <mat-label class="text-left">Pricing plan</mat-label>
+        <mat-select formControlName="pricingPlanType">
+          <mat-option [value]="imports.EPricingPlanType.Basic"
+            >Basic</mat-option
+          >
+          <mat-option [value]="imports.EPricingPlanType.Advanced"
+            >Advanced</mat-option
+          >
+          <mat-option [value]="imports.EPricingPlanType.Professional"
+            >Professional</mat-option
+          >
+          <mat-option disabled [value]="imports.EPricingPlanType.Personal"
+            >Personal</mat-option
+          >
+        </mat-select>
+        <mat-error
+          *ngIf="state.signUpForm.get('pricingPlanType')?.hasError('required')"
+          >Pricing plan is required</mat-error
+        >
+      </mat-form-field>
+      <button
+        mat-raised-button
+        color="primary"
+        class="w-100 mb-2 button-hover text-center"
+        type="submit"
+      >
+        Sign up
+      </button>
+    </form>
+    <mat-divider class="mt-3" [inset]="true"></mat-divider>
+    <mat-card-actions class="mt-2 mb-1">
+      <span class="ml-3">Already have an account?&nbsp;</span>
+      <a class="btn-link" routerLink="/login">Log In</a>
+    </mat-card-actions>
+  </mat-card>
+</div>

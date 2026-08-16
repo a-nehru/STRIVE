@@ -1,0 +1,231 @@
+<app-loading [isLoading]="state.isLoading"></app-loading>
+<app-page-heading
+  [heading]="state.heading"
+  [subheading]="state.subheading"
+  [icon]="state.headingIcon"
+></app-page-heading>
+<div class="container">
+  <form [formGroup]="state.patientForm" (ngSubmit)="onSubmit()">
+    <mat-card class="row">
+      <mat-card-header
+        ><mat-card-title>Personal Information</mat-card-title></mat-card-header
+      >
+      <mat-form-field class="d-block">
+        <mat-label>Nickname</mat-label>
+        <input
+          matInput
+          required
+          [readonly]="!state.editing"
+          type="text"
+          formControlName="nickname"
+        />
+      </mat-form-field>
+
+      <mat-form-field class="d-block">
+        <mat-label>Email</mat-label>
+        <input
+          matInput
+          [readonly]="!state.editing"
+          type="text"
+          formControlName="email"
+        />
+      </mat-form-field>
+
+      <mat-form-field class="d-block">
+        <mat-label>Birthdate</mat-label>
+        <input
+          matInput
+          [readonly]="!state.editing"
+          type="text"
+          [matDatepicker]="birthdatePicker"
+          formControlName="birthdate"
+        />
+        <mat-datepicker-toggle
+          matSuffix
+          [for]="birthdatePicker"
+          *ngIf="state.editing"
+        ></mat-datepicker-toggle>
+        <mat-datepicker #birthdatePicker></mat-datepicker>
+      </mat-form-field>
+
+      <mat-form-field class="d-block">
+        <mat-label>Gender</mat-label>
+        <input
+          *ngIf="!state.editing"
+          matInput
+          required
+          readonly
+          type="text"
+          formControlName="gender"
+        />
+        <mat-select required *ngIf="state.editing" formControlName="gender">
+          <mat-option
+            *ngFor="let gender of imports.Object.values(imports.EGender)"
+            [value]="gender"
+          >
+            {{ gender }}
+          </mat-option>
+        </mat-select>
+      </mat-form-field>
+
+      <mat-form-field
+        class="d-block"
+        *ngIf="
+          state.patientForm.get('gender')?.value ===
+          imports.EGender.PreferToSelfDescribe
+        "
+      >
+        <mat-label>Self-described gender</mat-label>
+        <input
+          matInput
+          [readonly]="!state.editing"
+          type="text"
+          formControlName="preferSelfDescribe"
+        />
+      </mat-form-field>
+
+      <mat-form-field class="d-block">
+        <mat-label>Stroke Side</mat-label>
+        <input
+          *ngIf="!state.editing"
+          matInput
+          required
+          readonly
+          type="text"
+          formControlName="strokeSide"
+        />
+        <mat-select required *ngIf="state.editing" formControlName="strokeSide">
+          <mat-option
+            *ngFor="let strokeSide of imports.Object.values(imports.EStrokeSide)"
+            [value]="strokeSide"
+          >
+            {{ strokeSide }}
+          </mat-option>
+        </mat-select>
+      </mat-form-field>
+
+      <div class="d-block">
+        <mat-slider
+          *ngIf="!state.editing"
+          min="0"
+          max="100"
+          step="1"
+          formControlName="mobility"
+          class="w-100"
+          [disabled]="true"
+        ></mat-slider>
+
+        <mat-slider
+          *ngIf="state.editing"
+          min="0"
+          max="100"
+          step="1"
+          formControlName="mobility"
+          required
+          class="w-100"
+        ></mat-slider>
+        <p class="text-center">Patient Mobility</p>
+      </div>
+    </mat-card>
+
+    <mat-card class="row mt-4">
+      <mat-card-header
+        ><mat-card-title
+          >Rehabilitation Information</mat-card-title
+        ></mat-card-header
+      >
+      <mat-form-field class="d-block">
+        <mat-label>Access Token</mat-label>
+        <input matInput type="text" formControlName="token" />
+      </mat-form-field>
+
+      <mat-form-field *ngIf="!state.editing" class="d-block">
+        <mat-label>Current Routine</mat-label>
+        <input
+          *ngIf="state.routine"
+          matInput
+          readonly
+          type="text"
+          formControlName="routineName"
+        />
+        <a *ngIf="state.routine" [routerLink]="routineLink" matSuffix>
+          <button mat-flat-button type="button">
+            <mat-icon>launch</mat-icon>
+            Edit Routine
+          </button>
+        </a>
+
+        <input
+          *ngIf="!state.routine"
+          matInput
+          readonly
+          type="text"
+          value="No assigned routine"
+        />
+      </mat-form-field>
+
+      <mat-form-field *ngIf="state.editing" class="d-block">
+        <mat-label>Current Routine</mat-label>
+        <input
+          type="text"
+          matInput
+          aria-label="Current Routine"
+          [formControl]="searchRoutineName"
+          [matAutocomplete]="auto"
+        />
+
+        <mat-autocomplete #auto="matAutocomplete" [displayWith]="displayRoutineName">
+          <mat-option
+            *ngFor="let routine of filteredRoutines"
+            [value]="routine"
+          >
+            {{ routine.name }}
+          </mat-option>
+        </mat-autocomplete>
+      </mat-form-field>
+    </mat-card>
+
+    <div class="mt-3 mb-3 row d-flex justify-content-end">
+      <button
+        mat-stroked-button
+        type="button"
+        *ngIf="state.editing"
+        (click)="restoreFormData()"
+        class="bg-white"
+      >
+        Cancel
+      </button>
+      <button
+        mat-flat-button
+        *ngIf="state.editing"
+        color="primary"
+        [appIfPermissionsEnable]="editPermissions"
+        class="ml-2"
+      >
+        Save
+      </button>
+      <button
+        mat-flat-button
+        type="button"
+        [appIfPermissionsEnable]="editPermissions"
+        *ngIf="!state.editing"
+        (click)="state.editing = true"
+        color="primary"
+        class="ml-2"
+      >
+        Edit
+      </button>
+      <button
+        mat-flat-button
+        type="button"
+        [appIfPermissionsEnable]="deletePermissions"
+        *ngIf="!state.editing"
+        color="warn"
+        class="ml-2"
+        (click)="delete()"
+      >
+        Delete
+      </button>
+    </div>
+  </form>
+</div>

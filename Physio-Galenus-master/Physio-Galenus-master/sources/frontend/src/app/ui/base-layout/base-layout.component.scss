@@ -1,0 +1,11 @@
+.toolbar-spacer {
+  flex: 0.1 0 auto;
+}
+
+:host, .sidenav-container {
+  background-color: inherit; // Inherit background color from body
+}
+
+.sidenav {
+  width: 245px;
+}

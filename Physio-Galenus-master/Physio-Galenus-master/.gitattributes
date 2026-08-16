@@ -1,0 +1,10 @@
+*.sh eol=lf
+*.html eol=lf
+*.scss eol=lf
+*.ts eol=lf
+*.js eol=lf
+*.json eol=lf
+*.yml eol=lf
+*.config eol=lf
+*.conf eol=lf
+*.sql eol=lf

@@ -1,0 +1,43 @@
+<app-loading [isLoading]="isLoading"></app-loading>
+
+<div class="table-responsive">
+  <table class="table">
+    <thead>
+      <tr>
+        <th class="header-cell">ID</th>
+        <th class="header-cell">Nickname</th>
+        <th class="header-cell">Email Address</th>
+        <th class="header-cell">Access Token</th>
+        <th class="header-cell text-center">Actions</th>
+      </tr>
+    </thead>
+    <tbody class="patientsTableBody">
+      <tr
+        *ngFor="let patient of patientList?.data; let i = index"
+      >
+        <td class="cell">
+          {{ (patient.public_id + "").padStart(7, "0") }}
+        </td>
+        <td class="cell">
+          <a [routerLink]="getPatientUrl(patient.id)">{{ patient.nickname }}</a>
+        </td>
+        <td class="cell">
+          {{ patient.email }}
+        </td>
+        <td class="cell">
+          {{ patient.access_token }}
+        </td>
+        <td class="cell text-center">
+          <button
+            [appIfPermissionsEnable]="deletePatientPermissions"
+            [disabled]="!hasPermissions(deletePatientPermissions)"
+            mat-icon-button color="accent"
+            (click)="deletePatient(patient.id)"
+            matTooltip="Delete this patient">
+            <mat-icon>delete</mat-icon>
+          </button>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+</div>

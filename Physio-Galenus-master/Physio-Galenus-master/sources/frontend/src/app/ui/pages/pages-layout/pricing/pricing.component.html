@@ -1,0 +1,116 @@
+<app-loading [isLoading]="state.isLoading"></app-loading>
+<div class="pricing-header px-3 py-3 pt-md-5 pb-md-4 mx-auto text-center mb-3">
+  <h1 class="mat-display-2">Select your plan</h1>
+  <p class="mat-subheading-1">
+    Physio Galenus is trusted by hundreds of therapists and patients around the
+    world.<br />
+    Power your rehabilitation from home taking an active role.<br />
+    <u>Explore which option is right for you</u>.
+  </p>
+</div>
+
+<div class="container">
+  <div class="card-deck text-center">
+    <mat-card
+      *ngFor="let pricingPlan of state.pricingPlans?.data"
+      class="card mb-4 mat-elevation-z1"
+      [style]="
+        state.user?.pricing_plan === pricingPlan.type
+          ? 'background-color: rgb(0, 0, 0, 0.01);'
+          : ''
+      "
+    >
+      <mat-card-header>
+        <mat-card-title>{{ pricingPlan.type.toUpperCase() }}</mat-card-title>
+      </mat-card-header>
+      <mat-card-content class="card-body">
+        <h1>
+          <span class="display-4">{{ pricingPlan.price }}</span
+          ><span>€</span>
+          <small class="text-muted">/ month</small>
+        </h1>
+        <ul class="list-unstyled">
+          <li>
+            Can supervise
+            {{
+              pricingPlan.number_of_supervised_patients > 0
+                ? pricingPlan.number_of_supervised_patients
+                : "unlimited"
+            }}
+            patients
+          </li>
+          <li>
+            Can personalise
+            {{
+              pricingPlan.personalised_rehabilitation_routines_per_client > 0
+                ? pricingPlan.personalised_rehabilitation_routines_per_client
+                : "unlimited"
+            }}
+            routines
+          </li>
+          <li>
+            Can play
+            {{
+              pricingPlan.exergames > 0 ? pricingPlan.exergames : "unlimited"
+            }}
+            exergames
+          </li>
+
+          <ng-container *ngIf="pricingPlan.customized_exercises">
+            <li>Can customise physical exercises</li>
+          </ng-container>
+          <ng-container *ngIf="!pricingPlan.customized_exercises">
+            <li><del>Can customise physical exercises</del></li>
+          </ng-container>
+
+          <ng-container *ngIf="pricingPlan.customized_exergames">
+            <li>Can customise exergames</li>
+          </ng-container>
+          <ng-container *ngIf="!pricingPlan.customized_exergames">
+            <li><del>Can customise exergames</del></li>
+          </ng-container>
+
+          <ng-container *ngIf="pricingPlan.reports_and_metrics">
+            <li>Can create personalised reports</li>
+          </ng-container>
+          <ng-container *ngIf="!pricingPlan.reports_and_metrics">
+            <li><del>Can create personalised reports</del></li>
+          </ng-container>
+
+          <ng-container
+            *ngIf="pricingPlan.automatic_exercise_difficulty_adaptation"
+          >
+            <li>Automatic routine adaptation</li>
+          </ng-container>
+          <ng-container
+            *ngIf="!pricingPlan.automatic_exercise_difficulty_adaptation"
+          >
+            <li><del>Automatic routine adaptation</del></li>
+          </ng-container>
+
+          <ng-container *ngIf="pricingPlan.remote_asistance">
+            <li>Real-time remote assisstance</li>
+          </ng-container>
+          <ng-container *ngIf="!pricingPlan.remote_asistance">
+            <li><del>Real-time remote assisstance</del></li>
+          </ng-container>
+        </ul>
+      </mat-card-content>
+      <mat-card-actions class="mt-3 mb-4">
+        <button
+          *ngIf="state.user?.pricing_plan !== pricingPlan.type; else elseBlock"
+          mat-raised-button
+          class="w-75"
+          type="button"
+          color="primary"
+          (click)="onSelectPlan(pricingPlan.type)"
+        >
+          Select
+        </button>
+      </mat-card-actions>
+    </mat-card>
+  </div>
+</div>
+<ng-template #elseBlock>
+  <h2 class="text-muted">Your current plan</h2>
+</ng-template>

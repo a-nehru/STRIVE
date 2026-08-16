@@ -1,0 +1,62 @@
+<div class="offset-sm-5 d-flex align-items-center h-75">
+  <div class="container">
+    <h1>Exercise Data</h1>
+    <form [formGroup]="state.exerciseForm" (ngSubmit)="onSubmit()">
+      <div>
+        <mat-form-field>
+          <mat-label>Exercise Name</mat-label>
+          <input
+            matInput
+            type="text"
+            formControlName="name"
+          />
+        </mat-form-field>
+      </div>
+
+      <div>
+        <p>Involved Limbs</p>
+        <section>
+          <mat-checkbox formControlName="limbLeftArm" class="mr-3">Left Arm</mat-checkbox>
+          <mat-checkbox formControlName="limbRightArm">Right Arm</mat-checkbox><br>
+          <mat-checkbox formControlName="limbLeftLeg" class="mr-3">Left Leg</mat-checkbox>
+          <mat-checkbox formControlName="limbRightLeg">Right Leg</mat-checkbox>
+        </section>
+      </div>
+
+      <div>
+        <mat-form-field>
+          <mat-label>Pose Type</mat-label>
+          <mat-select formControlName="poseType">
+            <mat-option *ngFor="let poseType of this.imports.Object.values(this.imports.EPoseType)" [value]="poseType">
+              {{ poseType }}
+            </mat-option>
+          </mat-select>
+        </mat-form-field>
+      </div>
+
+      <div>
+        <mat-form-field>
+          <mat-label>Pose Side</mat-label>
+          <mat-select formControlName="poseSide">
+            <mat-option *ngFor="let poseSide of this.imports.Object.values(this.imports.EPoseSide)" [value]="poseSide">
+              {{ poseSide }}
+            </mat-option>
+          </mat-select>
+        </mat-form-field>
+      </div>
+
+      <div>
+        <mat-form-field>
+          <mat-label>Exercise Type</mat-label>
+          <mat-select formControlName="exerciseType">
+            <mat-option *ngFor="let exerciseType of this.imports.Object.values(this.imports.EExerciseType)" [value]="exerciseType">
+              {{ exerciseType }}
+            </mat-option>
+          </mat-select>
+        </mat-form-field>
+      </div>
+
+      <button disabled mat-flat-button color="primary" matTooltip="Cannot edit exercises in alpha version">Edit exercise</button>
+    </form>
+  </div>
+</div>

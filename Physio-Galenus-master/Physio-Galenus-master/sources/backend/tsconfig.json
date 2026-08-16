@@ -1,0 +1,54 @@
+{
+  "compilerOptions": {
+    "paths": {
+      "@config/*": [
+        "src/config/*"
+      ],
+      "@common-request-dto/*": [
+        "src/common/dto/request/*"
+      ],
+      "@common-response-dto/*": [
+        "src/common/dto/response/*"
+      ],
+      "@common-request-dto-interfaces/*": [
+        "src/shared/dto/request/*"
+      ],
+      "@common-response-dto-interfaces/*": [
+        "src/shared/dto/response/*"
+      ],
+      "@common-types-dto/*": [
+        "src/common/dto/types/*"
+      ],
+      "@common-types/*": [
+        "src/shared/types/*"
+      ],
+      "@common-enums/*": [
+        "src/shared/enums/*"
+      ],
+      "@common-interfaces/*": [
+        "src/common/interfaces/*"
+      ],
+      "@common-utils/*": [
+        "src/common/utils/*"
+      ],
+      "@common-config/*": [
+        "src/common/config/*"
+      ],
+      "@custom-decorators/*": [
+        "src/decorators/*"
+      ],
+    },
+    "module": "commonjs",
+    "declaration": true,
+    "removeComments": true,
+    "emitDecoratorMetadata": true,
+    "experimentalDecorators": true,
+    "allowSyntheticDefaultImports": true,
+    "target": "es2021",
+    "sourceMap": true,
+    "outDir": "./dist",
+    "baseUrl": "./",
+    "incremental": true,
+    "strictPropertyInitialization": false
+  }
+}

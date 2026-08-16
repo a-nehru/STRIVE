@@ -1,0 +1,62 @@
+<mat-nav-list style="height: 65px"></mat-nav-list>
+<mat-nav-list class="side-navnar">
+  <ng-container *ngFor="let item of sidebarContent; let i = index">
+    <ng-container
+      [ngTemplateOutlet]="item.children ? childMenu : parentMenu"
+      [ngTemplateOutletContext]="{ menu: item, index: i }"
+    >
+    </ng-container>
+  </ng-container>
+</mat-nav-list>
+<div
+  *ngIf="!isDemo"
+  class="text-muted"
+  style="
+    position: absolute;
+    text-align: center;
+    left: 0;
+    right: 0;
+    margin: auto;
+  "
+  [style.bottom]="'1rem'"
+>
+  <button
+    type="button"
+    mat-flat-button
+    matTooltip="View Changelog"
+    (click)="showChangelog()"
+  >
+  <mat-icon>insert_drive_file</mat-icon></button
+  ><br />
+  {{ appVersion }}
+</div>
+
+<ng-template #parentMenu let-menu="menu">
+  <mat-list-item [routerLink]="menu.path">
+    <mat-icon class="mr-2">{{ menu.icon }}</mat-icon>
+    <span>{{ menu.title }}</span>
+  </mat-list-item>
+</ng-template>
+
+<ng-template #childMenu let-menu="menu" let-index="index">
+  <mat-expansion-panel
+    class="mat-elevation-z0"
+    [expanded]="index === navItemOpened"
+    (opened)="navItemOpened = index"
+  >
+    <mat-expansion-panel-header>
+      <mat-icon class="mr-2">{{ menu.icon }}</mat-icon>
+      <span class="mat-content">{{ menu.title }}</span>
+    </mat-expansion-panel-header>
+    <mat-nav-list>
+      <ng-container *ngFor="let child of menu.children">
+        <mat-list-item
+          [routerLink]="child.path"
+          *appIfPermissionsShow="child.permissions || []"
+        >
+          <span class="mat-content">{{ child.title }}</span>
+        </mat-list-item>
+      </ng-container>
+    </mat-nav-list>
+  </mat-expansion-panel>
+</ng-template>

@@ -1,0 +1,30 @@
+<app-loading [isLoading]="(isLoading$ | async) || false"></app-loading>
+<app-page-heading
+  [heading]="state.heading"
+  [subheading]="state.subheading"
+  [icon]="state.headingIcon"
+></app-page-heading>
+<div class="d-flex">
+  <div class="mb-5 container">
+    <mat-card class="row mat-elevation-z3">
+      <app-table-notifications
+        [canArchive]="false"
+        [canRead]="true"
+        [canRemove]="false"
+        [canDelete]="true"
+        [canRestore]="true"
+        [notifications]="notifications$ | async"
+        (deleteEvent)="onDelete($event)"
+        (restoreEvent)="onRestore($event)"
+        (readEvent)="onRead($event)"
+        (bulkUpdateEvent)="onBulkUpdate($event)"
+      >
+      </app-table-notifications>
+      <app-pagination
+        [paginationData]="paginationData"
+        [paginationOptions]="paginationOptions"
+        (pageChange)="onPageChange()"
+      ></app-pagination>
+    </mat-card>
+  </div>
+</div>

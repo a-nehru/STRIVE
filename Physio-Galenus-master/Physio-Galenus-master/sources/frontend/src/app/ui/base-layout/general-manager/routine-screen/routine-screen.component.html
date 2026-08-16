@@ -1,0 +1,235 @@
+<app-loading [isLoading]="state.isLoading"></app-loading>
+<app-page-heading
+  [heading]="state.heading"
+  [subheading]="state.subheading"
+  [icon]="state.headingIcon"
+></app-page-heading>
+<div class="d-flex">
+  <div class="container">
+    <form [formGroup]="state.routineForm" (ngSubmit)="onSubmit()">
+      <mat-card class="row">
+        <mat-card-header
+          ><mat-card-title>Routine Data</mat-card-title></mat-card-header
+        >
+        <div class="row">
+          <mat-form-field class="col-2">
+            <mat-label>Routine Name</mat-label>
+            <input matInput required type="text" formControlName="name" />
+          </mat-form-field>
+
+          <mat-form-field class="col-3">
+            <mat-label>Start Date - End Date</mat-label>
+            <mat-date-range-input required [rangePicker]="picker">
+              <input matStartDate formControlName="startDate" />
+              <input matEndDate formControlName="endDate" />
+            </mat-date-range-input>
+            <mat-datepicker-toggle
+              matSuffix
+              [for]="picker"
+            ></mat-datepicker-toggle>
+            <mat-date-range-picker #picker></mat-date-range-picker>
+          </mat-form-field>
+
+          <mat-form-field class="col-2">
+            <mat-label>Frequency</mat-label>
+            <mat-select formControlName="frequency" required>
+              <mat-option value="daily">Daily</mat-option>
+              <mat-option value="weekdays">On Weekdays</mat-option>
+              <mat-option value="personalised">Personalised</mat-option>
+            </mat-select>
+          </mat-form-field>
+
+          <section
+            class="col-5 d-flex align-items-center"
+            *ngIf="state.routineForm.get('frequency')?.value === 'personalised'"
+          >
+            <mat-checkbox formControlName="dayMon" class="mr-2"
+              >Mon</mat-checkbox
+            >
+            <mat-checkbox formControlName="dayTue" class="mr-2"
+              >Tue</mat-checkbox
+            >
+            <mat-checkbox formControlName="dayWed" class="mr-2"
+              >Wed</mat-checkbox
+            >
+            <mat-checkbox formControlName="dayThu" class="mr-2"
+              >Thu</mat-checkbox
+            >
+            <mat-checkbox formControlName="dayFri" class="mr-2"
+              >Fri</mat-checkbox
+            >
+            <mat-checkbox formControlName="daySat" class="mr-2"
+              >Sat</mat-checkbox
+            >
+            <mat-checkbox formControlName="daySun" class="mr-2"
+              >Sun</mat-checkbox
+            >
+          </section>
+        </div>
+      </mat-card>
+
+      <div class="row mt-4">
+        <mat-card class="col mr-2">
+          <mat-card-header
+            ><mat-card-title
+              >Available Exercises</mat-card-title
+            ></mat-card-header
+          >
+
+          <div>
+            <mat-form-field class="mr-3">
+              <mat-label>Exercise Name</mat-label>
+              <input matInput type="text" [formControl]="searchControl" />
+            </mat-form-field>
+            <button
+              mat-flat-button
+              type="button"
+              color="primary"
+              (click)="onSearchExercises()"
+              [appIfPermissionsEnable]="searchExercisesPermission"
+            >
+              Search
+            </button>
+          </div>
+
+          <mat-list class="scrollable">
+            <mat-list-item
+              *ngFor="let exerciseResult of filteredExerciseResults"
+            >
+              <div class="w-100">
+                {{ exerciseResult.name }}
+              </div>
+              <button
+                mat-flat-button
+                color="primary"
+                *ngIf="editing"
+                (click)="addToList(exerciseResult)"
+                class="ml-2"
+              >
+                Add
+              </button>
+            </mat-list-item>
+          </mat-list>
+        </mat-card>
+
+        <mat-card class="col-8">
+          <mat-card-header
+            ><mat-card-title
+              >Exercises Added to Routine</mat-card-title
+            ></mat-card-header
+          >
+          <mat-list class="scrollable" formArrayName="exercises">
+            <mat-list-item *ngIf="exercises.controls.length == 0">
+              <i>No exercise has been added to the routine</i>
+            </mat-list-item>
+
+            <div *ngFor="let addedExercise of exercises.controls; index as i">
+              <mat-list-item [formGroupName]="i">
+                <div class="w-100">
+                  {{ addedExercise.get("name")?.value }}
+                </div>
+
+                <mat-form-field class="ml-3 w-8">
+                  <mat-label>Sets</mat-label>
+                  <input
+                    matInput
+                    required
+                    type="number"
+                    min="1"
+                    formControlName="sets"
+                  />
+                </mat-form-field>
+
+                <mat-form-field class="ml-3 w-11">
+                  <mat-label>Repetitions</mat-label>
+                  <input
+                    matInput
+                    required
+                    type="number"
+                    min="1"
+                    formControlName="repetitions"
+                  />
+                </mat-form-field>
+
+                <mat-form-field class="ml-3 w-11">
+                  <mat-label>Time (sec)</mat-label>
+                  <input
+                    matInput
+                    required
+                    type="number"
+                    min="1"
+                    formControlName="time"
+                  />
+                </mat-form-field>
+
+                <mat-form-field class="ml-3 w-20">
+                  <mat-label>Rest between sets (sec)</mat-label>
+                  <input
+                    matInput
+                    required
+                    type="number"
+                    min="1"
+                    formControlName="rest_between_sets"
+                  />
+                </mat-form-field>
+
+                <button
+                  mat-flat-button
+                  color="primary"
+                  *ngIf="editing"
+                  (click)="exercises.removeAt(i)"
+                  class="ml-4"
+                >
+                  <mat-icon>delete</mat-icon>
+                </button>
+              </mat-list-item>
+            </div>
+          </mat-list>
+        </mat-card>
+      </div>
+
+      <div class="mt-3 mb-3 row d-flex justify-content-end">
+        <button
+          mat-stroked-button
+          type="button"
+          *ngIf="editing && state.routine"
+          (click)="loadRoutineToForm(state.routine)"
+          class="bg-white"
+        >
+          Cancel
+        </button>
+        <button
+          mat-flat-button
+          *ngIf="editing"
+          color="primary"
+          class="ml-2"
+          [appIfPermissionsEnable]="createRoutinePermission"
+        >
+          {{ state.routine ? "Save" : "Create" }}
+        </button>
+        <button
+          mat-flat-button
+          type="button"
+          *ngIf="!editing"
+          (click)="editing = true"
+          color="primary"
+          class="ml-2"
+          [appIfPermissionsEnable]="editRoutinePermission"
+        >
+          Edit
+        </button>
+        <button
+          mat-flat-button
+          type="button"
+          [appIfPermissionsEnable]="deleteRoutinePermission"
+          *ngIf="state.routine && !editing"
+          color="warn"
+          class="ml-2"
+          (click)="delete()"
+        >
+          Delete
+        </button>
+      </div>
+    </form>
+  </div>
+</div>

@@ -1,0 +1,21 @@
+.space-button {
+  padding-right: 0.5rem;
+  margin-right: 4px;
+}
+
+.clickable-label {
+  font-weight: bold;
+  cursor: pointer;
+}
+
+.table td {
+  vertical-align: middle;
+}
+
+.header-cell {
+  font-size: 15px;
+}
+
+.routinesTableBody tr:hover {
+  background-color: rgba($color: #000000, $alpha: 0.05);
+}

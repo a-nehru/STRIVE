@@ -379,6 +379,19 @@ const CARD_ART = {
       <line x1="163" y1="167" x2="183" y2="140" stroke="rgba(244,236,221,.5)" stroke-width="3" stroke-dasharray="5 6"/>
       <circle cx="120" cy="290" r="30" fill="none" stroke="rgba(159,192,138,.6)" stroke-width="3" stroke-dasharray="8 8"/>
     </svg></div>`,
+  rgs: `<div class="art" style="background:linear-gradient(180deg,#2b2c56,#15152f)">
+    <svg viewBox="0 0 300 400" style="position:absolute;inset:0;width:100%;height:100%">
+      <g stroke="rgba(244,236,221,.18)" stroke-width="2">
+        <line x1="150" y1="70" x2="40" y2="300"/><line x1="150" y1="70" x2="110" y2="300"/>
+        <line x1="150" y1="70" x2="190" y2="300"/><line x1="150" y1="70" x2="260" y2="300"/>
+      </g>
+      <circle cx="150" cy="120" r="7" fill="#c8b3d9"/>
+      <circle cx="196" cy="196" r="13" fill="#9fc08a"/>
+      <circle cx="150" cy="286" r="26" fill="#e8a86a"/>
+      <path d="M104 300 q46 40 92 0" fill="none" stroke="#9fc08a" stroke-width="7" stroke-linecap="round"/>
+      <text x="150" y="368" text-anchor="middle" font-family="Nunito" font-size="26" font-weight="800"
+        fill="rgba(244,236,221,.55)">both hands</text>
+    </svg></div>`,
   dots: `<div class="art" style="background:radial-gradient(circle at 50% 45%,#2f2c58,#15152f)">
     <svg viewBox="0 0 300 400" style="position:absolute;inset:0;width:100%;height:100%">
       <path d="M150 96 L196 226 L86 146 L214 146 L104 226 Z" fill="none" stroke="#e8a86a" stroke-width="5"
@@ -879,7 +892,8 @@ function startGame(id, fresh) {
   const game = new def.cls(state.tracker, $("canvas"), state.side, prof, params, {
     coachSens: state.coachSens, cursor: p.equippedCursor,
     tellStory: state.roundNumber === 1,
-    stage: id === "drift" ? (state.driftStage || 1) : undefined,
+    stage: id === "drift" ? (state.driftStage || 1)
+      : id === "rgs" ? (state.rgsStage || 1) : undefined,
     // Scratch Cards resumes its own ladder: the level a patient reached last
     // session is where the next one starts, or the ladder means nothing
     level: id === "lens" ? store.getLevel(state.patient, "scratchLevel")
@@ -892,7 +906,8 @@ function startGame(id, fresh) {
     song: id === "rhythm" ? state.song : undefined,
     tilesMode: id === "rhythm" ? state.tilesMode : undefined,
     bothArms: (id === "pong" && ["bimanual", "coupled", "team-arms"].includes(state.pongMode))
-      || (id === "rhythm" && state.tilesMode === "bimanual"),
+      || (id === "rhythm" && state.tilesMode === "bimanual")
+      || id === "rgs",     // the RGS catch needs both hands by definition
     profiles: { left: store.getProfile(state.patient, "left"), right: store.getProfile(state.patient, "right") },
     // two-player Pong: player 2's own assessed arc drives their paddle, so a
     // limited range still covers the lane (a guest gets the default arc)
@@ -968,6 +983,18 @@ function onRoundEnd(round) {
       result.note += lvl === 1
         ? " ⭐ New skill unlocked: the Grip Shot! Squeeze to catch the star, open your hand to fire it back!"
         : " ⭐ New skill unlocked: the Spin Shot! Turn your palm as you hit for topspin or backspin!";
+    }
+  }
+
+  // Catch Together stages (the RGS conditions, graded): catch → carry → sort
+  if (round.game === "rgs") {
+    const st = state.rgsStage || 1;
+    if (round.hitRate > 0.7 && st < 3) {
+      state.rgsStage = st + 1;
+      result.note += st === 1 ? " Next: carry each light to a basket!"
+                              : " Next: match each light to its own colour!";
+    } else if (round.hitRate < 0.4 && st > 1) {
+      state.rgsStage = st - 1;
     }
   }
 

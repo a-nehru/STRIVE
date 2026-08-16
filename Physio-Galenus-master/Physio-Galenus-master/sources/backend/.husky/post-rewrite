@@ -1,0 +1,18 @@
+#!/bin/sh
+export NVM_DIR="$HOME/.nvm/nvm.sh"
+. "$(dirname $NVM_DIR)/nvm.sh"
+
+export NVM_DIR="$HOME/.nvm"
+a=$(nvm ls | grep 'node')
+b=${a#*(-> }
+v=${b%%[)| ]*}
+
+export PATH="$NVM_DIR/versions/node/$v/bin:$PATH"
+
+. "$(dirname "$0")/_/husky.sh"
+
+cd sources/backend
+../scripts/has-remote-file-changed.sh package.json && npm install || true
+
+cd ../frontend
+../scripts/has-remote-file-changed.sh package.json && npm install || true

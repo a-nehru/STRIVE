@@ -1,0 +1,46 @@
+<mat-list-item>
+  <button
+    mat-icon-button
+    [matMenuTriggerFor]="menu"
+    matTooltip="Click to see your profile!"
+    aria-label="User menu"
+  >
+    <mat-icon
+      matBadge="{{ (notifications$ | async)?.data?.length }}"
+      [matBadgeHidden]="!(notifications$ | async)?.data?.length"
+      matBadgeColor="accent"
+      matBadgeSize="small"
+      >account_circle</mat-icon
+    >
+  </button>
+  <span class="ml-2 style-text-mat-button">{{ username }}</span>
+</mat-list-item>
+<mat-menu #menu="matMenu">
+  <button mat-menu-item routerLink="profile/user/my-profile">
+    <mat-icon>account_circle</mat-icon>
+    <span>My Account</span>
+  </button>
+  <button mat-menu-item routerLink="profile/user/reset-password">
+    <mat-icon>lock</mat-icon>
+    <span>Reset password</span>
+  </button>
+  <button mat-menu-item routerLink="profile/notifications/user-notifications">
+    <mat-icon
+      matBadge="{{ (notifications$ | async)?.data?.length }}"
+      matBadgeOverlap="true"
+      matBadgeSize="small"
+      matBadgeColor="accent"
+      >notifications</mat-icon
+    >
+    <span>Notifications</span>
+  </button>
+  <button mat-menu-item>
+    <mat-icon>settings</mat-icon>
+    <span>Settings</span>
+  </button>
+  <mat-divider></mat-divider>
+  <button mat-menu-item (click)="logout()">
+    <mat-icon>logout</mat-icon>
+    <span>Log Out</span>
+  </button>
+</mat-menu>

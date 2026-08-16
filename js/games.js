@@ -28,6 +28,7 @@ const STORIES = {
   boxes: { title: "The last ferry", text: "The harbor crates must cross before the ferry leaves. Carry them over, one by one." },
   compass: { title: "The compass rose", text: "From the heart of the compass, light every point, and always return home." },
   echo: { title: "The star's echo", text: "A star leaves an invisible echo where it shone. Remember the spot, and find it again." },
+  rgs: { title: "Catch together", text: "Lights are drifting in from the harbour. Cup both hands to catch one, then set it in a basket." },
   dots: { title: "Connect the dots", text: "There is a picture hiding in these dots. Go from one to the next and it will draw itself." },
   lens: { title: "Scratch cards", text: "Under the silver there is a picture. Scrape it away with your hand and see what it is." },
   crane: { title: "The night crane", text: "Hold the crane high and steady. Squeeze to catch each crate as it passes." },
@@ -2473,6 +2474,272 @@ function scratchHarbour(ctx, now, lit) {
   hs.forEach((h, i) => ctx.fillRect(0.085 + i * 0.13, 0.74, 0.022, 0.2));
 }
 
+/* ==================== G27 Catch Together (RGS) ==================== */
+// A rebuild of the Rehabilitation Gaming System's core task - the one the
+// RGS papers this suite is grounded in actually describe - as a STRIVE game.
+// Balls travel towards the patient and are caught with BOTH hands cupped
+// together, then carried to a basket.
+//
+// What is kept from RGS: the approach in depth (so the reach is timed, not
+// just placed), the bilateral catch where the two hands must be adjacent (a
+// single hand cannot catch - that coupling IS the therapy), the carry-and-
+// place, and the colour-matched sorting that adds a cognitive load on top of
+// the motor one. Its four-condition cycle becomes three graded stages, which
+// is how the rest of this suite already grades (see Drift).
+//
+// What is deliberately dropped: RGS's observation condition, where the game
+// plays itself and the patient watches. It is well-founded (action
+// observation drives mirror activity) but it is a different intervention with
+// a different consent conversation, not a difficulty stage - and a rehab game
+// that takes the controls away mid-session reads as a freeze.
+//
+// What is added: every lane and basket sits inside this patient's measured
+// envelope, so a bimanual catch is never asked for somewhere they cannot put
+// both hands. The original spawned at six fixed world positions.
+const RGS_LANES = 5;
+const RGS_TRAVEL = 1.7;          // × params.lifetime = seconds from horizon to hands
+const RGS_CATCH_Z = 0.2;         // how near the ball must be before it can be caught
+const RGS_PASS_Z = -0.14;        // past this it has gone by
+const RGS_HANDS_MAX = 0.62;      // SW: how close the two hands must be to cup a ball
+// The original fans SEVEN colour-matched troughs across the bottom of the
+// screen and lets the therapist dial the colour count down with a slider.
+// Here the count is tied to the stage instead: seven small targets is a
+// cognitive and a precision demand at once, and this population should meet
+// them one at a time.
+const RGS_HUES = ["#e8a86a", "#9fc08a", "#c8b3d9", "#8fb8d0", "#e0908a", "#d6c37a", "#8fc7b8"];
+const RGS_STAGES = [
+  // `wait` is the original's wait-vs-continuous mode: one ball at a time,
+  // which is the difference between a task and a queue for a slow reacher
+  { catchOnly: true,  match: false, baskets: 0, wait: true,  note: "catch it together" },
+  { catchOnly: false, match: false, baskets: 3, wait: true,  note: "carry it to a trough" },
+  { catchOnly: false, match: true,  baskets: 5, wait: false, note: "carry it to its own colour" },
+];
+
+export class CatchTogether extends GameBase {
+  id = "rgs";
+  setup() {
+    this.tips = {
+      objective: "Cup both hands around the ball to catch it.",
+      miss: "Bring both hands together, then meet the ball.",
+    };
+    this.stage = Math.max(1, Math.min(RGS_STAGES.length, this.opts.stage || 1));
+    this.balls = [];
+    this.held = null;
+    this.caught = 0; this.placed = 0; this.wrongBasket = 0; this.passed = 0;
+    this.nextAt = 0;
+    this._layout();
+    this.tellStory(STORIES.rgs);
+  }
+
+  get _st() { return RGS_STAGES[this.stage - 1]; }
+
+  // Lanes and baskets live inside the measured envelope, so both hands can
+  // always be brought to every one of them.
+  _layout() {
+    const rs = this.params.rangeScale;
+    const halfW = Math.min(this.envAt(0), this.envAt(Math.PI)) * rs * 0.8;
+    this.catchY = CENTER.y - Math.min(this.envAt(-Math.PI / 2) * rs * 0.35, 0.35);
+    this.lanes = [];
+    for (let i = 0; i < RGS_LANES; i++) {
+      const f = RGS_LANES === 1 ? 0.5 : i / (RGS_LANES - 1);
+      this.lanes.push(CENTER.x + (f - 0.5) * 2 * halfW);
+    }
+    // the horizon the balls come from: up and away, on the body's midline
+    this.vanish = { x: CENTER.x, y: CENTER.y + Math.min(this.envAt(Math.PI / 2) * rs, 1.0) };
+    const nb = this._st.baskets;
+    this.baskets = [];
+    for (let i = 0; i < nb; i++) {
+      const f = nb === 1 ? 0.5 : i / (nb - 1);
+      this.baskets.push({
+        x: CENTER.x + (f - 0.5) * 2 * halfW * 0.92,
+        y: this.catchY - 0.34,
+        col: RGS_HUES[i],
+        // the troughs fan outwards from the body, as they do in the original
+        lean: (f - 0.5) * 0.55,
+      });
+    }
+  }
+
+  _spawn(now) {
+    const st = this._st;
+    const lane = Math.floor(Math.random() * RGS_LANES);
+    // in the sorting stage a ball only ever wears a colour some basket has,
+    // or the task would be unwinnable rather than hard
+    const pool = st.match ? st.baskets : RGS_HUES.length;
+    this.balls.push({
+      lane, z: 1, col: RGS_HUES[Math.floor(Math.random() * pool)],
+      born: now, spin: Math.random() * TAU,
+    });
+  }
+
+  // screen position of a ball at depth z (1 = horizon, 0 = at the hands)
+  _posOf(b) {
+    const tx = this.lanes[b.lane], ty = this.catchY;
+    const z = Math.max(0, b.z);
+    return { x: tx + (this.vanish.x - tx) * z, y: ty + (this.vanish.y - ty) * z };
+  }
+  _radOf(b) { return this.params.radius * (1 - 0.72 * Math.max(0, b.z)); }
+
+  update(now, dt) {
+    const s = dt / 1000;
+    const speed = 1 / (RGS_TRAVEL * this.params.lifetime);
+    const hL = this.t.palmRel("left"), hR = this.t.palmRel("right");
+    const together = hL && hR && Math.hypot(hL.x - hR.x, hL.y - hR.y) < RGS_HANDS_MAX * A11Y.radiusScale;
+    const mid = together ? { x: (hL.x + hR.x) / 2, y: (hL.y + hR.y) / 2 } : null;
+    this.together = together; this.mid = mid;
+
+    // a held ball rides the cupped hands; letting them apart is the release,
+    // so a patient with no grasp can still play the whole game
+    if (this.held) {
+      if (mid) { this.held.x = mid.x; this.held.y = mid.y; }
+      if (!together) this._release(now);
+    } else if (now >= this.nextAt && this.balls.length < (this._st.wait ? 1 : 4)) {
+      this.nextAt = now + (900 + Math.random() * 1200) * this.params.lifetime / 3;
+      this._spawn(now);
+    }
+
+    const catchR = (this.params.radius + 0.1) * A11Y.radiusScale;
+    for (let i = this.balls.length - 1; i >= 0; i--) {
+      const b = this.balls[i];
+      b.z -= speed * s;
+      const p = this._posOf(b);
+      if (!this.held && b.z < RGS_CATCH_Z && together &&
+          Math.hypot(hL.x - p.x, hL.y - p.y) < catchR &&
+          Math.hypot(hR.x - p.x, hR.y - p.y) < catchR) {
+        this.balls.splice(i, 1);
+        this.caught++;
+        audio.note(5);
+        this.burst(p, b.col);
+        this.hit({ reachFrac: Math.abs(p.x - CENTER.x) / (this.envAt(0) || 1), isFar: false });
+        if (this._st.catchOnly) { this.say("Caught!"); continue; }
+        this.held = { ...b, x: p.x, y: p.y };
+        continue;
+      }
+      if (b.z < RGS_PASS_Z) {
+        this.balls.splice(i, 1);
+        this.passed++;
+        this.miss({ isFar: false });
+      }
+    }
+  }
+
+  _release(now) {
+    const b = this.held;
+    this.held = null;
+    let best = null, bestD = Infinity;
+    for (const k of this.baskets) {
+      const d = Math.hypot(b.x - k.x, b.y - k.y);
+      if (d < bestD) { bestD = d; best = k; }
+    }
+    const inBasket = best && bestD < 0.42 * A11Y.radiusScale;
+    if (!inBasket) { this.say("Bring it down to a basket."); return; }
+    if (this._st.match && best.col !== b.col) {
+      this.wrongBasket++;
+      audio.miss();
+      this.say("That one goes in its own colour.");
+      return;
+    }
+    this.placed++;
+    audio.hit();
+    this.burst({ x: best.x, y: best.y }, b.col);
+    this.stats.stars += 3;
+    this.flash = { at: now, x: best.x, y: best.y };
+  }
+
+  drawBg(ctx, c, now) {
+    const g = ctx.createLinearGradient(0, 0, 0, c.height);
+    g.addColorStop(0, "#2b2c56"); g.addColorStop(0.55, "#232149"); g.addColorStop(1, "#15152f");
+    ctx.fillStyle = g; ctx.fillRect(0, 0, c.width, c.height);
+    twinkles(ctx, c);
+    // the lanes drawn as receding rails: the depth cue is what makes an
+    // approaching ball readable on a flat screen
+    ctx.save();
+    ctx.strokeStyle = "rgba(244,236,221,0.10)"; ctx.lineWidth = 2;
+    const vp = this.toPx(this.vanish);
+    for (const lx of this.lanes) {
+      const p = this.toPx({ x: lx, y: this.catchY });
+      ctx.beginPath(); ctx.moveTo(vp.x, vp.y); ctx.lineTo(p.x, p.y); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  draw(ctx, c, now) {
+    const sw = this.sw();
+    // the troughs: a coloured chute leaning outwards with an open mouth, so
+    // the colour to match is unmistakable and the mouth reads as "put it here"
+    for (const k of this.baskets) {
+      const p = this.toPx(k);
+      const mouth = 0.26 * sw, depth = 0.34 * sw;
+      const lit = this.flash && now - this.flash.at < 500 && Math.abs(this.flash.x - k.x) < 1e-6;
+      ctx.save();
+      if (lit) { ctx.shadowColor = k.col; ctx.shadowBlur = 30; }
+      // the chute body
+      ctx.strokeStyle = k.col; ctx.lineWidth = lit ? 11 : 8; ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(p.x - mouth, p.y);
+      ctx.lineTo(p.x - mouth * 0.55 + k.lean * depth, p.y + depth);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(p.x + mouth, p.y);
+      ctx.lineTo(p.x + mouth * 0.55 + k.lean * depth, p.y + depth);
+      ctx.stroke();
+      // the mouth
+      ctx.lineWidth = lit ? 8 : 5;
+      ctx.beginPath(); ctx.ellipse(p.x, p.y, mouth, mouth * 0.34, 0, 0, TAU); ctx.stroke();
+      ctx.fillStyle = k.col; ctx.globalAlpha = lit ? 0.45 : 0.16;
+      ctx.beginPath(); ctx.ellipse(p.x, p.y, mouth, mouth * 0.34, 0, 0, TAU); ctx.fill();
+      ctx.restore();
+    }
+    // balls, far ones first so nearer ones overlap them
+    const sorted = [...this.balls].sort((a, b) => b.z - a.z);
+    for (const b of sorted) {
+      const p = this.toPx(this._posOf(b));
+      const r = Math.max(4, this._radOf(b) * sw);
+      const near = b.z < RGS_CATCH_Z;
+      ctx.save();
+      const gr = ctx.createRadialGradient(p.x - r * 0.3, p.y - r * 0.3, r * 0.1, p.x, p.y, r);
+      gr.addColorStop(0, "#fff6d8"); gr.addColorStop(1, b.col);
+      ctx.fillStyle = gr;
+      if (near) { ctx.shadowColor = b.col; ctx.shadowBlur = 24; }
+      ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, TAU); ctx.fill();
+      ctx.restore();
+    }
+    // the held ball rides between the hands
+    if (this.held) {
+      const p = this.toPx(this.held);
+      const r = this.params.radius * sw;
+      ctx.save();
+      ctx.shadowColor = this.held.col; ctx.shadowBlur = 30;
+      const gr = ctx.createRadialGradient(p.x - r * 0.3, p.y - r * 0.3, r * 0.1, p.x, p.y, r);
+      gr.addColorStop(0, "#fff6d8"); gr.addColorStop(1, this.held.col);
+      ctx.fillStyle = gr;
+      ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, TAU); ctx.fill();
+      ctx.restore();
+    }
+    // the cup between the hands: the one piece of feedback the bilateral
+    // rule needs, since "your hands are too far apart" is otherwise invisible
+    const hL = this.t.palmRel("left"), hR = this.t.palmRel("right");
+    if (hL && hR) {
+      const a = this.toPx(hL), b2 = this.toPx(hR);
+      ctx.save();
+      ctx.strokeStyle = this.together ? "rgba(159,192,138,0.75)" : "rgba(232,168,106,0.3)";
+      ctx.lineWidth = this.together ? 6 : 3;
+      if (!this.together) ctx.setLineDash([8, 9]);
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b2.x, b2.y); ctx.stroke();
+      ctx.restore();
+    }
+    this.drawTimerWhisper(ctx, c, now);
+  }
+
+  extra() {
+    return {
+      rgsStage: this.stage,
+      caught: this.caught, placed: this.placed,
+      wrongBasket: this.wrongBasket, passedBy: this.passed,
+    };
+  }
+}
+
 /* ==================== G25 Connect the Dots ==================== */
 // Sequenced point-to-point reaching with a picture as the payoff: hold on
 // dot 1, then 2, then 3, and a line follows the hand until the shape appears.
@@ -4877,6 +5144,7 @@ export const GAMES = [
   // --- Aug 2026 additions: Tier 1 (no new tracking needed) ---
   { id: "lens", name: "Scratch Cards", cls: LighthouseLens, trains: "Sweeping coverage" },
   { id: "dots", name: "Connect the Dots", cls: ConnectDots, trains: "Point-to-point reach" },
+  { id: "rgs", name: "Catch Together", cls: CatchTogether, trains: "Both arms together" },
   { id: "crane", name: "Crane Keeper", cls: CraneKeeper, disabled: true, trains: "Hold high + squeeze" },
   { id: "feather", name: "Feather Lantern", cls: FeatherLantern, disabled: true, trains: "Slow lowering" },
   { id: "buoys", name: "Two Lights", cls: TwoLights, disabled: true, trains: "Speed and accuracy" },

@@ -1,0 +1,30 @@
+.mat-content {
+  display: flex;
+  flex: 1;
+  flex-direction: row;
+  overflow: auto;
+  flex-wrap: nowrap;
+  align-content: center;
+  justify-content: flex-start;
+  align-items: center;
+}
+
+.mat-list-base .mat-list-item {
+  font-size: 14px;
+}
+
+::ng-deep .mat-expansion-panel-body {
+  padding: 0 !important
+}
+
+::ng-deep .mat-expansion-panel-header {
+  height: 48px !important;
+}
+
+::ng-deep .mat-expansion-panel .mat-list-item {
+  padding-left: 45px !important;
+}
+
+::ng-deep .mat-list-base {
+  padding-top: 0 !important;
+}

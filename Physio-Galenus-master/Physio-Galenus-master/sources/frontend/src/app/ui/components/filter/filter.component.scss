@@ -1,0 +1,19 @@
+:host ::ng-deep {
+  .unset-padding-mat-form-field {
+    .mat-form-field-wrapper {
+      padding-bottom: unset;
+    }
+  }
+}
+
+::ng-deep .mat-list-item-content {
+  padding: 0 !important;
+}
+
+.mat-radio-button ~ .mat-radio-button {
+  margin-left: 16px;
+}
+
+.spacer {
+  flex: 1 1 auto;
+}

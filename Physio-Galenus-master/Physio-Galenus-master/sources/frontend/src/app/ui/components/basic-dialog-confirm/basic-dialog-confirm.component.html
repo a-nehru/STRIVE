@@ -1,0 +1,28 @@
+<button
+    *ngIf="showModalCross"
+    type="button"
+    class="close"
+    aria-label="Close"
+    [mat-dialog-close]="true"
+  >
+    <span aria-hidden="true">&times;</span>
+  </button>
+<h1 mat-dialog-title [innerHtml]="textTitle | safeHtml"></h1>
+<div mat-dialog-content [innerHtml]="textBody | safeHtml"></div>
+<div mat-dialog-actions align="center">
+  <button
+    mat-flat-button
+    color="accent"
+    *ngIf="onClickSecondaryButtonCallback"
+    (click)="onClickSecondaryButton()"
+  >
+    {{ secondaryButtonName }}</button>
+  <button
+    mat-flat-button
+    color="primary"
+    class="ml-3"
+    *ngIf="onClickPrimaryButtonCallback"
+    (click)="onClickPrimaryButton()"
+  >{{ primaryButtonName }}</button>
+</div>
+

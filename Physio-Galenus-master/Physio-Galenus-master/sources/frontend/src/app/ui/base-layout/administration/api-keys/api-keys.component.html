@@ -1,0 +1,98 @@
+<app-loading [isLoading]="state.isLoading"></app-loading>
+<app-page-heading
+  [heading]="state.heading"
+  [subheading]="state.subheading"
+  [icon]="state.icon"
+></app-page-heading>
+<div class="d-flex">
+  <div class="mb-5 container">
+    <mat-card class="row mat-elevation-z3">
+      <app-filter
+        [filterCriteria]="imports.filterCriteria"
+        [urlChange]="false"
+        (filterChange)="updateApiKeysList($event)"
+      >
+      </app-filter>
+      <div class="table-responsive">
+        <table class="table">
+          <thead>
+            <tr>
+              <th class="mat-header-cell">Username</th>
+              <th class="mat-header-cell">Key</th>
+              <th class="mat-header-cell text-center">Revoked</th>
+              <th class="mat-header-cell">Description</th>
+              <th class="mat-header-cell">Quota</th>
+              <th class="mat-header-cell">Quota Reset</th>
+              <th class="mat-header-cell">Actions</th>
+            </tr>
+          </thead>
+          <tbody class="apiKeyTableBody">
+            <tr *ngFor="let apiKey of state.apiKeysListDto">
+              <td>
+                {{ apiKey.username }}
+              </td>
+              <td>
+                {{ apiKey.key }}
+              </td>
+              <td
+                class="text-center"
+                [ngClass]="apiKey.is_revoked ? 'error-color' : 'ok-color'"
+              >
+                {{ apiKey.is_revoked ? "Yes" : "No" }}
+              </td>
+              <td>
+                {{ apiKey.description }}
+              </td>
+              <td>
+                {{ apiKey.quota }}
+                <i
+                  *ngIf="!apiKey.quota"
+                  class="fas fa-infinity"
+                  aria-hidden="true"
+                >
+                </i>
+              </td>
+              <td>
+                {{ imports.capitalize(apiKey.quota_reset?.toString() || "") }}
+              </td>
+              <button
+                [appIfPermissionsEnable]="permissionEditApiKey"
+                mat-icon-button
+                color="accent"
+                matTooltip="Click to edit this api key!"
+                (click)="onEdit(apiKey)"
+              >
+                <mat-icon>edit</mat-icon>
+              </button>
+              <button
+                [appIfPermissionsEnable]="permissionDeleteApiKey"
+                mat-icon-button
+                color="accent"
+                matTooltip="Click to delete this api key!"
+                (click)="onDelete(apiKey.id)"
+              >
+                <mat-icon>delete</mat-icon>
+              </button>
+            </tr>
+            <button
+              type="submit"
+              [appIfPermissionsEnable]="permissionCreateApiKey"
+              matTooltip="Click to create an api key"
+              mat-mini-fab
+              color="accent"
+              class="mt-3"
+              (click)="onCreate()"
+            >
+              <mat-icon>add</mat-icon>
+            </button>
+          </tbody>
+        </table>
+      </div>
+      <app-pagination
+        [paginationData]="paginationData"
+        [paginationOptions]="paginationOptions"
+        (pageChange)="onPageChange()"
+      ></app-pagination>
+    </mat-card>
+  </div>
+</div>

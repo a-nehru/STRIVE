@@ -1,0 +1,50 @@
+<app-loading [isLoading]="isLoading"></app-loading>
+
+<div class="table-responsive">
+  <table class="table">
+    <thead>
+      <tr>
+        <th class="header-cell">Name</th>
+        <th class="header-cell">Start Date</th>
+        <th class="header-cell">End Date</th>
+        <th class="header-cell">Days of the Week</th>
+        <th class="header-cell text-center">Actions</th>
+      </tr>
+    </thead>
+    <tbody class="routinesTableBody">
+      <tr
+        *ngFor="let routine of routineList?.data; let i = index"
+      >
+        <td class="cell">
+          <a [routerLink]="getRoutineUrl(routine.id)">{{ routine.name }}</a>
+        </td>
+        <td class="cell">
+          {{ routine.startDate | date }}
+        </td>
+        <td class="cell">
+          {{ routine.endDate | date }}
+        </td>
+        <td class="cell">
+          {{ routine.repetitionWeekdays.join(', ') }}
+        </td>
+        <td class="cell text-center">
+          <button
+            [appIfPermissionsEnable]="adjustDifficultyPermissions"
+            mat-icon-button
+            [routerLink]="this.getAdjustDifficultyUrl(routine.id)"
+            matTooltip="Automatically adjust routine">
+            <mat-icon>autorenew</mat-icon>
+          </button>
+          <button
+            [appIfPermissionsEnable]="deleteRoutinePermissions"
+            [disabled]="!hasPermissions(deleteRoutinePermissions)"
+            mat-icon-button color="accent"
+            (click)="deleteRoutine(routine.id)"
+            matTooltip="Delete this routine">
+            <mat-icon>delete</mat-icon>
+          </button>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+</div>
