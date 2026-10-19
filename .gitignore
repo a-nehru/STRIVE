@@ -21,3 +21,14 @@ tools/*.log
 pong_score.png
 assess_test.html
 mockups/*.zip
+# raw recordings, logs and scratch: not parttHub's 100 MB limit)
+assets/*.mp4
+assets/*.zip
+assets/music/WIN_*.mp4
+assets/music/assessment_instructions.mp4
+assets/music/rom_assessment.mp4
+assets/music/*.docx
+tools/*.log
+pong_score.png
+assess_test.html
+mockups/*.zip
