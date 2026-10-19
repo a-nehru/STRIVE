@@ -35,7 +35,7 @@ Stand or sit 1–2 m from the camera with your whole upper body visible.
    squeeze") → **a figure demonstrates the movement** → **90 s of free
    reach**, with the patient told plainly why ("wherever you reach is where
    your targets will appear") → **six held positions**, each reached, held
-   5 s, and with an open-and-close of the hand.
+   5 s, and with a squeeze and then an open of the hand.
    Out of it: a 16-direction reach envelope, arm length, workspace **area**
    and **coverage** (and a real **volume** on the ZED), which quadrant is
    lost, the arm-elevation arc, and per position whether they could reach

@@ -8,6 +8,7 @@
 import { FilesetResolver, PoseLandmarker, HandLandmarker } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
 
 const LM = {
+  nose: 0,
   earL: 7, earR: 8,
   shL: 11, shR: 12, elL: 13, elR: 14, wrL: 15, wrR: 16,
   piL: 17, piR: 18, ixL: 19, ixR: 20, thL: 21, thR: 22,
@@ -45,6 +46,12 @@ const STEREO_RATIO = 2.6;
 const GRIP_CLOSE = 0.28, GRIP_OPEN = 0.36;
 const GRIP_CAL_MIN_RANGE = 0.10;   // observed hi−lo needed to trust calibration
 const GRIP_CAL_DECAY = 0.0004;     // envelope forget rate per frame
+// the curl band must not be poisoned by one wild frame (tools/zed_track.py's
+// hardening, Sep 2026): the envelope may only GROW by CURL_CAL_GROW a frame,
+// its span is capped at CURL_CAL_MAX_RANGE (a real hand spans about 1.0),
+// and values outside CURL_PLAUSIBLE are ignored. One spike to 3.0 used to
+// lift "open" out of a real hand's reach for minutes.
+const CURL_CAL_GROW = 0.02, CURL_CAL_MAX_RANGE = 1.4, CURL_PLAUSIBLE = [0.5, 3.0];
 // hand-model curl calibration: fixed thresholds (~1.25 close / 1.55 open on
 // a ~1.0 fist … ~2.0 open scale) until the per-person envelope has seen
 // enough range — then "closed" means 35% into THEIR OWN range, so a hand
@@ -96,7 +103,23 @@ export class Tracker {
     // its own seating). Followed by build + position, never by confidence.
     this.lock = null;          // { mid, sw, torso, at }
     this.peopleSeen = 0;       // bodies in frame this detection (for staff UI)
+    // the SECOND PLAYER on the webcam path (Oct 2026, by request: two-player
+    // Pong without the ZED). Asked for by setSecond(true); followed with its
+    // own lock, the same build-and-position signature as the patient's, so
+    // the two never trade paddles, and never the body the patient's lock
+    // took. The ZED path keeps seating people in the bridge.
+    this.wantSecond = false;
+    this.lock2 = null;
+    // ZED path: everyone the bridge sees this frame, seated or not, as
+    // {id, x, y, sw, z, seat, play} in normalized (unmirrored) image coords,
+    // so the welcome screen can put a marker on each person and staff can
+    // click the one to follow.
+    this.people = [];
     this._armLen = { left: null, right: null };   // decaying session max, SW
+    // the same maxima kept per SEGMENT. armLenSW is bend-invariant because it
+    // sums the two; the spherical workspace needs them apart, to solve each
+    // segment's depth from its foreshortening (see armVec3).
+    this._segLen = { left: { upper: null, fore: null }, right: { upper: null, fore: null } };
     this.pts3 = null;          // metric XYZ per landmark (ZED only), meters
     this.at3 = 0;
   }
@@ -120,6 +143,22 @@ export class Tracker {
         img.src = `${ZED_BRIDGE}/video.mjpg`;
         img.videoWidth = zed.w; img.videoHeight = zed.h; img.readyState = 2;
         this.video = img;
+        // hold the "waking up the camera" screen until the stream's first
+        // frame has actually arrived, so the welcome mirror does not open on
+        // a blank panel and fill in a second or two later
+        await new Promise(res => { img.onload = () => res(); setTimeout(res, 4000); });
+        // GRASP ON THE ZED (Sep 2026): the bridge's BODY_38 fingertips are too
+        // coarse to call open/close reliably, so the 21-point hand model runs
+        // in the BRIDGE on a crop around each wrist (status.hand_model) and
+        // its hands arrive on the stream. Only when the bridge has no hand
+        // model does the browser run the same model itself, on the preview
+        // frames (_startZed) — a fallback, and a weak one at ward distances,
+        // where a hand is a few dozen pixels of the whole picture.
+        if (!zed.hand_model) {
+          const vision = await FilesetResolver.forVisionTasks(
+            "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
+          await this._loadHands(vision);
+        }
         return;
       }
     }
@@ -137,8 +176,18 @@ export class Tracker {
       // patient ourselves (_pickBody).
       numPoses: NUM_POSES,
     });
-    // dedicated hand model for real grasp detection — optional: pose tracking
-    // still works if it fails to load
+    await this._loadHands(vision);
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: 1280, height: 720, facingMode: "user" }, audio: false,
+    });
+    videoEl.srcObject = stream;
+    await new Promise(res => { videoEl.onloadedmetadata = res; });
+    await videoEl.play();
+  }
+
+  // dedicated hand model for real grasp detection — optional: pose tracking
+  // still works if it fails to load
+  async _loadHands(vision) {
     try {
       this.handLandmarker = await HandLandmarker.createFromOptions(vision, {
         baseOptions: {
@@ -151,12 +200,6 @@ export class Tracker {
     } catch (e) {
       console.warn("Hand Landmarker unavailable — using pose-fingertip grasp fallback", e);
     }
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: { width: 1280, height: 720, facingMode: "user" }, audio: false,
-    });
-    videoEl.srcObject = stream;
-    await new Promise(res => { videoEl.onloadedmetadata = res; });
-    await videoEl.play();
   }
 
   async _probeZed() {
@@ -181,7 +224,8 @@ export class Tracker {
         // seat 1, when the bridge runs --bodies 2: the second player's
         // paddle. Seats are locked to a person by the bridge, so this never
         // becomes player 1 mid-round.
-        this.peopleSeen = msg.bodies?.length ?? 0;
+        if (msg.people) this.people = msg.people;
+        this.peopleSeen = msg.people?.length ?? msg.bodies?.length ?? 0;
         const second = msg.bodies?.find(b => b.seat === 1);
         if (second) {
           this._ingestSecond(second.lm.map(p => ({ x: p[0], y: p[1], visibility: p[2] })), now);
@@ -195,8 +239,37 @@ export class Tracker {
         if (msg.lm3) this._ingest3(msg.lm3);
         const lm = msg.lm.map(p => ({ x: p[0], y: p[1], visibility: p[2] }));
         this._ingest(lm, now);
+        // the bridge's own hand model (a crop around each wrist, see
+        // tools/zed_bridge.py HandWorker): 21 points in the same unmirrored
+        // image coordinates as the skeleton, plus the world-landmark curl
+        if (msg.hands?.length) {
+          this._ingestHands({ landmarks: msg.hands.map(h => h.pts.map(q => ({ x: q[0], y: q[1] }))) },
+                            now, msg.hands.map(h => h.curl));
+        }
       } catch { /* skip malformed frame */ }
     };
+    // the hand model on the preview frames, every 2nd frame like the webcam
+    // path: the MJPEG <img> is copied to a canvas so the detector sees the
+    // frame that is showing right now
+    if (!this.handLandmarker) return;
+    const loop = () => {
+      if (!this.running) return;
+      requestAnimationFrame(loop);
+      this._handFrameToggle = !this._handFrameToggle;
+      if (!this._handFrameToggle || !this.pts) return;
+      const img = this.video, w = img.naturalWidth, h = img.naturalHeight;
+      if (!w || !h) return;
+      if (!this._zedFrame) this._zedFrame = document.createElement("canvas");
+      if (this._zedFrame.width !== w || this._zedFrame.height !== h) { this._zedFrame.width = w; this._zedFrame.height = h; }
+      try {
+        this._zedFrame.getContext("2d").drawImage(img, 0, 0, w, h);
+        const now = performance.now();
+        if (now <= (this._lastHandTs || 0)) return;   // timestamps must climb
+        this._lastHandTs = now;
+        this._ingestHands(this.handLandmarker.detectForVideo(this._zedFrame, now), now);
+      } catch { /* a frame the detector could not take; the skeleton keeps running */ }
+    };
+    requestAnimationFrame(loop);
   }
 
   start() {
@@ -213,6 +286,10 @@ export class Tracker {
         const r = this.landmarker.detectForVideo(src, now);
         const mine = r.landmarks?.length ? this._pickBody(r.landmarks, now) : null;
         if (mine) this._ingest(mine, now);
+        if (this.wantSecond && r.landmarks?.length > 1) {
+          const second = this._pickSecond(r.landmarks, mine, now);
+          if (second) this._ingestSecond(second, now);
+        }
         // hands every 2nd frame (grasp doesn't need 60 Hz; halves the cost)
         this._handFrameToggle = !this._handFrameToggle;
         if (this.handLandmarker && this._handFrameToggle) {
@@ -298,6 +375,58 @@ export class Tracker {
   // re-acquires the most central body
   relock() { this.lock = null; }
 
+  // two-player: start (or stop) following a second body. Off, the second
+  // player is forgotten at once so a stale paddle never lingers.
+  setSecond(on) {
+    this.wantSecond = !!on;
+    if (!on) { this.lock2 = null; this.p2 = null; }
+  }
+  relockSecond() { this.lock2 = null; }
+  // the second person: never the patient's body; followed by their own lock
+  // through LOCK_GRACE of absence; first acquired as the body furthest from
+  // the patient (two people side by side: the other one)
+  _pickSecond(list, mineLm, now) {
+    const cands = list.filter(l => l !== mineLm).map(l => this._feature(l)).filter(Boolean);
+    if (!cands.length) return null;
+    const lock = this.lock2;
+    if (lock && now - lock.at < LOCK_GRACE) {
+      let best = null, bestCost = Infinity;
+      for (const c of cands) {
+        const move = Math.hypot(c.mid.x - lock.mid.x, c.mid.y - lock.mid.y) / lock.sw;
+        const scale = Math.abs(c.sw - lock.sw) / lock.sw;
+        const build = (c.torso != null && lock.torso != null) ? Math.abs(c.torso - lock.torso) / lock.torso : 0;
+        const cost = move + scale * 2 + build * 1.5;
+        if (cost < bestCost) { bestCost = cost; best = c; }
+      }
+      if (best && bestCost < LOCK_GATE) { this._setLock2(best, now); return best.lm; }
+      return null;
+    }
+    const ref = this.lock?.mid;
+    if (ref) cands.sort((a, b) => Math.hypot(b.mid.x - ref.x, b.mid.y - ref.y) - Math.hypot(a.mid.x - ref.x, a.mid.y - ref.y));
+    this._setLock2(cands[0], now);
+    return cands[0].lm;
+  }
+  _setLock2(c, now) {
+    const prev = this.lock2;
+    const torso = c.torso != null
+      ? (prev?.torso != null ? prev.torso + (c.torso - prev.torso) * 0.05 : c.torso)
+      : prev?.torso ?? null;
+    this.lock2 = { mid: c.mid, sw: c.sw, torso, at: now };
+  }
+
+  // ZED path: staff clicked a person. The bridge pins seat 0 to that
+  // tracking id and follows them from then on (build signature when the id
+  // resets), wherever in the room they are. Resolves to true if the bridge
+  // took it. No-op on the webcam path.
+  async selectPerson(id, seat = 0) {
+    if (this.source !== "zed") return false;
+    try {
+      const r = await fetch(`${ZED_BRIDGE}/select?id=${encodeURIComponent(id)}&seat=${seat}`);
+      const j = await r.json();
+      return !!j.ok;
+    } catch { return false; }
+  }
+
   // ---- metric 3D (ZED only) ---------------------------------------
   // The SDK's keypoints in meters, camera frame (x right, y down, z forward).
   // The game's geometry stays in shoulder-width units — this is the extra
@@ -359,7 +488,8 @@ export class Tracker {
     // scale-invariant hysteresis); fall back to the self-calibrating pose-
     // fingertip envelope when the hand model has no fresh detection
     for (const s of ["left", "right"]) {
-      const curl = this.handCurl(s);
+      let curl = this.handCurl(s);
+      if (curl != null && (curl < CURL_PLAUSIBLE[0] || curl > CURL_PLAUSIBLE[1])) curl = null;
       if (curl != null) {
         // per-person thresholds: an explicit calibration (assessment's
         // "open… squeeze" step, `set: true`) is trusted whatever its size —
@@ -371,8 +501,13 @@ export class Tracker {
           ccal.lo = Math.min(ccal.lo, curl);
           ccal.hi = Math.max(ccal.hi, curl);
         } else {
-          ccal.lo = Math.min(curl, ccal.lo + GRIP_CAL_DECAY);
-          ccal.hi = Math.max(curl, ccal.hi - GRIP_CAL_DECAY);
+          // shrink slowly, grow slowly, never wider than a real hand's range
+          ccal.lo = Math.max(Math.min(curl, ccal.lo + GRIP_CAL_DECAY), ccal.lo - CURL_CAL_GROW);
+          ccal.hi = Math.min(Math.max(curl, ccal.hi - GRIP_CAL_DECAY), ccal.hi + CURL_CAL_GROW);
+          if (ccal.hi - ccal.lo > CURL_CAL_MAX_RANGE) {
+            if (curl - ccal.lo < ccal.hi - curl) ccal.hi = ccal.lo + CURL_CAL_MAX_RANGE;
+            else ccal.lo = ccal.hi - CURL_CAL_MAX_RANGE;
+          }
         }
         const crange = ccal.hi - ccal.lo;
         const trusted = ccal.set || crange > CURL_CAL_MIN_RANGE;
@@ -429,10 +564,17 @@ export class Tracker {
     for (const s of ["left", "right"]) {
       const sh = this.shoulder(s), el = this.elbow(s), wr = this.wrist(s);
       if (!sh || !el?.ok || !wr?.ok) continue;
-      const len = (Math.hypot(el.x - sh.x, el.y - sh.y) + Math.hypot(wr.x - el.x, wr.y - el.y)) / this.shoulderW;
+      const up = Math.hypot(el.x - sh.x, el.y - sh.y) / this.shoulderW;
+      const fo = Math.hypot(wr.x - el.x, wr.y - el.y) / this.shoulderW;
+      const len = up + fo;
       if (!(len > 0.6 && len < 2.1)) continue;      // tracking-glitch guard
       const prev = this._armLen[s];
       this._armLen[s] = prev == null ? len : Math.max(len, prev - ARM_DECAY);
+      // per-segment maxima, same decaying-max rule and the same reason: a
+      // segment angled towards the camera measures short, never long
+      const sg = this._segLen[s];
+      sg.upper = sg.upper == null ? up : Math.max(up, sg.upper - ARM_DECAY);
+      sg.fore  = sg.fore  == null ? fo : Math.max(fo, sg.fore  - ARM_DECAY);
     }
 
     // Sitting closer or further has to move the frame's SCALE: the origin
@@ -477,6 +619,132 @@ export class Tracker {
   // The assessment stores it in the profile and GameBase compares it with the
   // live value, so "70% of range" means 70% of THIS arm in THIS session.
   armLenSW(side) { return this._armLen[side]; }
+  segLenSW(side) { return this._segLen[side]; }
+
+  // ---- the arm in three dimensions --------------------------------
+  //
+  // The reachable-workspace protocol sweeps the arm through planes that a
+  // frontal camera sees edge-on: arm straight in front, arm forward and
+  // across. Projected onto the image those movements almost vanish, so a
+  // 2D-only measure would score a patient who completed them at nearly zero.
+  // The third coordinate is therefore recovered rather than skipped.
+  //
+  // With the ZED it is measured: lm3 is metric, and the body's own axes are
+  // rebuilt from the shoulders/hips so a patient sitting at an angle to the
+  // camera still reports "in front of me", not "in front of the camera".
+  //
+  // With a webcam it is SOLVED, from foreshortening. Each segment's true
+  // length is known in SW (the decaying session maxima above); its projected
+  // length is measured this frame; the missing depth is what is left:
+  //     dz = sqrt(max(0, L² − |projected|²))
+  // taken segment by segment so a bent elbow is not mistaken for a forward
+  // reach — the failure a whole-arm version of this has. Both segments are
+  // taken as reaching FORWARD, which is the ambiguity a single camera cannot
+  // resolve and the reason posterior targets are never asked for on a webcam.
+  //
+  // Returns SW units in the body frame — x to the patient's right, y up,
+  // z forward — plus which of the two it was, so nothing downstream can
+  // report a solved depth as a measured one.
+  armVec3(side) {
+    const m = this._armVec3Depth(side);
+    if (m) return m;
+    return this._armVec3Mono(side);
+  }
+
+  _armVec3Depth(side) {
+    if (!this.has3D) return null;
+    const P = this.pts3;
+    const g = k => { const p = P[k]; return p ? [p.x, p.y, p.z] : null; };
+    const shL = g("shL"), shR = g("shR"), hipL = g("hipL"), hipR = g("hipR");
+    const sh = g(side === "left" ? "shL" : "shR");
+    const el = g(side === "left" ? "elL" : "elR");
+    const wr = g(side === "left" ? "wrL" : "wrR");
+    if (!shL || !shR || !sh || !el || !wr) return null;
+    const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    const norm = v => { const n = Math.hypot(...v) || 1e-6; return [v[0] / n, v[1] / n, v[2] / n]; };
+    const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+
+    // right axis: shoulder-to-shoulder, pointing to the patient's right
+    const right = norm(sub(shR, shL));
+    // up axis: hips to shoulders when the hips are visible, else the SDK's
+    // own vertical (y is DOWN in the camera frame)
+    let up;
+    if (hipL && hipR) {
+      const hip = [(hipL[0] + hipR[0]) / 2, (hipL[1] + hipR[1]) / 2, (hipL[2] + hipR[2]) / 2];
+      const shm = [(shL[0] + shR[0]) / 2, (shL[1] + shR[1]) / 2, (shL[2] + shR[2]) / 2];
+      up = norm(sub(shm, hip));
+    } else up = [0, -1, 0];
+    // orthogonalize, then take forward as the trunk normal. Its SIGN is fixed
+    // by the head rather than assumed from the camera's handedness: the nose
+    // is in front of the shoulders on every body.
+    up = norm(sub(up, right.map(v => v * dot(up, right))));
+    let fwd = norm(cross(right, up));
+    const nose = P.nose ? [P.nose.x, P.nose.y, P.nose.z] : null;
+    const ear = P.earL && P.earR
+      ? [(P.earL.x + P.earR.x) / 2, (P.earL.y + P.earR.y) / 2, (P.earL.z + P.earR.z) / 2] : null;
+    const head = nose || ear;
+    if (head) {
+      const shm = [(shL[0] + shR[0]) / 2, (shL[1] + shR[1]) / 2, (shL[2] + shR[2]) / 2];
+      if (dot(sub(head, shm), fwd) < 0) fwd = fwd.map(v => -v);
+    } else if (dot(fwd, [0, 0, 1]) > 0) fwd = fwd.map(v => -v);   // z grows away from the camera
+
+    const scale = Math.hypot(...sub(shR, shL)) || 1e-6;           // metres per SW
+    const to = p => {
+      const v = sub(p, sh);
+      return { x: dot(v, right) / scale, y: dot(v, up) / scale, z: dot(v, fwd) / scale };
+    };
+    return { elbow: to(el), wrist: to(wr), method: "depth", shoulderM: scale };
+  }
+
+  _armVec3Mono(side) {
+    const f = this.frame;
+    const sh = this.shoulder(side), el = this.elbow(side), wr = this.wrist(side);
+    const seg = this._segLen[side];
+    if (!f || !sh || !el?.ok || !wr?.ok || !seg.upper || !seg.fore) return null;
+    // in-plane, SW, y up, origin at the shoulder of the assessed arm
+    const e = { x: (el.x - sh.x) / f.sw, y: -(el.y - sh.y) / f.sw };
+    const w = { x: (wr.x - sh.x) / f.sw, y: -(wr.y - sh.y) / f.sw };
+    const eLen = Math.hypot(e.x, e.y);
+    const fx = w.x - e.x, fy = w.y - e.y;
+    const fLen = Math.hypot(fx, fy);
+    const dzU = Math.sqrt(Math.max(0, seg.upper * seg.upper - eLen * eLen));
+    const dzF = Math.sqrt(Math.max(0, seg.fore * seg.fore - fLen * fLen));
+    return {
+      elbow: { x: e.x, y: e.y, z: dzU },
+      wrist: { x: w.x, y: w.y, z: dzU + dzF },
+      method: "monocular",
+    };
+  }
+
+  // Elbow flexion in degrees from the reconstructed arm: 180 = straight.
+  // Computed in 3D on purpose — the 2D angle reads a straight arm pointing at
+  // the camera as fully bent, which is exactly the posture the straight-arm
+  // circle is asking the patient to hold.
+  elbowAngle(side) {
+    const a = this.armVec3(side);
+    if (!a) return null;
+    const u = a.elbow;
+    const v = { x: a.wrist.x - u.x, y: a.wrist.y - u.y, z: a.wrist.z - u.z };
+    const nu = Math.hypot(u.x, u.y, u.z), nv = Math.hypot(v.x, v.y, v.z);
+    if (!(nu > 1e-4 && nv > 1e-4)) return null;
+    const c = (u.x * v.x + u.y * v.y + u.z * v.z) / (nu * nv);
+    return 180 - Math.acos(Math.max(-1, Math.min(1, c))) / Math.PI * 180;
+  }
+
+  // Hand length in shoulder-width units: wrist to middle fingertip, from the
+  // 21-point hand model. The assessment's functional reaches are scored in
+  // this unit because "close enough to count as touching" is a hand's length,
+  // not a fixed distance — the same reason the Kinetigram device normalizes
+  // its body-landmark distances by hand length. Null without a fresh hand
+  // detection, so the caller falls back to a typical ratio knowingly rather
+  // than being handed a guess dressed as a measurement.
+  handLenSW(side) {
+    const p = this._handPts(side);
+    if (!p || !this.shoulderW) return null;
+    const d = Math.hypot(p[12].x - p[0].x, p[12].y - p[0].y) / this.shoulderW;
+    return d > 0.2 && d < 0.9 ? d : null;
+  }
 
   // ---- second player (ZED seat 1) ---------------------------------
   // A deliberately thin second body: only what a paddle needs (shoulders,
@@ -527,9 +795,9 @@ export class Tracker {
 
   // match each detected hand to the nearer pose wrist (handedness labels are
   // unreliable in mirrored video; proximity isn't)
-  _ingestHands(res, now) {
+  _ingestHands(res, now, curls = null) {
     if (!res?.landmarks?.length || !this.pts) return;
-    for (const lm of res.landmarks) {
+    for (const [k, lm] of res.landmarks.entries()) {
       const pts = lm.map(p => ({ x: 1 - p.x, y: p.y }));
       const w = pts[0];
       let side = null, best = Infinity;
@@ -540,7 +808,10 @@ export class Tracker {
         if (d < best) { best = d; side = s; }
       }
       if (!side || best > this.shoulderW * 0.6) continue;
-      this.hands[side] = { pts, at: now };
+      // curl: the bridge measures it on the hand model's metric world
+      // landmarks (no foreshortening); the browser path computes it from
+      // the image points in handCurl
+      this.hands[side] = { pts, at: now, curl: curls?.[k] ?? null };
     }
   }
   _handPts(side) {
@@ -552,6 +823,8 @@ export class Tracker {
   // over palm size (wrist→middle MCP). ~2.0 open hand, ~1.0 fist —
   // scale-invariant, so no per-person calibration needed.
   handCurl(side) {
+    const h = this.hands[side];
+    if (h && performance.now() - h.at < 600 && h.curl != null) return h.curl;
     const p = this._handPts(side);
     if (!p) return null;
     const w = p[0];

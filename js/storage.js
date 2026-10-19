@@ -6,7 +6,10 @@ const KEY = "rehabsuite-v1";
 function load() {
   try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch { return {}; }
 }
-function save(db) { localStorage.setItem(KEY, JSON.stringify(db)); }
+function save(db) {
+  try { localStorage.setItem(KEY, JSON.stringify(db)); }
+  catch (e) { console.warn("storage: could not save", e); }
+}
 
 function patient(db, name) {
   if (!db.patients) db.patients = {};
@@ -22,6 +25,7 @@ function patient(db, name) {
       unlocks: { cursor: ["firefly"], decor: [], creatures: [] },
       equippedCursor: "firefly",
       shoulderCm: null,        // tape-measured biacromial width; converts SW units to cm
+      arm: null,               // the arm being trained, chosen once at setup (login asks if missing)
     };
   }
   return db.patients[name];
@@ -55,6 +59,17 @@ export const store = {
     return p;
   },
 
+  // the trained arm: set at login (or by the staff drawer), read on every login
+  setArm(name, arm) { const db = load(); patient(db, name).arm = arm; save(db); },
+
+  // contact and reminder preference: email, the time they want the
+  // "time for your session" email, and which days (off | daily | weekdays)
+  setContact(name, c) {
+    const db = load(); const p = patient(db, name);
+    p.contact = { email: (c.email || "").trim(), remindAt: c.remindAt || "", remindDays: c.remindDays || "off" };
+    save(db);
+  },
+
   getProfile(name, arm) { return patient(load(), name).profiles[arm] || null; },
 
   saveProfile(name, arm, profile) {
@@ -66,12 +81,14 @@ export const store = {
     if (old) p.history[arm].push({
       date: old.date,
       arcMinDeg: old.arcMinDeg, arcMaxDeg: old.arcMaxDeg,
-      envelope: old.envelope, covered: old.covered,
+      envelope: old.envelope, envPts: old.envPts, covered: old.covered,
       armLenSW: old.armLenSW, areaSW2: old.areaSW2, coverage: old.coverage,
       volumeM3: old.volumeM3, quadrants: old.quadrants,
       extremes: old.extremes, grasp: old.grasp,
+      rsa: old.rsa, rsaElbow: old.rsaElbow,
+      laps: old.laps, lift: old.lift,
     });
-    p.history[arm] = p.history[arm].slice(-6);
+    p.history[arm] = p.history[arm].slice(-24);   // enough for the reach-over-time plot
     p.profiles[arm] = profile;
     save(db);
   },
@@ -90,6 +107,41 @@ export const store = {
     if (round.lanterns) p.lanterns += round.lanterns;
     if (round.creatures) for (const c of round.creatures)
       if (!p.unlocks.creatures.includes(c)) p.unlocks.creatures.push(c);
+    save(db);
+  },
+
+  // Play time per LOCAL day: rounds and assessments, in ms. Menus and the
+  // welcome screen are not play, so they are not counted.
+  logPlaytime(name, ms, kind) {
+    if (!(ms > 0)) return;
+    const db = load(); const p = patient(db, name);
+    p.playtime ??= {};
+    const d = new Date(), key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const e = p.playtime[key] ??= { ms: 0, rounds: 0, assessments: 0 };
+    e.ms += Math.round(ms);
+    if (kind === "round") e.rounds++; else if (kind === "assessment") e.assessments++;
+    save(db);
+  },
+  playtime(name) { return patient(load(), name).playtime || {}; },
+
+  // The lantern street (village.js): every lantern ever lit in the Lantern
+  // game, per LOCAL day. Strictly additive: nothing here is ever decreased.
+  // `seen` is the street as it stood at the last visit to the hub, so the
+  // hub can say what has happened since.
+  getVillage(name) { return patient(load(), name).village || { lanterns: 0, days: {}, seen: null }; },
+  addLanterns(name, lit) {
+    if (!(lit > 0)) return;
+    const db = load(); const p = patient(db, name);
+    p.village ??= { lanterns: 0, days: {}, seen: null };
+    const d = new Date(), key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    p.village.lanterns += lit;
+    p.village.days[key] = (p.village.days[key] || 0) + lit;
+    save(db);
+  },
+  markVillageSeen(name, seen) {
+    const db = load(); const p = patient(db, name);
+    p.village ??= { lanterns: 0, days: {}, seen: null };
+    p.village.seen = seen;
     save(db);
   },
 
@@ -163,12 +215,53 @@ export const store = {
     save(db);
   },
 
+  // A free-form per-patient progress bag for a game, kept beside the ladder
+  // levels in `progress` (the Lantern's per-level bests and its Star Atlas).
+  getProgress(name, key) { return patient(load(), name).progress?.[key] ?? null; },
+  setProgress(name, key, value) {
+    const db = load(); const p = patient(db, name);
+    p.progress = p.progress || {};
+    p.progress[key] = value;
+    save(db);
+  },
+
   // Pong skill progression: 1 = basic rally, 2 = +grip shot, 3 = +spin shot
   getPongLevel(name) { return patient(load(), name).progress?.pongLevel || 1; },
   setPongLevel(name, lvl) {
     const db = load(); const p = patient(db, name);
     p.progress = p.progress || {};
     p.progress.pongLevel = Math.max(1, Math.min(3, lvl));
+    save(db);
+  },
+
+  // TWO-PLAYER PONG (Oct 2026, by request). The partner (a caregiver, a
+  // friend) is not a patient and never appears on the login screen: the
+  // quick measure of their arm (arcMinDeg / arcMaxDeg, per side) is kept
+  // under the patient they play with, and so is the head-to-head record.
+  getPartners(name) { return patient(load(), name).partners || {}; },
+  savePartner(name, partner, data) {
+    const db = load(); const p = patient(db, name);
+    p.partners ??= {};
+    p.partners[partner] = { ...(p.partners[partner] || {}), ...data, at: new Date().toISOString() };
+    save(db);
+  },
+  // wins / losses / draws against this partner, and the best rally ever
+  getRivalry(name, partner) {
+    return patient(load(), name).rivalry?.[partner] || { wins: 0, losses: 0, draws: 0, games: 0, bestRally: 0 };
+  },
+  logRivalry(name, partner, won, bestRally) {
+    const db = load(); const p = patient(db, name);
+    p.rivalry ??= {};
+    const r = p.rivalry[partner] ??= { wins: 0, losses: 0, draws: 0, games: 0, bestRally: 0 };
+    r.games++;
+    if (won === true) r.wins++; else if (won === false) r.losses++; else r.draws++;
+    r.bestRally = Math.max(r.bestRally || 0, bestRally || 0);
+    r.last = new Date().toISOString();
+    save(db);
+  },
+  resetRivalry(name, partner) {
+    const db = load(); const p = patient(db, name);
+    if (p.rivalry) delete p.rivalry[partner];
     save(db);
   },
 

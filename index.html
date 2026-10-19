@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>STRIVE</title>
-<link rel="stylesheet" href="css/style.css?v=32">
+<link rel="stylesheet" href="css/style.css?v=59">
 </head>
 <body>
 
@@ -45,10 +45,29 @@
       <h1 class="login-head">Nice to meet you</h1>
       <p class="login-sub">Type your name or ID</p>
       <input type="text" id="login-name" maxlength="24" placeholder="e.g. Mary or RH-0428" autocomplete="off" spellcheck="false">
+      <div class="login-extra">
+        <label>Email for reminders (optional)
+          <input type="email" id="login-email" maxlength="120" placeholder="you@example.com" autocomplete="off"></label>
+        <div class="login-extra-row">
+          <label>Remind me at <input type="time" id="login-remind-time" value="10:00"></label>
+          <label>on <select id="login-remind-days"><option value="off">no reminder</option><option value="daily">every day</option><option value="weekdays">weekdays</option></select></label>
+        </div>
+      </div>
       <div class="login-actions">
         <button class="btn big" id="btn-login-create">Continue</button>
         <button class="btn ghost-light" id="btn-login-back2">Back</button>
       </div>
+    </div>
+
+    <!-- step 3: the arm to train, chosen once -->
+    <div id="login-arm" class="hidden">
+      <h1 class="login-head">One more thing</h1>
+      <p class="login-sub" id="login-arm-who">Which arm are we training?</p>
+      <div class="login-actions">
+        <button class="btn big" id="btn-login-arm-left">Left arm</button>
+        <button class="btn big" id="btn-login-arm-right">Right arm</button>
+      </div>
+      <button class="login-skip" id="btn-login-back3">Back</button>
     </div>
   </div>
 
@@ -65,8 +84,12 @@
   <div id="welcome-firefly" style="left:64vw;top:56vh"></div>
   <div class="brand-title">STRIVE</div>
   <div class="headline">Ready when you are</div>
-  <div class="subline">Lift your hand into the light</div>
-  <button class="btn" id="btn-welcome-start">Start</button>
+  <div class="subline">Sit facing the camera and we'll get you settled</div>
+  <div class="welcome-actions">
+    <button class="btn" id="btn-welcome-start">Start</button>
+    <button class="btn ghost-light" id="btn-welcome-warmup" title="A short stretch with the demonstration video, before we play">Warm up first</button>
+    <button class="btn ghost-light" id="btn-welcome-help">Ask for help</button>
+  </div>
   <div class="track-status" id="welcome-track"></div>
   <div class="brand-foot">Developed by Synapse Lab · Shirley Ryan AbilityLab</div>
 </div>
@@ -74,8 +97,16 @@
 <!-- P3 game select -->
 <div id="screen-select" class="screen hidden">
   <h1>What shall we play today?</h1>
-  <div class="select-sub">Squeeze on a card to choose it, or hold your hand there</div>
+  <div class="select-sub">Click a card to choose it</div>
+  <div class="village" id="village">
+    <canvas id="village-canvas"></canvas>
+    <div class="village-line" id="village-line"></div>
+  </div>
   <div class="cards" id="cards"></div>
+  <div class="menu-actions">
+    <button class="btn ghost-light" id="btn-select-help">Ask for help</button>
+    <button class="btn ghost-light" id="btn-select-mail">Email my progress</button>
+  </div>
 </div>
 
 <!-- stage: assessment + games -->
@@ -99,6 +130,7 @@
       <svg class="rc-ring" id="rc-ring" viewBox="0 0 120 120" width="132" height="132"></svg>
       <div class="rc-text" id="rc-text"></div>
     </div>
+    <div class="rc-how" id="rc-how"></div>
     <div class="rc-ask">How does your arm feel?</div>
     <div class="faces">
       <button class="face f-fine" data-feel="fine"><span class="disc">
@@ -112,6 +144,7 @@
       </span><span class="lbl">Hurts</span></button>
     </div>
     <div class="rc-note" id="rc-note"></div>
+    <div class="rc-board" id="rc-board"></div>
     <div class="rc-actions">
       <button class="btn" id="btn-next-round">Next round</button>
       <button class="btn ghost" id="btn-finish">Finish for today</button>
@@ -121,9 +154,20 @@
 
 <!-- P6b assessment result: previous vs current ROM -->
 <div id="screen-romcompare" class="screen hidden">
-  <h1>Your measurements</h1>
-  <div class="select-sub" id="rom-sub">Here is what changed since last time</div>
-  <div class="rom-cards" id="rom-cards"></div>
+  <h1>Your reach today</h1>
+  <div class="select-sub" id="rom-sub"></div>
+  <div class="rom-hero">
+    <div class="rom-live-wrap">
+      <canvas id="rom-live"></canvas>
+      <div class="rom-live-legend">Amber = where your wrist reached today · dashed = last time · dotted = the full circle your arm could reach</div>
+    </div>
+    <div class="rom-big" id="rom-big"></div>
+  </div>
+  <div class="rom-tiles" id="rom-tiles"></div>
+  <div class="rom-plot-wrap">
+    <div class="rom-plot-title">Your reach over time · 100% is the full circle</div>
+    <div id="rom-plot"></div>
+  </div>
   <button class="btn" id="btn-rom-done" data-dwell="1">Continue</button>
 </div>
 
@@ -157,14 +201,14 @@
       <div class="pcard">
         <div style="display:flex;align-items:center;justify-content:space-between">
           <h3>Range of motion</h3>
-          <span class="psub">Frontal plane · both arms · ghosts = past sessions</span>
+          <span class="psub">Frontal plane · trained arm in amber · ghosts = past sessions</span>
         </div>
         <svg id="prof-arc" viewBox="0 0 400 232" style="width:100%;margin-top:6px"></svg>
         <div class="arc-legend" id="prof-arc-legend"></div>
       </div>
       <div class="pcard">
         <h3>Grasp map</h3>
-        <div class="psub">Six held positions · reach, steadiness, and whether the hand worked there</div>
+        <div class="psub">Five targets · reach, steadiness, and whether the hand worked there</div>
         <svg id="prof-grasp" viewBox="0 0 400 232" style="width:100%;margin-top:6px"></svg>
       </div>
     </div>
@@ -183,7 +227,7 @@
     </div>
     <div class="prof-actions">
       <button class="btn" id="btn-prof-session">Start session</button>
-      <button class="btn ghost" id="btn-prof-assess">Re-run assessment</button>
+      <button class="btn ghost" id="btn-prof-assess">Re-measure this arm</button>
       <button class="btn ghost" id="btn-prof-export">Export data</button>
     </div>
   </div>
@@ -197,14 +241,24 @@
   <label>Training arm
     <select id="in-arm"><option value="right">Right</option><option value="left">Left</option></select>
   </label>
+  <label>Email (reminders)
+    <input type="email" id="in-email" maxlength="120" placeholder="participant's email">
+  </label>
+  <label>Remind at <input type="time" id="in-remind-time"></label>
+  <label>Reminder days
+    <select id="in-remind-days"><option value="off">Off</option><option value="daily">Every day</option><option value="weekdays">Weekdays</option></select>
+  </label>
   <label>Shoulder width (cm)
     <input type="number" id="in-shoulder" min="20" max="70" step="0.5" placeholder="tape-measure once, e.g. 38">
+  </label>
+  <label>Assessment style
+    <select id="in-assess-style"><option value="figure">Drawn figure: two circles, then a lift</option><option value="video">Instruction video</option></select>
   </label>
   <label>Coach sensitivity
     <select id="in-coach"><option value="gentle">Gentle</option><option value="strict">Strict</option><option value="off">Off</option></select>
   </label>
   <div class="dwr-game" data-for="pong">
-    <label>Pong mode
+    <label class="hidden">Pong mode
       <select id="in-pong">
         <option value="solo">Solo (vs gentle AI)</option>
         <option value="bimanual">Bimanual (arm vs arm)</option>
@@ -212,17 +266,14 @@
         <option value="companion">Vs companion (arrow keys)</option>
         <option value="team-arms">Team: both arms vs AI</option>
         <option value="team-keys">Team: you + companion vs AI</option>
-        <option value="duo">Two players (ZED, two seats)</option>
+        <option value="duo">Two players (both tracked by the camera)</option>
       </select>
     </label>
-    <label>Pong skills
-      <select id="in-pongskills">
-        <option value="auto" selected>Auto (level up with play)</option>
-        <option value="both">Grip + spin</option>
-        <option value="none">Off (basic rally only)</option>
-        <option value="grip">Grip shot</option>
-        <option value="spin">Spin shot</option>
-      </select>
+    <label>Pong ball speed
+      <select id="in-pong-speed"><option value="chill">Chill</option><option value="normal" selected>Normal</option><option value="frantic">Frantic</option></select>
+    </label>
+    <label>Pong power-ups
+      <select id="in-pong-power"><option value="on" selected>On (orbs)</option><option value="off">Off</option></select>
     </label>
   </div>
   <div class="dwr-game" data-for="oars">
@@ -239,6 +290,18 @@
         <option value="solo">One hand steers</option>
         <option value="wheel">Both hands on the wheel</option>
       </select>
+    </label>
+  </div>
+  <div class="dwr-game" data-for="candles">
+    <label>Lantern hands
+      <select id="in-candles">
+        <option value="solo">One hand (the trained arm lights)</option>
+        <option value="together">Both: other hand keeps the candle, trained arm lights</option>
+        <option value="hold">Both: trained arm keeps the candle, other hand lights</option>
+      </select>
+    </label>
+    <label>Lantern level (next round only)
+      <select id="in-candles-level"><option value="">The ladder's level</option></select>
     </label>
   </div>
   <div class="dwr-game" data-for="rhythm">
@@ -295,11 +358,12 @@
     </select>
   </label>
   <div id="camstate">Camera: not started</div>
+  <div id="campeople" class="campeople"></div>
   <h2 class="dwr-sub">Therapist contact</h2>
   <div id="mailstate">Mail: checking</div>
   <div class="row"><button class="btn ghost-light" id="btn-mail-test">Send test email</button><button class="btn ghost-light" id="btn-mail-help">Report a problem</button></div>
   <div class="row"><button class="btn ghost-light" id="btn-mail-progress">Email progress</button></div>
-  <div class="row"><button class="btn" id="btn-drawer-assess">Measure both arms</button><button class="btn ghost-light" id="btn-drawer-assess-one">Re-measure this arm</button></div>
+  <div class="row"><button class="btn" id="btn-drawer-assess">Re-measure this arm</button></div>
   <div class="row"><button class="btn ghost-light" id="btn-drawer-profile">Profile</button></div>
   <div class="row"><button class="btn ghost-light" id="btn-drawer-collections">Collections</button><button class="btn ghost-light" id="btn-drawer-close">Close</button></div>
 </div>
@@ -308,8 +372,10 @@
 
 <div id="handcursor" class="hidden"></div>
 
+<button id="btn-help" class="hidden" title="Ask your therapist for help">Help</button>
+
 <div id="loading" class="hidden"><div class="spinner"></div><div id="loading-text">Waking up the camera&hellip;</div></div>
 
-<script type="module" src="js/main.js?v=32"></script>
+<script type="module" src="js/main.js?v=59"></script>
 </body>
 </html>

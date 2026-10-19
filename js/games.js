@@ -30,7 +30,9 @@ const STORIES = {
   echo: { title: "The star's echo", text: "A star leaves an invisible echo where it shone. Remember the spot, and find it again." },
   sling: { title: "Cloud slingshot", text: "The dark clouds have built towers over the village. Pull the sling right back, hold it, and let go." },
   rgs: { title: "Catch together", text: "Lights are drifting in from the harbour. Cup both hands to catch one, then set it in a basket." },
+  candles: { title: "The lamplighter of Lumen", text: "The Night Moth put out every flame in the valley. Take a candle from the basket and carry it to each lantern. Pip the owl will cheer you on." },
   dots: { title: "Connect the dots", text: "There is a picture hiding in these dots. Go from one to the next and it will draw itself." },
+  pairs: { title: "Memory pairs", text: "The cards hide in pairs. Have a good look, then turn two at a time and find each match." },
   lens: { title: "Scratch cards", text: "Under the silver there is a picture. Scrape it away with your hand and see what it is." },
   crane: { title: "The night crane", text: "Hold the crane high and steady. Squeeze to catch each crate as it passes." },
   feather: { title: "The feather lantern", text: "Lift the lantern to its hook. Then lower it, slow as a feather." },
@@ -573,10 +575,30 @@ export class LanternRelease extends GameBase {
 // (anticipating a return to where the ball just was — the error people
 // actually make), then lunges back at full speed and arrives a fraction
 // short. The patient's shot wins the point, and it looks like it.
-// A game is to PONG_WIN points. The round still has a time limit, but
-// reaching five ends it — a match that finishes on a scoreline finishes,
-// where one that finishes on a clock just stops.
-const PONG_WIN = 5;
+// A GAME IS 90 SECONDS (Oct 2026, by request; before that, best of five,
+// first to three). Points are tallied both ways for TRICK_AT seconds of
+// play (the tutorial does not count), then the patient's paddle is ablaze
+// and their next return is the SMASH: it wins that point and ends the game.
+// The game is won on the tally (more points than the star), lost on it, or
+// drawn, and the next game's ball and the star's rank follow that result
+// (main.js#onRoundEnd). The clock is the game, so the game ends when it
+// says, never on a scoreline.
+// THE STAR'S RANK (Sep 2026, by request): the opponent grows with the
+// patient. A won game raises the rank, a lost one lowers it (main.js,
+// stored per patient as "starRank"); each rank is a fancier, quicker star:
+// its own paddle colours and glow, a sparkle tail from Comet up, and
+// sharper reactions (gain = how fast it reads the ball, vmax = how fast it
+// can move, in court heights a second). Rank 1 is the old star exactly.
+// The star is GREY at every rank (Sep 2026, by request): only the patient's
+// paddle carries colour, so "which one is me" never has to be worked out.
+// A rank is a little brighter grey, more glow, a sparkle tail, and quicker.
+export const STAR_RANKS = [
+  { name: "Little star", cols: ["#b4b4be", "#6c6c78"], glow: 0,  gain: 3.0, vmax: 0.24, tail: false },
+  { name: "Bright star", cols: ["#bfbfc9", "#75758a"], glow: 8,  gain: 3.5, vmax: 0.27, tail: false },
+  { name: "Comet",       cols: ["#cacad4", "#7f7f92"], glow: 12, gain: 4.1, vmax: 0.30, tail: true },
+  { name: "Nova",        cols: ["#d6d6df", "#8a8a9c"], glow: 16, gain: 4.8, vmax: 0.34, tail: true },
+  { name: "Supernova",   cols: ["#e2e2ea", "#9696a8"], glow: 22, gain: 5.6, vmax: 0.38, tail: true },
+];
 // the hand drawn on the paddle: small and faint on purpose — it is a
 // reminder of what drives the paddle, not a thing to watch
 // Paddle smoothing (One-Euro): cutoff in Hz when the arm is still, how fast
@@ -587,12 +609,146 @@ const PONG_WIN = 5;
 // 3%-of-lane input noise: 3.5x quieter held still, 2.9% lag at a realistic
 // rehab pace, 7% on a half-second sweep. A fixed 90 ms filter needed 16% lag
 // for the same quieting.
-const PADDLE_MIN_CUT = 0.6, PADDLE_BETA = 8.0, PADDLE_D_CUT = 0.25;
+// BETA came down from 8 to 5 (Sep 2026): the ZED bridge now delivers 30
+// samples a second into a 60 fps loop, and a filter that opens wide on
+// every movement lets each new sample show as a step. 5 keeps the paddle
+// gliding between samples at a rehab pace for ~40 ms more lag on a sweep.
+const PADDLE_MIN_CUT = 0.6, PADDLE_BETA = 5.0, PADDLE_D_CUT = 0.25;
+// Before the One-Euro, a running MEDIAN over the last PADDLE_MEDIAN distinct
+// tracker samples (Sep 2026, by request). A low-pass filter only spreads an
+// outlier out; a median throws it away: one wild wrist landmark, or the
+// occasional frame where the ZED swaps a joint, moves the paddle not at all.
+// Distinct samples, not frames: at 30 fps in a 60 fps loop the same angle
+// arrives twice, and a median over repeats would be a median over nothing.
+const PADDLE_MEDIAN = 5;
 const PONG_HAND_SCALE = 0.42, PONG_HAND_ALPHA = 0.38;
 // nudged OUTWARD from the court so the hand hugs the back of its paddle
 // rather than spilling into the play area (the paddle itself is only 16px)
 const PONG_HAND_OUT = 16;
-const AI_SLIP_FROM = 80, AI_SLIP_BY = 85;
+const PONG_PAD_T = 16;          // paddle thickness, px
+// TWO PONGS (Sep 2026, by request). "fe" is Pong FE: the paddles stand at
+// the left and right, the lane is vertical and the arm's elevation arc
+// drives it (shoulder flexion and extension). "abd" is Pong Abd-Add: the
+// court is turned on its side, the patient's paddle runs left and right
+// along the BOTTOM of the screen, driven by the hand's sideways position,
+// and the lane spans the assessment's own x limits (the furthest the wrist
+// went out to the side and across the body: abduction and adduction). The
+// physics never changes: the ball travels along court "x" between the two
+// edges and the paddles along "y" inside the lane; only _P, the mapping
+// from court to screen, knows which way up the court is drawn.
+const PONG_ABD_X0 = 0.12, PONG_ABD_X1 = 0.88;   // where the sideways lane sits on screen (fractions of width)
+const PONG_X_PAD = 0.05;        // SW shaved off each end of the sideways range so the ends are reachable
+const PONG_X_MIN_SPAN = 0.5;    // SW: the sideways lane never collapses below this
+// LIVE PADDLE COLOURS (Sep 2026, by request): the patient's paddle is amber,
+// and a posture slip turns it a pulsing gold with the coach's cue, so the
+// feedback is on the thing they are watching, not only in the corner. The
+// hand no longer colours it: since Sep 2026 (by request) Pong asks nothing
+// of the hand or the wrist, only of the arm, so a closed hand or a turned
+// palm means nothing here and is not signalled.
+const PAD_COLS = {
+  patient: ["#e8b98a", "#c77f4a"],
+  comp: ["#f5c96a", "#c0802a"],
+  mate: ["#a8d8d0", "#5f9b93"], opp: ["#b4b4be", "#6c6c78"],
+};
+const COMP_TAGS = { lean: "sit tall", hike: "shoulder down", rotation: "face the screen", tilt: "straighten up" };
+// the round-1 tutorial's teaching ball: never quicker than this many seconds
+// across the court, and slower still for a slow paddle
+const TUT_CROSS_MIN = 4.5;
+const AI_SLIP_FROM = 80, AI_SLIP_BY = 85;   // (superseded by TRICK_AT below; kept for the duo/team modes' fade maths)
+// THE SMASH (Oct 2026, by request: one game clock, the smash at the end of
+// it; Sep 2026 had a trick per point and then no tricks at all). The game
+// has ONE clock: a paddle at the top of the court catches fire over
+// TRICK_AT seconds of play, with the seconds left in its head, so it is the
+// time-left display as well as a promise. Once it is ablaze the patient's
+// next return is the SMASH: the ball flies too fast for the star to read,
+// that point is theirs, and the game ends on it. Nothing is asked of the
+// hand or the wrist (no squeeze, no palm turn: the grip and spin shots are
+// gone, by request): the smash is earned by playing out the clock and fired
+// by the same return as any other. Points before it are won the ordinary
+// way (the star's reactions lag and it can miss) or lost the ordinary way
+// (a ball past the paddle), each followed by the CEREMONY (POINT_BREAK_MS:
+// the point announced out loud with the tally, drawn big), then the next
+// serve. The other tricks in TRICKS stay whole: set `nextTrick` to one of
+// them in setup() to end a game on a curve or a ghost instead.
+const PONG_TRICKS = true;
+const TRICK_AT = 90;            // seconds of play until the smash is armed: the length of a game
+const TRICK_GRACE = 40;         // seconds after arming for the smash to land, allowed for in the backstop clock
+const POINT_BREAK_MS = 3000;    // the win / lose ceremony between points
+const TRAIL_MS = 380;           // the ball's comet tail in a rally
+const TRICK_TRAIL_MS = 700;     // and behind a trick, a long one in the trick's colours
+const SHAKE_MS = 450;           // court shake on the smash (off under calm motion)
+// THE TRICKS. Each is a way the ball flies to the star, paired with the
+// star's misread of it, so it lands by construction (see _engageTrick and
+// the slip in _paddles). `speed` is the return relative to the rally pace,
+// `cols` run white-hot to deep for the ball, the trail and the paddle's
+// fire, and `word` is what pops when the point lands.
+//   smash    straight and much faster; the star holds the side the ball came from
+//   curve    sets off towards the star, then bends away into the far corner
+//   ghost    fades out across the middle of the court; the star loses it and stands still
+//   zigzag   ricochets rail to rail on its way; the star follows the last bounce the wrong way
+//   feather  floats slowly to mid court, then darts into the corner; the star relaxes, then is late
+const TRICKS = [
+  { key: "smash",   name: "Smash",   word: "SMASH!",   speed: 1.8,  cols: ["#fff6d8", "#ffd98a", "#ff8a4a", "#c2452a"] },
+  { key: "curve",   name: "Curve",   word: "CURVE!",   speed: 1.25, cols: ["#fff6d8", "#d8c2ff", "#a07cf0", "#5f3fb8"] },
+  { key: "ghost",   name: "Ghost",   word: "GHOST!",   speed: 1.3,  cols: ["#ffffff", "#d6ecf5", "#9fd0e6", "#4f8ba8"] },
+  { key: "zigzag",  name: "Zigzag",  word: "ZIGZAG!",  speed: 1.25, cols: ["#ffffff", "#fff2a8", "#ffd23c", "#c99a10"] },
+  { key: "feather", name: "Feather", word: "FEATHER!", speed: 1.0,  cols: ["#f6ffe8", "#cfe8b8", "#9fc08a", "#5f8a4a"] },
+];
+const FEATHER_FLOAT = 0.45, FEATHER_DART = 2.1;   // the feather's two paces, relative to the rally
+const ZIGZAG_VY = 2.2;                            // the zigzag's rail-to-rail speed, as a multiple of |vx|
+const GHOST_FADE = [0.15, 0.35, 0.78, 0.92];      // court fractions: visible, gone, gone, back
+// BALL SPEED: starts at half the assessed crossing speed and creeps up a
+// little with every return in a rally (a miss and a fresh serve reset it),
+// never past PONG_SPEED_MAX of the assessed speed — slower overall, by request.
+const PONG_SPEED_START = 0.5, PONG_SPEED_GAIN = 0.04, PONG_SPEED_MAX = 0.85;
+// the staff ball-speed dial (drawer / two-player setup), a multiplier on the
+// full assessed pace: the same dial for the single and the two-player game
+const PONG_SPEED_DIAL = { chill: 0.8, normal: 1, frantic: 1.3 };
+// THE STYLE LAYER (Oct 2026, by request: the single-player and the
+// two-player game are ONE game, the star swapped for a second person).
+// Every return by a person earns STYLE points on top of the tally: STYLE_HIT
+// times the rally multiplier (one more for every STYLE_MULT_EVERY hits in the
+// rally, up to STYLE_MULT_MAX). Bonuses, each popping as a floating word at
+// the paddle: an EDGE hit (the ball on the outer EDGE_FRAC of the paddle,
+// from either end), a CLUTCH save (the outer CLUTCH_FRAC) and a HEAT return
+// (a ball arriving at HEAT_AT of the full assessed pace or faster). A rally
+// of ON_FIRE_AT hits puts the court "ON FIRE". The UNDERDOG, trailing by
+// UNDERDOG_GAP points, plays with a paddle UNDERDOG_GROW bigger until the gap
+// is UNDERDOG_CLOSE. Glowing ORBS appear mid court every ORB_EVERY seconds
+// (one at a time); the person who last hit the ball collects it by sending
+// the ball through it, for one of POWERS: a big paddle or a shrunk opponent
+// for POWER_MS, a shield (one save behind the goal) or a ghost shot (the
+// next return fades out mid court). Each game opens with a CHALLENGE from
+// CHALLENGES; the first to complete it takes STYLE_CHALLENGE and a banner.
+// The final board names titles: the Wall (most returns), the Sniper (most
+// edge hits) and the Showboat (most style). Points are still the game; the
+// style is what makes a long rally worth more than a short one.
+const STYLE_HIT = 10, STYLE_MULT_EVERY = 5, STYLE_MULT_MAX = 5;
+const STYLE_EDGE = 20, STYLE_CLUTCH = 50, STYLE_HEAT = 30, STYLE_CHALLENGE = 200;
+const EDGE_FRAC = 0.25, CLUTCH_FRAC = 0.10;
+const HEAT_AT = 0.8;
+const ON_FIRE_AT = 15;
+const UNDERDOG_GAP = 3, UNDERDOG_CLOSE = 2, UNDERDOG_GROW = 0.15;
+const ORB_EVERY = [7, 12], ORB_R = 0.035, POWER_MS = 8000;
+const POWER_BIG = 0.5, POWER_SHRINK = 0.35;        // paddle growth and shrink, as fractions
+const FLOATER_MS = 1100;
+const POWERS = [
+  { key: "big",    name: "Big paddle",  word: "BIG PADDLE!", col: "#9fc08a" },
+  { key: "shrink", name: "Shrink",      word: "SHRINK!",     col: "#d8a0ff" },
+  { key: "shield", name: "Shield",      word: "SHIELD!",     col: "#a8d8f0" },
+  { key: "ghost",  name: "Ghost shot",  word: "GHOST SHOT!", col: "#9fd0e6" },
+];
+const CHALLENGES = [
+  { key: "edge3",   text: "Land 3 edge hits",            need: p => p.edge >= 3 },
+  { key: "rally10", text: "Be part of a 10-hit rally",   need: p => p.rallyBest >= 10 },
+  { key: "orbs2",   text: "Collect 2 orbs",              need: p => p.orbs >= 2 },
+  { key: "clutch1", text: "Make a clutch save",          need: p => p.clutch >= 1 },
+  { key: "heat3",   text: "Hit 3 heat returns",          need: p => p.heat >= 3 },
+];
+// solo thresholds for the titles (two players are simply compared)
+const TITLE_SOLO = { wall: 15, sniper: 3, showboat: 500 };
+const mkPlayer = () => ({ style: 0, hits: 0, edge: 0, clutch: 0, heat: 0, orbs: 0, rallyBest: 0, powers: {} });
+const PONG_ARC_PAD = 5;         // degrees shaved off each end of the arm's range so the lane ends are reachable
 // The lunge is released on TIME, not on a fixed fraction of the flight: it
 // breaks the wrong way only when there is just barely enough left to get
 // back. A fixed fraction leaves the paddle still travelling when the ball
@@ -611,9 +767,74 @@ const AI_FADE_FROM = 55, AI_FADE_TO = 95, AI_FADE_MAX = 0.4;
 //   companion  friend on arrow keys vs patient (opposite sides)
 //   team-arms  BOTH the patient's arms defend one side together vs AI (co-active)
 //   team-keys  patient arm + companion on keys defend together vs AI (collaborative)
+// The sideways lane of Pong Abd-Add: the assessment's own x limits, from
+// the corner points of the traced shape (or the wedge radii for an older
+// profile), about the body centre — the furthest the wrist went out to the
+// side and across the body. Falls back to a modest range on that arm's side.
+export function pongXLimits(prof, arm) {
+  const xs = [];
+  const cen = prof?.center?.x || 0;
+  if (prof?.envPts?.length) for (const q of prof.envPts) if (q) xs.push(cen + q.x);
+  if (xs.length < 2 && prof?.envelope?.length) {
+    prof.envelope.forEach((r, i) => { if (r > 0) xs.push(cen + Math.cos((i + 0.5) / prof.envelope.length * TAU) * r); });
+  }
+  if (xs.length >= 2) return [Math.min(...xs), Math.max(...xs)];
+  return arm === "left" ? [-0.9, 0.6] : [-0.6, 0.9];
+}
+
 export class ArcPong extends GameBase {
   id = "pong";
   armBehind = false;       // a hand ON the paddle has to be on top of it
+  // ---- court → screen ----
+  _P(fx, fy) {
+    const c = this.canvas;
+    if (this.axis !== "abd") return { x: fx * c.width, y: fy * c.height };
+    // on its side: the patient's edge at the bottom, the lane left to right
+    // (lane top = screen right, so a hand moved to the right moves the
+    // paddle to the right for either arm — x is already mirrored)
+    const f = (fy - this.court.top) / (this.court.bottom - this.court.top);
+    return { x: (PONG_ABD_X1 - f * (PONG_ABD_X1 - PONG_ABD_X0)) * c.width,
+             y: (this.patientRight ? fx : 1 - fx) * c.height };
+  }
+  _myEdge() { return this.patientRight ? "right" : "left"; }
+  _edgeX(edge) { return edge === "right" ? this.court.right : this.court.left; }
+  // unit vector pointing OUT of the court at an edge, in screen pixels
+  _outward(edge) {
+    if (this.axis !== "abd") return { x: edge === "right" ? 1 : -1, y: 0 };
+    return { x: 0, y: edge === this._myEdge() ? 1 : -1 };
+  }
+  // a pixel point `out` px outside the court from the middle of a paddle
+  _padOutPx(edge, laneY, out) {
+    const p = this._P(this._edgeX(edge), laneY + this.paddleH / 2), o = this._outward(edge);
+    return { x: p.x + o.x * out, y: p.y + o.y * out };
+  }
+  // the paddle's rectangle on screen: a bar PONG_PAD_T thick along its edge,
+  // pushed `off` px outward for a teammate's second paddle
+  _padRect(edge, laneY, off = 0) {
+    const o = this._outward(edge);
+    const grow = (this._padH(edge) - this.paddleH) / 2;
+    const a = this._P(this._edgeX(edge), laneY - grow), b = this._P(this._edgeX(edge), laneY + this.paddleH + grow);
+    const T = PONG_PAD_T;
+    return this.axis === "abd"
+      ? { x: Math.min(a.x, b.x), y: a.y - T / 2 + o.y * off, w: Math.abs(b.x - a.x), h: T }
+      : { x: a.x - T / 2 + o.x * off, y: Math.min(a.y, b.y), w: T, h: Math.abs(b.y - a.y) };
+  }
+  _burstAt(fx, fy, color) { const p = this._P(fx, fy); this.burstAtPx(p.x, p.y, color); }
+  // The posture coach sits beside the paddle the patient drives (Sep 2026,
+  // by request): the bottom corner on the trained arm's side, clear of the
+  // paddle's track and of the hand riding on it, and a little bigger than
+  // the other games' dock so a slip is seen.
+  coachDock(c) {
+    const abd = this.axis === "abd";
+    const h = c.height * (abd ? 0.14 : 0.17), w = h * 0.95;
+    let x;
+    if (abd) x = this.patientRight ? c.width - 10 - w : 10;
+    else {
+      const edge = this._P(this._edgeX(this._myEdge()), 0).x;
+      x = this.patientRight ? Math.min(edge + 40, c.width - w - 6) : Math.max(edge - 40 - w, 6);
+    }
+    return { x, y: c.height * 0.98, h };
+  }
   // Pong draws NO arm. The full skeleton translated across the court was a
   // second moving shape competing with the ball, and the capture ring means
   // nothing in a game driven by a paddle. What is left is the one useful
@@ -623,28 +844,19 @@ export class ArcPong extends GameBase {
   // actually drives it — left paddle, left hand.
   _handPads() {
     const other = this.side === "right" ? "left" : "right";
-    const c = this.canvas;
-    const lx = this.court.left * c.width, rx = this.court.right * c.width;
-    const O = PONG_HAND_OUT;
-    const out = [{ x: this.patientRight ? rx + O : lx - O,
-                   y: this.patientRight ? this.pads?.rightY : this.pads?.leftY,
-                   side: this.side }];
-    if (this.mode === "bimanual") {
-      out.push({ x: this.patientRight ? lx - O : rx + O,
-                 y: this.patientRight ? this.pads?.leftY : this.pads?.rightY,
-                 side: other });
-    } else if (this.mode === "team-arms") {
-      out.push({ x: this.patientRight ? rx + 26 + O : lx - 26 - O,
-                 y: this.patientRight ? this.pads?.rightY2 : this.pads?.leftY2,
-                 side: other });
-    }
-    return out.filter(h => h.y != null);
+    const mine = this._myEdge(), theirs = mine === "right" ? "left" : "right";
+    const lane = (edge, second) => second ? (edge === "right" ? this.pads?.rightY2 : this.pads?.leftY2)
+                                          : (edge === "right" ? this.pads?.rightY : this.pads?.leftY);
+    const out = [{ edge: mine, y: lane(mine), side: this.side, out: PONG_HAND_OUT }];
+    if (this.mode === "bimanual") out.push({ edge: theirs, y: lane(theirs), side: other, out: PONG_HAND_OUT });
+    else if (this.mode === "team-arms") out.push({ edge: mine, y: lane(mine, true), side: other, out: 26 + PONG_HAND_OUT });
+    return out.filter(h => h.y != null).map(h => ({ ...h, ...this._padOutPx(h.edge, h.y, h.out) }));
   }
 
   _drawArmAndCursor(ctx, c, now) {
     if (!this.pads) return;
     for (const h of this._handPads()) {
-      const cy = (h.y + this.paddleH / 2) * c.height;
+      const cy = h.y;
       const pm = this.t.palmPx(h.side, c);
       ctx.save();
       ctx.globalAlpha = PONG_HAND_ALPHA;
@@ -655,25 +867,20 @@ export class ArcPong extends GameBase {
                                 y: (q.y - pm.y) * PONG_HAND_SCALE + cy })) : null;
       const drawn = map && drawHand(ctx, c, this.t, h.side, { map, scale: PONG_HAND_SCALE, fallback: false });
       if (!drawn) {
-        // no hand model: a small open/closed disc says the same thing
-        const closed = this.t.handClosed(h.side);
-        ctx.fillStyle = closed ? "#9fc08a" : "rgba(244,236,221,0.65)";
+        // no hand model: a small disc stands in for the hand
         ctx.strokeStyle = "rgba(244,236,221,0.65)"; ctx.lineWidth = 2.5;
-        ctx.beginPath(); ctx.arc(h.x, cy, closed ? 9 : 11, 0, TAU);
-        closed ? ctx.fill() : ctx.stroke();
+        ctx.beginPath(); ctx.arc(h.x, cy, 11, 0, TAU); ctx.stroke();
       }
       ctx.restore();
     }
   }
   setup() {
-    // vs the AI the round has to outlast the star's fade, or the round ends
-    // before the patient ever gets to beat it (see AI_FADE_TO)
-    // vs the AI the round has to outlast the slip, or it would end before the
-    // patient ever got to take the point they earned
-    this.roundSeconds = this.opts.tellStory ? 80
-      : (this.opts.mode || "solo") === "duo" ? 60
-      : AI_SLIP_BY + 20;
+    // the engine's clock is a BACKSTOP, set properly by _gameStart once the
+    // tutorial is over: the game is TRICK_AT seconds of play and ends on the
+    // smash (vs the star) or on the clock (every other mode)
+    this.roundSeconds = TRICK_AT + TRICK_GRACE + POINT_BREAK_MS / 1000 + 6 + (this.opts.tellStory ? 60 : 0);
     this.mode = this.opts.mode || "solo";
+    this.axis = this.opts.axis === "abd" ? "abd" : "fe";
     this.profiles = this.opts.profiles || {};
     this.patientRight = this.side === "right";
     this.isTeam = this.mode.startsWith("team");
@@ -687,26 +894,59 @@ export class ArcPong extends GameBase {
     this.p2Waiting = 0;
     this.rally = 0; this.bestRally = 0;
     this.score = { us: 0, ai: 0 };
-    // skill shots (Zhang's choice element): grip = catch & fire, spin = palm turn
-    this.skills = this.opts.skills || { grip: false, spin: false };
-    this.gripShots = 0; this.spinShots = 0;
-    this.gripEnergy = 0;     // charges with returns; a full bar buys one catch
-    this.caught = null;
-    this.skillFlash = null;
-    this.court = { top: 0.16, bottom: 0.9, left: 0.1, right: 0.9 };
-    this.paddleH = 0.17;
+    // the style layer, per player ("us" the patient, "them" the other side:
+    // the star, player two, or the friend on the keys)
+    this.pl = { us: mkPlayer(), them: mkPlayer() };
+    this.fx = { us: {}, them: {} };          // live power-up effects per side: bigUntil, shrinkUntil, shield, ghostNext
+    this.underdog = { us: false, them: false };
+    this.floaters = [];                      // "+20 EDGE" words rising off a paddle
+    this.orb = null; this.nextOrbAt = 0;
+    this.powerups = this.opts.powerups !== false;
+    this.speedK = PONG_SPEED_DIAL[this.opts.pongSpeed] || 1;
+    this.challenge = null; this.challengeWon = null;
+    this.lastHit = null;                     // who sent the ball on its way: {who, edge, human}
+    this.onFire = false; this.shakeK = 1;
+    this._finalPoint = false;                // two players: the smash is out, this point ends the game
+    this.rank = STAR_RANKS[Math.max(0, Math.min(STAR_RANKS.length - 1, (this.opts.starRank || 1) - 1))];
+    this._aiTrail = [];                      // the comet's sparkle behind the star's paddle
+    // the game's one trick, the one that ends it: the smash (the one
+    // everybody knows; the others in TRICKS are a swap away)
+    this.nextTrick = TRICKS[0];
+    this._finalTrick = null;                 // set when the smash lands and the game ends on it
+    this.nextTrick = TRICKS[0];   // the trick this point ends with, if it goes the distance
+    this.trick = null;            // the trick in flight, once fired
+    this.trickShots = {};         // per trick, how many times it was fired this round
+    this.flash = null;            // a big word over the court for a moment
+    // a taller court and a shorter paddle: the paddle's centre travels 0.66
+    // of the screen (it was 0.57), so the arm's full up-and-down reads as
+    // full up-and-down on screen
+    // FE: the top strip holds the smash paddle, the bottom strip the hand
+    // state and grip gauge, the side strips the hand on its paddle and the
+    // posture coach. Abd-Add: the strips above and below hold the same.
+    this.court = this.axis === "abd" ? { top: 0.12, bottom: 0.94, left: 0.18, right: 0.82 }
+                                     : { top: 0.16, bottom: 0.90, left: 0.1, right: 0.9 };
+    this.paddleH = 0.15;
     // contained lane: hard walls pulled INSIDE the court to match the arc
     // span the DDA currently demands (rangeScale) — the ball can never go
     // where the paddle can't, so a small arc still gets a fully playable,
     // rebounding lane; walls widen as rangeScale grows between rounds
-    const half = Math.min(1, this.params.rangeScale) * (this.court.bottom - this.court.top) / 2 + this.paddleH / 2;
-    this.wallTop = Math.max(this.court.top, 0.5 - half);
-    this.wallBottom = Math.min(this.court.bottom, 0.5 + half);
+    // The lane is the WHOLE court (Sep 2026, by request): the patient's full
+    // assessed arc, arcMinDeg to arcMaxDeg, is stretched across all of it,
+    // so covering the court means using the whole range of motion. It used
+    // to shrink with rangeScale, which made the arm's travel look small.
+    this.wallTop = this.court.top;
+    this.wallBottom = this.court.bottom;
+    this.trickPoints = 0;                    // points taken with a trick shot
+    this.pointsPlayed = 0;
+    this.pointBreak = null;                  // the ceremony between points (see _pointTo)
+    this.trickAt = 0;                        // when the ball in flight became the trick
+    this.shakeUntil = 0;
+    this._rallyT0 = 0;                       // elapsed seconds when the current point began
+    this._gameT0 = 0;                        // elapsed seconds when PLAY began (after the tutorial): the game clock
     this.aiY = 0.5; this.keysY = 0.5; this.keys = { up: false, down: false };
     this.aiLagY = 0.5;                       // AI reacts with a lag — it CAN miss
     this.trail = [];
     this.flashUntil = 0;
-    this.pointFlash = 0;
     if (this.mode === "companion" || this.mode === "team-keys") {
       this._keyDown = e => { if (e.key === "ArrowUp") this.keys.up = true; if (e.key === "ArrowDown") this.keys.down = true; };
       this._keyUp = e => { if (e.key === "ArrowUp") this.keys.up = false; if (e.key === "ArrowDown") this.keys.down = false; };
@@ -721,11 +961,13 @@ export class ArcPong extends GameBase {
     // paddle); with two people waiting it just strands player 2, so duo
     // rounds go straight to the rally
     this.tut = this.opts.tellStory && !this.isDuo
-      ? { step: 0, said: -1, skipDwell: null, touches: [], lastTouch: null, target: "top" }
+      ? { step: null, n: 0, tries: 0, said: null, skipDwell: null, speeds: [], serveAt: 0, hold: false }
       : null;
     if (!this.tut) {
       const SUB = {
-        solo: "Raise and lower your arm to score points past the other paddle!",
+        solo: this.axis === "abd"
+          ? "Reach out to the side and back across to move your paddle along the bottom!"
+          : "Raise and lower your arm to score points past the other paddle!",
         bimanual: "Each arm has its own paddle. Rally with yourself!",
         coupled: "Both arms together steer one paddle",
         companion: "A friend plays the other paddle with the arrow keys",
@@ -733,12 +975,86 @@ export class ArcPong extends GameBase {
         "team-keys": "You and your teammate defend together. Beat the AI!",
         duo: "Two players, one camera. Stand side by side and rally together!",
       };
-      const skillHint = [this.skills.grip && "fill the glow bar, then squeeze to catch & fire", this.skills.spin && "turn your palm for spin"]
-        .filter(Boolean).join(" · ");
-      this._prompt("Rally with the light", SUB[this.mode] + (skillHint ? ` (${skillHint})` : ""));
+      this._prompt("Rally with the light", SUB[this.mode]);
       setTimeout(() => this._prompt(""), 3200);
+      this._gameStart(performance.now());
       this._startServe(performance.now());
     }
+  }
+  // PLAY BEGINS (after the tutorial, or at once without one): the game
+  // clock starts here, and the engine's backstop is set from it: the game's
+  // TRICK_AT seconds, plus (vs the star) the grace for the smash to land
+  // and the final board, so the smash is never cut off by the clock
+  _gameStart(now) {
+    this._gameT0 = Math.max(0, this.elapsed(now) || 0);
+    const tail = this.hasAI || this.isDuo ? TRICK_GRACE + POINT_BREAK_MS / 1000 + 6 : 6;
+    this.roundSeconds = this._gameT0 + TRICK_AT + tail;
+    // the game's challenge, the same for both players, said once and kept
+    // on the board; and the first orb a little way in
+    if (this.hasAI || this.isDuo || this.mode === "companion") {
+      this.challenge = CHALLENGES[Math.floor(Math.random() * CHALLENGES.length)];
+      setTimeout(() => { if (this.active && !this.tut) { this._prompt("Challenge", this.challenge.text); this._speak("Challenge: " + this.challenge.text); } }, 3600);
+      setTimeout(() => { if (this.active) this._prompt(""); }, 7600);
+    }
+    this.nextOrbAt = now + (ORB_EVERY[0] + Math.random() * (ORB_EVERY[1] - ORB_EVERY[0])) * 1000;
+  }
+  // who plays an edge, and whether a person does (the star is not a person)
+  _whoAt(edge) { return edge === this._myEdge() || this.mode === "bimanual" ? "us" : "them"; }
+  _humanAt(edge) { return this._whoAt(edge) === "us" || this.isDuo || this.mode === "companion" || this.mode === "team-keys"; }
+  // the paddle's height at an edge, power-ups and the underdog's boost in
+  // (the centre never moves, so the arm-to-paddle mapping is untouched)
+  _padH(edge) {
+    const who = this._whoAt(edge), f = this.fx[who], now = performance.now();
+    let k = 1;
+    if (f.bigUntil > now) k += POWER_BIG;
+    if (f.shrinkUntil > now) k -= POWER_SHRINK;
+    if (this.underdog[who]) k += UNDERDOG_GROW;
+    return this.paddleH * Math.max(0.5, k);
+  }
+  _updateUnderdog() {
+    const d = this.score.us - this.score.ai;
+    for (const [who, gap] of [["us", -d], ["them", d]]) {
+      if (gap >= UNDERDOG_GAP) this.underdog[who] = true;
+      else if (gap <= UNDERDOG_CLOSE) this.underdog[who] = false;
+    }
+  }
+  // a word rising off a point on the court
+  _floater(fx, fy, text, col) { this.floaters.push({ fx, fy, text, col, t: performance.now() }); }
+  _checkChallenge(who, now) {
+    const C = this.challenge;
+    if (!C || this.challengeWon || !this._humanAt(who === "us" ? this._myEdge() : (this._myEdge() === "right" ? "left" : "right"))) return;
+    if (!C.need(this.pl[who])) return;
+    this.challengeWon = who;
+    this.pl[who].style += STYLE_CHALLENGE;
+    this.flash = { text: `CHALLENGE DONE ✦ +${STYLE_CHALLENGE}`, col: "#ffd98a", until: now + 1800 };
+    audio.fanfare();
+    this._announce(who === "us" ? `Challenge done! ${C.text}. Two hundred style points!`
+      : `${this.opts.p2Name || "Player two"} takes the challenge!`);
+  }
+  // the orbs: one at a time, mid court, collected by sending the ball through it
+  _orbs(now) {
+    if (!this.powerups || this.tut || this.matchOver || this.pointBreak) return;
+    if (!this.orb && now >= this.nextOrbAt) {
+      const lo = this.wallTop + ORB_R * 2, hi = this.wallBottom - ORB_R * 2;
+      this.orb = { x: 0.5 + (Math.random() - 0.5) * 0.16, y: lo + Math.random() * (hi - lo), born: now };
+    }
+    const o = this.orb, b = this.ball;
+    if (!o || !b || !this.lastHit?.human) return;
+    if (Math.hypot(b.x - o.x, b.y - o.y) > ORB_R + 0.012) return;
+    const who = this.lastHit.who, other = who === "us" ? "them" : "us";
+    const P = POWERS[Math.floor(Math.random() * POWERS.length)];
+    if (P.key === "big") this.fx[who].bigUntil = now + POWER_MS;
+    else if (P.key === "shrink") this.fx[other].shrinkUntil = now + POWER_MS;
+    else if (P.key === "shield") this.fx[who].shield = true;
+    else if (P.key === "ghost") this.fx[who].ghostNext = true;
+    const pl = this.pl[who];
+    pl.orbs++; pl.powers[P.key] = (pl.powers[P.key] || 0) + 1;
+    this.orb = null;
+    this.nextOrbAt = now + (ORB_EVERY[0] + Math.random() * (ORB_EVERY[1] - ORB_EVERY[0])) * 1000;
+    this._burstAt(o.x, o.y, P.col);
+    this._floater(o.x, o.y, P.word, P.col);
+    audio.note(6);
+    this._checkChallenge(who, now);
   }
   stop() {
     if (this._keyDown) { removeEventListener("keydown", this._keyDown); removeEventListener("keyup", this._keyUp); }
@@ -746,127 +1062,211 @@ export class ArcPong extends GameBase {
   }
   extra() {
     return {
-      pongMode: this.mode, bestRally: this.bestRally, points: this.score.us, aiPoints: this.score.ai,
+      pongMode: this.mode, axis: this.axis, bestRally: this.bestRally, points: this.score.us, aiPoints: this.score.ai,
       // two-player rounds: whose arm, and whether the camera held them
       ...(this.isDuo ? { p2Side: this.p2Side, p2Name: this.opts.p2Name ?? null,
                          p2LostFrames: this._p2LostTotal | 0 } : {}),
-      gripShots: this.gripShots, spinShots: this.spinShots,
-      skills: { ...this.skills },
+      // the trick shots fired this round, by name (e.g. {smash: 1, curve: 1})
+      trickShots: { ...this.trickShots },
       // tutorial warm-up measurement: median lane traversal time and the ball
       // crossing time derived from it (absent when the tutorial was skipped)
       paddleTraversalS: this.paddleTraversalS ?? null,
+      // the arc the lane actually spanned this round (assessment union,
+      // grown live by anything the arm did beyond it), per arm, degrees
+      // (Abd-Add: the sideways range in SW instead, see laneUnits)
+      laneUnits: this.axis === "abd" ? "SW" : "deg",
+      laneArc: Object.fromEntries(Object.entries(this._padY ?? {})
+        .filter(([, v]) => v.lo != null)
+        .map(([k, v]) => [k, this.axis === "abd"
+          ? { lo: Math.round(v.lo * 100) / 100, hi: Math.round(v.hi * 100) / 100 }
+          : { lo: Math.round(v.lo), hi: Math.round(v.hi) }])),
       pongCrossTime: this.pongCrossTime ? Math.round(this.pongCrossTime * 100) / 100 : null,
-      // did the patient outlast the star far enough to take the misread point
-      slipPoint: !!this._slipUsed,
-      // a match is to PONG_WIN; null when the round ran out of time first
-      matchWon: this.matchOver ? this.score.us >= PONG_WIN : null,
-      target: PONG_WIN,
+      // whether that measurement set the ball's pace (first game on this arm)
+      calibrated: !!this._calibrated,
+      // points taken with a trick shot, and points played in all
+      trickPoints: this.trickPoints, pointsPlayed: this.pointsPlayed,
+      // seconds of play, the tutorial excluded (the game is TRICK_AT of them)
+      gameSeconds: Math.round(this.gameT(performance.now()) * 10) / 10,
+      // the game on the tally: won, lost, or null for a draw (or no points)
+      matchWon: this.score.us > this.score.ai ? true : this.score.us < this.score.ai ? false : null,
+      smashEnded: !!this._finalTrick,
+      starRank: this.opts.starRank || 1,
+      gameLength: TRICK_AT,
+      // the style layer: the patient's and the other side's
+      style: this.pl.us.style, styleThem: this.pl.them.style,
+      edgeHits: this.pl.us.edge, clutchSaves: this.pl.us.clutch, heatReturns: this.pl.us.heat,
+      orbs: this.pl.us.orbs, powers: { ...this.pl.us.powers },
+      p2Stats: this.isDuo ? { ...this.pl.them } : null,
+      titles: this.titles || this._titles(),
+      challenge: this.challenge?.text ?? null,
+      challengeWon: this.challengeWon,
+      pongSpeed: this.opts.pongSpeed || "normal", powerups: this.powerups,
     };
-  }
-  // grip shot step 1: a DELIBERATE squeeze at contact catches the ball — the
-  // hand must have closed within the last moment, so a hand that simply rests
-  // closed never catches by accident
-  _tryCatch(now, edge, py) {
-    if (!this.skills.grip || this.caught) return false;
-    if ((edge === "right") !== this.patientRight) return false;   // primary paddle only
-    if (!this.t.handClosed(this.side)) return false;
-    if (this._closedAt == null || now - this._closedAt > 900) return false;   // stale grip, not a catch
-    if (this.gripEnergy < 1) return false;    // the catch is earned: full bar only
-    const b = this.ball;
-    this.gripEnergy = 0;
-    this.caught = { since: now, edge, vx0: Math.abs(b.vx) };
-    b.vx = 0; b.vy = 0; b.spin = 0;
-    this.rally++; this.bestRally = Math.max(this.bestRally, this.rally);
-    this.hit({ reachFrac: 0.7, isFar: false }, this.rally);
-    audio.note(4);
-    this.skillFlash = { text: "Caught! Open to fire ✋", until: now + 1600 };
-    return true;
   }
   _startServe(now) {
     this.serving = { start: now, beats: -1 };
     this.ball = null;
+    this.trail = [];
+    this.trick = null; this.trickAt = 0;
     this._tired = 0;
-    this.matchOver = 0;       // when someone reached PONG_WIN
+    if (!this.tut) this._rallyT0 = Math.max(0, this.elapsed(now) || 0);
     this._slip = null;        // the misread in progress (see AI_SLIP_FROM)
     this._slipUsed = false;   // one earned point per round, not a repeating gift
   }
 
-  // round-1 tutorial: (0) touch the star at the lane top, then bottom, five
-  // times — the sweeps teach the control AND measure real paddle speed —
-  // then (1) meet one easy serve, then play. Hover the skip pill to jump in.
-  _tutTargetY() {
-    return this.tut.target === "top"
-      ? this.wallTop + this.paddleH / 2 + 0.02
-      : this.wallBottom - this.paddleH / 2 - 0.02;
+  // ROUND-1 TUTORIAL (Sep 2026, by request): one thing at a time, each shown
+  // before it is asked for, for someone who may be tired, in pain or slow to
+  // take things in. The screen carries only the court, the paddles, the
+  // ball, the spot where the ball will land and one line of instruction.
+  //   meet   a slow ball comes to them from the star; move the paddle to
+  //          where it is going (three returns; a miss just brings the ball
+  //          again). The paddle's travel to meet each ball is the speed
+  //          measurement that sets the ball's pace for the round.
+  //   play   the game itself
+  // (The catch and backspin steps went with the grip and spin shots, Sep
+  // 2026: the trick shots ask nothing of the hand and are not taught, by
+  // request; they simply happen when the paddle burns, so there is nothing
+  // to teach but meeting the ball.) Nothing scores, the star never takes a
+  // point, and hovering the skip pill goes straight to the game.
+  _tutSteps() { return ["meet"]; }
+  _tutLines(step) {
+    const move = this.axis === "abd" ? "Move your arm to the side" : "Move your arm up or down";
+    return {
+      meet: ["Meet the ball", `A slow ball is coming. ${move} so your paddle is in its way`],
+      play: ["Now let's play", "Score for 90 seconds. When your paddle catches fire, your next shot is the smash!"],
+    }[step];
+  }
+  _tutGo(step, now) {
+    const t = this.tut;
+    if (!t) return;
+    if (step === "play") {
+      // the paddle's own pace, from the balls it met: median lane speed →
+      // full-lane traversal time → the ball's crossing time for the round
+      // (always measured and logged; it SETS the ball's pace only on the
+      // first game ever on this arm, opts.calibrate. After that the pace is
+      // the level the patient has played their way to, params.lifetime,
+      // and the tutorial is a warm-up: re-measuring every session would
+      // throw that level away each time.)
+      if (t.speeds.length) {
+        const v = [...t.speeds].sort((a, b) => a - b)[t.speeds.length >> 1];
+        const T = (this.wallBottom - this.wallTop - this.paddleH) / Math.max(0.02, v);
+        this.paddleTraversalS = Math.round(T * 100) / 100;
+        this.pongCrossTime = Math.min(5.5, Math.max(1.6, 1.4 * T + 0.45));
+        this._calibrated = !!this.opts.calibrate;
+      }
+      this.tut = null;
+      this.ball = null; this.serving = null;
+      this._rallyT0 = this.elapsed(now);
+      this._gameStart(now);
+      const [a, b] = this._tutLines("play");
+      this._prompt(a, b); this._speak(a + ". " + b + ".");
+      setTimeout(() => { if (this.active) this._prompt(""); }, 3500);
+      this._startServe(now);
+      return;
+    }
+    t.step = step; t.n = 0; t.tries = 0; t.said = null; t.hold = false; t.serveAt = 0;
   }
   _pongTut(now) {
-    const c = this.canvas;
+    const t = this.tut, c = this.canvas;
+    // hover the skip pill to jump straight in
     const hp = this.t.palmPx(this.side, c);
     const sx = c.width - 115, sy = 62;
     if (hp && Math.hypot(hp.x - sx, hp.y - sy) < 62) {
-      this.tut.skipDwell ??= now;
-      if (now - this.tut.skipDwell > 1200) {
-        this.tut = null;
-        this._prompt("");
-        if (!this.ball && !this.serving) this._startServe(now);
-        this.say("Alright, rally time!");
-        return;
-      }
-    } else this.tut.skipDwell = null;
+      t.skipDwell ??= now;
+      if (now - t.skipDwell > 1200) { this._tutGo("play", now); this.say("Alright, rally time!"); return; }
+    } else t.skipDwell = null;
 
-    const LINES = {
-      0: ["Your helper pulls the paddle", "Raise and lower your arm. Touch each star with your paddle"],
-      1: ["Here comes the star, nice and easy", "Watch it come, and meet it with your paddle"],
-      2: ["You have it!", "Rally with the star. Outlast it, and the point is yours"],
-    };
-    if (this.tut.said !== this.tut.step) {
-      this.tut.said = this.tut.step;
-      const [a, b] = LINES[this.tut.step];
-      this._prompt(a, b);
-      this._speak(a + ". " + b + ".");
+    if (t.step == null) this._tutGo("meet", now);
+    // one line per step, spoken once and kept on screen the whole step
+    const key = t.step;
+    if (t.said !== key) {
+      t.said = key;
+      const [a, b] = this._tutLines(key);
+      this._prompt(a, b); this._speak(a + ". " + b + ".");
     }
-
-    if (this.tut.step === 0) {
-      const padY = this.patientRight ? this.pads.rightY : this.pads.leftY;
-      if (padY == null) return;
-      const targetY = this._tutTargetY();
-      if (Math.abs(padY + this.paddleH / 2 - targetY) < this.paddleH * 0.6) {
-        if (this.tut.lastTouch != null) this.tut.touches.push((now - this.tut.lastTouch) / 1000);
-        this.tut.lastTouch = now;
-        this.tut.target = this.tut.target === "top" ? "bottom" : "top";
-        audio.note(this.tut.touches.length);
-        this.burstAtPx((this.patientRight ? this.court.right : this.court.left) * c.width,
-                       targetY * c.height, "#ffd98a");
-        if (this.tut.touches.length >= 4) {
-          // drop the first transition (reaction, not speed), take the median
-          const tr = this.tut.touches.slice(1).sort((a, b) => a - b);
-          const median = tr[Math.floor(tr.length / 2)];
-          this.paddleTraversalS = Math.round(median * 100) / 100;
-          this.pongCrossTime = Math.min(5.5, Math.max(1.6, 1.4 * median + 0.45));
-          this.tut.step = 1;
-          this._startServe(now);
-        }
-      }
-    } else if (this.tut.step === 1 && this.rally >= 1) {
-      this.tut.step = 2;
-      setTimeout(() => { if (this.active && this.tut) { this.tut = null; this._prompt(""); } }, 3800);
+    // the meet step's speed measurement: the travel is over the first time
+    // the paddle sits where the ball is going to land (waiting there for
+    // the slow ball must not count as slowness)
+    if (t.step === "meet" && this.ball && t.arrivedT == null && t.serveY != null) {
+      const b = this.ball, mine = this._myEdge();
+      const tRemain = Math.abs(this._edgeX(mine) - b.x) / Math.abs(b.vx || 1e-6);
+      const ay = this._predictY(b.y, b.vy, tRemain);
+      const pad = this.patientRight ? this.pads?.rightY : this.pads?.leftY;
+      if (pad != null && Math.abs(pad + this.paddleH / 2 - ay) < this.paddleH * 0.4) t.arrivedT = now;
+    }
+    // a ball whenever there is none, after a breath
+    if (!t.hold && !this.ball && !this.serving) {
+      if (!t.serveAt) t.serveAt = now + 1400;
+      else if (now >= t.serveAt) { t.serveAt = 0; this._startServe(now); }
+    }
+  }
+  // A teaching ball is over: returned or missed. Counts toward the step,
+  // pops the ball, and moves on when the step is done (or after five tries,
+  // so nobody is stuck).
+  _tutDone(now, kind) {
+    const t = this.tut;
+    if (!t || t.hold) return;
+    const b = this.ball;
+    if (b && kind !== "miss") this._burstAt(b.x, b.y, "#ffd98a");
+    if (b && kind !== "miss" && t.step === "meet" && t.serveY != null) {
+      // how fast the paddle travelled to meet it (lane fractions a second)
+      const pad = this.patientRight ? this.pads?.rightY : this.pads?.leftY;
+      const d = pad != null ? Math.abs(pad + this.paddleH / 2 - t.serveY) : 0;
+      const dt = ((t.arrivedT ?? now) - t.serveT) / 1000;
+      if (d > 0.2 && dt > 0.2) t.speeds.push(d / dt);
+    }
+    this.ball = null; this.trail = []; this.serving = null;
+    t.tries++;
+    const ok = kind !== "miss" && (kind === t.step || t.step === "meet");
+    if (ok) { t.n++; audio.note(Math.min(7, t.n)); }
+    else if (kind === "miss") this.say("Here it comes again");
+    const need = t.step === "meet" ? 3 : 1;
+    if (t.n >= need || t.tries >= 5) {
+      const steps = this._tutSteps();
+      const next = steps[steps.indexOf(t.step) + 1] || "play";
+      if (t.n >= need) this.say("Lovely, you have it");
+      t.hold = true;
+      setTimeout(() => { if (this.active && this.tut) this._tutGo(next, performance.now()); }, 2000);
     }
   }
   _launch(now) {
+    if (this.tut) {
+      // the teaching ball: from the star's paddle, slowly, to a spot the
+      // paddle has to move to (the upper and lower part of the lane in turn)
+      const t = this.tut;
+      const cross = Math.max(TUT_CROSS_MIN, 1.5 * (this.params.lifetime || 3));
+      const vx0 = (this.court.right - this.court.left) / cross;
+      this.fullVx = vx0; this.baseVx = vx0;
+      const x0 = this._aiEdgeX() + (this.patientRight ? 0.02 : -0.02);
+      const span = this.wallBottom - this.wallTop - this.paddleH;
+      const ty = this.wallTop + this.paddleH / 2 + span * (t.tries % 2 === 0 ? 0.25 : 0.75);
+      const y0 = this.aiY;
+      this.ball = { x: x0, y: y0, tx: ty, vx: (this.patientRight ? 1 : -1) * vx0, born: now };
+      const tFlight = Math.abs(this._edgeX(this._myEdge()) - x0) / vx0;
+      this.ball.vy = (ty - y0) / tFlight;
+      this._capVy(this.ball);
+      const pad = this.patientRight ? this.pads?.rightY : this.pads?.leftY;
+      t.serveY = pad != null ? pad + this.paddleH / 2 : null; t.serveT = now; t.arrivedT = null;
+      return;
+    }
     // Served from the MIDDLE of the court, travelling towards the opponent:
     // the point opens with the patient's shot on its way out, so the first
     // thing they do in a rally is watch their own ball go rather than react
     // to one arriving.
     const laneMid = (this.wallTop + this.wallBottom) / 2;
     const ty = laneMid + (Math.random() - 0.5) * 0.5 * (this.wallBottom - this.wallTop - this.paddleH);
-    // constant rally speed: the ball always crosses in a fixed number of
-    // seconds (difficulty moves between rounds via the DDA, never mid-rally).
-    // The tutorial's measured paddle speed overrides the assessment seed.
-    const vx0 = (this.court.right - this.court.left) / (this.pongCrossTime || this.params.lifetime);
-    this.baseVx = vx0;
+    // the rally's full pace: the ball crosses in params.lifetime seconds,
+    // the level this arm has played its way to (quicker after a won game,
+    // slower after a lost one, main.js#onRoundEnd). On the first game ever
+    // on this arm the tutorial's measured paddle speed sets it instead.
+    const vx0 = this.speedK * (this.court.right - this.court.left) / ((this._calibrated && this.pongCrossTime) || this.params.lifetime);
+    this.fullVx = vx0;
+    this.baseVx = vx0 * PONG_SPEED_START;   // every rally starts slow and builds (see PONG_SPEED_GAIN)
     const x0 = (this.court.left + this.court.right) / 2;
     const toAI = this.patientRight ? -1 : 1;          // away from the patient
     this.ball = { x: x0, y: laneMid, tx: ty, vx: toAI * vx0, born: now };
+    this.rally = 0; this.onFire = false;
+    this.lastHit = { who: "us", edge: this._myEdge(), human: true };   // the serve is the patient's shot
     // aimed to arrive near ty at the opponent's edge — half a court away, so
     // the flight time is half a crossing
     const tFlight = Math.abs(this._aiEdgeX() - x0) / vx0;
@@ -908,18 +1308,53 @@ export class ArcPong extends GameBase {
 
   _angleToY(arm, prof, dt = 16) {
     this._padY ??= {};
-    const a = this.t.armAngle(arm);
+    const st = this._padY[arm] ??= { y: null, dy: 0, buf: [], seen: null, lo: null, hi: null };
+    // FE reads the arm's elevation; Abd-Add the wrist's sideways position in
+    // shoulder widths (mirrored: right on screen is positive)
+    const abd = this.axis === "abd";
+    let a = abd ? (this.t.handRel(arm)?.x ?? null) : this.t.armAngle(arm);
     const mid = (this.wallTop + this.wallBottom) / 2 - this.paddleH / 2;
     let target = null;
     if (a != null) {
-      const lo = prof?.arcMinDeg ?? this.profile.arcMinDeg;
-      const hi = prof?.arcMaxDeg ?? this.profile.arcMaxDeg;
-      const f = Math.max(0, Math.min(1, (a - lo) / Math.max(10, hi - lo)));
-      // whole assessed arc maps onto the walled lane: paddle stays flush inside
+      // median over the last few DISTINCT samples: outliers go, not spread
+      if (this.t.lastSeen !== st.seen) {
+        st.seen = this.t.lastSeen;
+        st.buf.push(a);
+        if (st.buf.length > PADDLE_MEDIAN) st.buf.shift();
+      }
+      const sorted = [...st.buf].sort((x, y) => x - y);
+      a = sorted[sorted.length >> 1];
+      // The lane spans the arm's own VERTICAL range. It used to take the
+      // lift's resting and peak angles alone, but the lift is one movement
+      // on one day: the circles often carry the arm further, and the paddle
+      // then hit the wall while the arm still had range to give, so the game
+      // asked for LESS than the patient could do (Sep 2026, reported). Now
+      // the lane is the UNION of the lift and the whole elevation arc, and
+      // it keeps GROWING within the round: an angle past either end widens
+      // the lane to it, so the paddle always has somewhere to go when the
+      // arm does. A few degrees are shaved off each end so the top and
+      // bottom are reachable without a strain, and the span never collapses
+      // below 20°.
+      if (st.lo == null) {
+        if (abd) [st.lo, st.hi] = pongXLimits(prof ?? this.profile, arm);
+        else {
+          const P = prof ?? this.profile;
+          const los = [P?.lift?.startDeg, P?.arcMinDeg].filter(v => v != null);
+          const his = [P?.lift?.peakDeg, P?.arcMaxDeg].filter(v => v != null);
+          st.lo = los.length ? Math.min(...los) : 20;
+          st.hi = his.length ? Math.max(...his) : 120;
+        }
+      }
+      if (a < st.lo) st.lo = a;
+      if (a > st.hi) st.hi = a;
+      const pad = abd ? PONG_X_PAD : PONG_ARC_PAD;
+      const lo = st.lo + pad;
+      const hi = st.hi - pad;
+      const f = Math.max(0, Math.min(1, (a - lo) / Math.max(abd ? PONG_X_MIN_SPAN : 20, hi - lo)));
+      // whole vertical range maps onto the lane: paddle stays flush inside
       const cLo = this.wallTop + this.paddleH / 2, cHi = this.wallBottom - this.paddleH / 2;
       target = cHi - f * (cHi - cLo) - this.paddleH / 2;
     }
-    const st = this._padY[arm] ??= { y: null, dy: 0 };
     // no angle this frame: HOLD position. Snapping to the middle on a dropped
     // frame is the biggest jump of all, and mid-rally it gifts a point.
     if (target == null) return st.y ??= mid;
@@ -942,34 +1377,107 @@ export class ArcPong extends GameBase {
   // flat-flight rule: vertical speed never exceeds 38% of horizontal, so
   // rallies cross the field instead of ricocheting between the walls
   _capVy(b) {
+    if (b.free) return;          // a trick ball flies as its trick says
     const m = 0.38 * Math.abs(b.vx);
     if (Math.abs(b.vy) > m) b.vy = Math.sign(b.vy) * m;
   }
   // paddles: {leftY, rightY, leftY2?, rightY2?} — the 2s are teammate paddles
-  // Has anyone reached PONG_WIN? Returns true when the match is over, so the
-  // caller stops instead of serving again. The tutorial never counts — it is
-  // a speed measurement, not a game.
-  _checkMatch(now) {
-    if (this.tut) return false;
+  // THE GAME IS OVER: on the smash (trick given) or on the clock. The tally
+  // decides it, announced out loud and held on the final board for a beat
+  // (update() ends the round after it). The tutorial never counts — it is a
+  // warm-up, not a game.
+  _gameOver(now, trick = null) {
+    if (this.tut || this.matchOver) return;
     const us = this.score.us, them = this.score.ai;
-    if (us < PONG_WIN && them < PONG_WIN) return false;
     this.matchOver = now;
-    this.ball = null;
-    this.serving = null;
-    this._slip = null;
-    if (us >= PONG_WIN) {
+    this._finalTrick = trick;
+    this.ball = null; this.serving = null; this._slip = null; this.pointBreak = null;
+    const lead = trick ? `${trick.name}! ` : "";
+    const p2 = this.opts.p2Name || "player two";
+    const scored = this.hasAI || this.isDuo;
+    this.titles = this._titles();
+    if (!scored) { audio.fanfare(); this._announce(`Time! Lovely rallies, your best was ${this.bestRally}.`); return; }
+    if (us > them) {
       audio.fanfare();
-      this.say(`Game! ${us} to ${them}. You won it.`);
-    } else {
-      // losing is allowed to happen — an opponent that cannot win is not an
-      // opponent — but it is never framed as the patient's failure
+      this._announce(`${lead}Game! ${us} to ${them}. You won it!`);
+    } else if (us === them) {
       audio.point();
-      this.say(this.isDuo
-        ? `Game to ${this.opts.p2Name || "player two"}, ${them} to ${us}. Good rallies.`
-        : `The star got there first, ${them} to ${us}. Good rallies — go again?`);
+      this._announce(`${lead}Game! ${us} all. A draw, well played.`);
+    } else {
+      audio.pointLost();
+      this._announce(this.isDuo
+        ? `Game to ${p2}, ${them} to ${us}. Good rallies.`
+        : `${lead}Game! The star takes it, ${them} to ${us}. Great rallies, you will get it next time.`);
     }
-    return true;
   }
+  // THE TITLES on the final board. Two people are compared (ties share);
+  // alone, the patient earns each against TITLE_SOLO.
+  _titles() {
+    const u = this.pl.us, t = this.pl.them, out = { us: [], them: [] };
+    const two = this.isDuo || this.mode === "companion" || this.mode === "team-keys";
+    const award = (name, a, b, solo) => {
+      if (two) { if (a >= b && a > 0) out.us.push(name); if (b >= a && b > 0) out.them.push(name); }
+      else if (a >= solo) out.us.push(name);
+    };
+    award("Wall", u.hits, t.hits, TITLE_SOLO.wall);
+    award("Sniper", u.edge, t.edge, TITLE_SOLO.sniper);
+    award("Showboat", u.style, t.style, TITLE_SOLO.showboat);
+    return out;
+  }
+  // spoken NOW, past the therapist voice's rate limit: a point announcement
+  // that gets swallowed because the star said something 3 s ago is worse
+  // than none, the patient would be left reading the board
+  _announce(text) { this.fb.lastSpeak = 0; this.say(text); }
+
+  // A point is decided: tally it, then the CEREMONY. The point is announced
+  // out loud with the scoreline (patient's score first, always), drawn big
+  // for POINT_BREAK_MS — a sunburst and confetti for the patient's point,
+  // a soft lavender card for the star's, never a buzzer, never a failure —
+  // and only then the next serve. In the tutorial there is no ceremony:
+  // the easy serve just comes again.
+  _pointTo(who, now) {
+    const trick = (who === "us" && this._slip) || (this.isDuo && this._finalPoint) ? (this.trick || TRICKS[0]) : null;
+    const bx = this.ball?.x ?? 0.5, by = this.ball?.y ?? 0.5;
+    if (who === "us") {
+      this.score.us++;
+      if (this._slip) { this._slipUsed = true; this._slip = null; this.trickPoints++; }
+    } else {
+      if (!this.tut) this.miss({ isFar: false });   // a teaching ball missed is not a miss
+      this.rally = 0;
+      // in duo the far paddle is a person, not the AI: the same tally
+      // counts their points, and they get named rather than "the star"
+      if ((this.hasAI || this.isDuo) && !this.tut) this.score.ai++;
+    }
+    this.trick = null; this.trickAt = 0;
+    if (this.tut) { this._tutDone(now, "miss"); return; }
+    this.pointsPlayed++;
+    this._updateUnderdog();
+    this.orb = null;
+    // the smash landed (or, with two players, the smash point is decided): that is the game
+    if (trick) { this._burstAt(bx, by, trick.cols[2]); this._gameOver(now, trick); return; }
+    this.ball = null; this.serving = null; this._slip = null;
+    this.pointBreak = { who, trick, at: now, until: now + POINT_BREAK_MS, lastBurst: 0 };
+    const us = this.score.us, them = this.score.ai;
+    const p2 = this.opts.p2Name || "player two";
+    const scored = this.hasAI || this.isDuo;
+    if (who === "us") {
+      this._burstAt(bx, by, "#ffd98a");
+      audio.point();
+      this._announce(`Point to you! ${us} to ${them}.`);
+    } else {
+      audio.pointLost();
+      const tail = this.trickReady(now) ? " The smash is ready, hit the next ball." : "";
+      this._announce(this.isDuo ? `Point to ${p2}. ${us} to ${them}.`
+        : scored ? `The star takes that one. ${us} to ${them}.${tail}`
+        : "Ball away. Here comes the next one.");
+    }
+  }
+
+  // seconds into the current point, seconds of play in the game (the
+  // tutorial does not count), and whether the smash is armed
+  rallyT(now) { return Math.max(0, this.elapsed(now) - (this._rallyT0 || 0)); }
+  gameT(now) { return this.tut ? 0 : Math.max(0, this.elapsed(now) - (this._gameT0 || 0)); }
+  trickReady(now) { return PONG_TRICKS && (this.hasAI || this.isDuo) && !this.tut && this.gameT(now) >= TRICK_AT; }
 
   // which edge the AI defends
   _aiEdgeX() { return this.patientRight ? this.court.left : this.court.right; }
@@ -986,28 +1494,137 @@ export class ArcPong extends GameBase {
     return this.wallTop + (d <= H ? d : period - d);
   }
 
-  // Engage the misread, once, on a ball already heading for the AI. Called
-  // early in the flight so the steer still reads as the patient's shot: the
-  // ball is sent to the corner AWAY from the star, and the star reads it as
-  // coming back to the side it is already on.
-  _engageSlip(now) {
-    const b = this.ball;
+  // One step of the ball's own motion, in court units: the flight, the
+  // trick's shaping of it (a curve's bend, the feather's dart) and the
+  // rebound off the rails. Shared by the update loop and by _simToAI, so
+  // the star's prediction of where a trick lands is the ball's own physics
+  // run ahead, never a second model of it that could disagree.
+  _stepBall(b, s, live = false) {
+    if (b.dartX != null && !b.darted && (b.vx > 0 ? b.x >= b.dartX : b.x <= b.dartX)) {
+      // the feather's dart: it was floating, now it goes, into the corner
+      b.darted = true;
+      b.vx *= FEATHER_DART / FEATHER_FLOAT;
+      const tLeft = Math.abs(this._aiHitX() - b.x) / Math.abs(b.vx);
+      b.vy = tLeft > 0 ? (b.trickTy - b.y) / tLeft : 0;
+      if (live) { this._burstAt(b.x, b.y, this.trick?.cols[2] || "#9fc08a"); audio.note(7); }
+    }
+    b.x += b.vx * s; b.y += b.vy * s;
+    if (b.curve) b.vy += b.curve * s;                        // the curve bends the flight
+    if (b.y < this.wallTop) { b.y = this.wallTop; b.vy = Math.abs(b.vy); if (live) audio.bounce(); }
+    else if (b.y > this.wallBottom) { b.y = this.wallBottom; b.vy = -Math.abs(b.vy); if (live) audio.bounce(); }
+  }
+  // where the star's paddle is actually tested against the ball (update()
+  // tests 0.02 inside the edge): predictions must run to HERE, not to the
+  // edge, or a ball with a steep sideways speed is a third of a paddle
+  // away from where it was predicted by the time it is tested
+  _aiHitX() { return this.patientRight ? this.court.left + 0.02 : this.court.right - 0.02; }
+  // Where and when a ball on its way to the star reaches the star's paddle
+  // line: the ball's own motion run ahead in small steps, rails and trick
+  // included.
+  _simToAI(b) {
+    const q = { ...b }, ex = this._aiHitX(), s = 1 / 120;
+    let t = 0;
+    while (t < 30 && (q.vx < 0 ? q.x > ex : q.x < ex)) { this._stepBall(q, s); t += s; }
+    return { t, y: q.y };
+  }
+  // a ball back to plain flight: whatever trick it carried is over
+  _plainBall(b) { b.curve = 0; b.dartX = null; b.darted = false; b.ghost = null; b.free = false; b.trickTy = null; }
+  // the ghost's visibility along its flight: there for the first stretch,
+  // gone across the middle of the court, back for the last, so the patient
+  // sees it leave and sees it arrive, and the star sees neither
+  _ghostAlpha(b) {
+    if (!b?.ghost) return 1;
+    const g = b.ghost, p = Math.max(0, Math.min(1, (b.x - g.x0) / (g.x1 - g.x0)));
+    const [a, b1, c, d] = GHOST_FADE;
+    const low = 0.08;
+    if (p < a) return 1;
+    if (p < b1) return 1 - (1 - low) * (p - a) / (b1 - a);
+    if (p < c) return low;
+    if (p < d) return low + (1 - low) * (p - c) / (d - c);
+    return 1;
+  }
+
+  // FIRE THE TRICK on a ball the patient has just returned, and set up the
+  // star's misread to match, so it lands by construction: the star holds
+  // `wrongY` (a confident, WRONG read of the shot) and breaks late for a
+  // spot a sliver past where the ball actually arrives (see the slip in
+  // _paddles). Every trick sends the ball to the corner AWAY from the star;
+  // what differs is how it gets there and what the star believes meanwhile.
+  _engageTrick(now) {
+    const b = this.ball, T = this.nextTrick || TRICKS[0];
     if (!b) return;
+    const lo = this.wallTop + this.paddleH / 2, hi = this.wallBottom - this.paddleH / 2;
     const laneMid = (this.wallTop + this.wallBottom) / 2;
-    const toTop = this.aiY > laneMid;          // place it away from where it stands
-    const targetY = toTop ? this.wallTop + this.paddleH * 0.35
-                          : this.wallBottom - this.paddleH * 0.35;
-    const tFlight = Math.abs(b.x - this._aiEdgeX()) / Math.abs(b.vx || 0.25);
-    if (tFlight > 0) b.vy = (targetY - b.y) / tFlight;
-    this._capVy(b);                            // the flat-flight rule still holds
+    const toTop = this.aiY > laneMid;
+    const cornerY = toTop ? this.wallTop + this.paddleH * 0.35 : this.wallBottom - this.paddleH * 0.35;
+    this._plainBall(b);
+    b.free = true;
+    b.vx *= T.speed;
+    const tF = Math.abs(b.x - this._aiHitX()) / Math.abs(b.vx);
+    let wrongY = toTop ? hi : lo;          // the smash: it holds the side the ball came from
+    switch (T.key) {
+      case "curve": {
+        // sets off straight at where the star stands, then bends away: a
+        // parabola from here to the corner whose first heading is the star
+        const vy0 = (this.aiY - b.y) / tF;
+        b.vy = vy0;
+        b.curve = 2 * (cornerY - b.y - vy0 * tF) / (tF * tF);
+        wrongY = this.aiY;
+        break;
+      }
+      case "ghost":
+        b.vy = (cornerY - b.y) / tF;
+        b.ghost = { x0: b.x, x1: this._aiEdgeX() };
+        wrongY = this.aiY;                 // it has lost the ball: it just stands there
+        break;
+      case "zigzag": {
+        // rail to rail all the way across, and still arriving IN the far
+        // corner: the rails fold the flight into a triangle wave, so the
+        // corner is reached by aiming at one of its unfolded images (the
+        // m-th reflection, either way up) and the image chosen is the one
+        // whose sideways speed is nearest ZIGZAG_VY, with at least two
+        // bounces. Aimed anywhere else the ball could arrive hard by a
+        // rail, where the paddle's clamp would save it by construction.
+        const H = this.wallBottom - this.wallTop, u0 = b.y - this.wallTop, cu = cornerY - this.wallTop;
+        const want = ZIGZAG_VY * Math.abs(b.vx);
+        let bestVy = (cornerY - b.y) / tF, bestErr = Infinity;
+        for (const sg of [1, -1]) for (let m = 2; m <= 8; m++) {
+          const target = sg * (m * H + (m % 2 === 0 ? cu : H - cu));
+          const vy = (target - u0) / tF;
+          const err = Math.abs(Math.abs(vy) - want);
+          if (err < bestErr) { bestErr = err; bestVy = vy; }
+        }
+        b.vy = bestVy;
+        break;
+      }
+      case "feather": {
+        // floats: slow, drifting gently towards the star so it relaxes,
+        // then darts from mid court into the corner
+        b.vx *= FEATHER_FLOAT;
+        b.dartX = (this.court.left + this.court.right) / 2;
+        const tFloat = Math.abs(b.dartX - b.x) / Math.abs(b.vx);
+        b.vy = tFloat > 0 ? (this.aiY - b.y) / tFloat * 0.6 : 0;
+        b.trickTy = cornerY;
+        wrongY = this.aiY;
+        break;
+      }
+      default:                             // smash: straight into the corner, fast
+        b.vy = (cornerY - b.y) / tF;
+    }
+    const arrive = this._simToAI(b).y;
     this._slip = {
       fromX: b.x,
-      // it holds the side it is already on — anticipating a return to where
-      // the ball just was, which is the error people actually make
-      wrongY: toTop ? this.wallBottom - this.paddleH / 2 : this.wallTop + this.paddleH / 2,
-      missSign: toTop ? 1 : -1,                // ends up just below a high ball, just above a low one
+      wrongY,
+      missSign: arrive < laneMid ? 1 : -1,   // ends up just below a high ball, just above a low one
       at: now,
     };
+    this.trick = T; this.trickAt = now;
+    this.trickShots[T.key] = (this.trickShots[T.key] || 0) + 1;
+    if (T.key === "smash") this.shakeUntil = now + SHAKE_MS;     // only the smash shudders the court
+    this.flash = { text: `${T.word} ✦`, col: T.cols[1], until: now + 1500 };
+    this._burstAt(b.x, b.y, T.cols[2]);
+    audio.trick(T.key);
+    this.stats.stars += 10;
   }
 
   _paddles(now, dt) {
@@ -1023,13 +1640,13 @@ export class ArcPong extends GameBase {
     // long rally the star gets sleepy: from 75 s its reactions fade, and past
     // 90 s it drifts to the middle and can no longer keep up — the patient
     // wins the point through ordinary play, never by a timer cutting in.
-    if (this.hasAI && this.ball && !this.caught) {   // a caught ball freezes the AI — the catch buys aiming time
+    if (this.hasAI && this.ball) {
       const s = dt / 1000;
-      // the star tires over the ROUND, not the current rally: tied to rally
+      // the star tires over the GAME, not the current rally: tied to rally
       // age it almost never fired, because a single rally rarely lasts 75 s.
-      // It fades from AI_FADE_FROM and is fully passed by AI_FADE_TO, so the
-      // patient wins the point through ordinary play at about that mark.
-      const age = this.elapsed(now) / 1000;
+      // It fades from AI_FADE_FROM towards the smash, so the last points
+      // before the clock are a little easier to take through ordinary play.
+      const age = this.gameT(now);           // seconds of play in the game
       const tired = Math.max(0, Math.min(1, (age - AI_FADE_FROM) / (AI_FADE_TO - AI_FADE_FROM))) * AI_FADE_MAX;
       this._tired = tired;
       const lo = this.wallTop + this.paddleH / 2, hi = this.wallBottom - this.paddleH / 2;
@@ -1040,13 +1657,16 @@ export class ArcPong extends GameBase {
         // stops at a target that sits AI_SLIP_GAP of a paddle past the ball,
         // so it arrives a sliver short instead of leaving it to chance.
         const sl = this._slip;
-        const vmaxS = 0.26;
-        // where the ball will actually arrive, rails included, and the spot
-        // that leaves it a sliver clear of the paddle edge
-        const tRemain = Math.abs(this.ball.x - this._aiEdgeX()) / Math.abs(this.ball.vx || 1e-6);
-        const arrive = this._predictY(this.ball.y, this.ball.vy, tRemain);
+        const vmaxS = this.rank.vmax * 1.08;     // the lunge is a touch quicker than the rally pace
+        // where and when the ball will actually arrive, rails and trick
+        // included, and the spot that leaves it a sliver clear of the edge
+        const { t: tRemain, y: arrive } = this._simToAI(this.ball);
+        // plus one frame of the ball's own sideways travel: the hit test
+        // runs once a frame, so a steep ball is tested up to that much
+        // past its predicted arrival, and the gap has to survive it
+        const slack = Math.abs(this.ball.vy) * 0.02;
         const missY = Math.max(lo, Math.min(hi,
-          arrive + sl.missSign * (this.paddleH / 2 + this.paddleH * AI_SLIP_GAP)));
+          arrive + sl.missSign * (this.paddleH / 2 + this.paddleH * AI_SLIP_GAP + slack)));
         if (!sl.recover && tRemain <= (Math.abs(missY - this.aiY) / vmaxS) * AI_SLIP_LATE) {
           sl.recover = true;                       // it has seen it — too late
         }
@@ -1055,9 +1675,11 @@ export class ArcPong extends GameBase {
         this.aiLagY = this.aiY;                    // no stale lag when it recovers
         this.aiY = Math.max(lo, Math.min(hi, this.aiY));
       } else {
-        const gain = 3 * (1 - tired);
-        const vmax = 0.24 * (1 - tired);
-        this.aiLagY += (this.ball.y - this.aiLagY) * Math.min(1, gain * s);
+        const gain = this.rank.gain * (1 - tired);
+        const vmax = this.rank.vmax * (1 - tired);
+        // a ghost shot (the power-up): while the ball is faded out the star
+        // has nothing to read and holds its line
+        if (this._ghostAlpha(this.ball) > 0.5) this.aiLagY += (this.ball.y - this.aiLagY) * Math.min(1, gain * s);
         this.aiY += Math.max(-vmax * s, Math.min(vmax * s, this.aiLagY - this.aiY));
         this.aiY = Math.max(lo, Math.min(hi, this.aiY));
       }
@@ -1080,9 +1702,10 @@ export class ArcPong extends GameBase {
     }
     return p;
   }
-  _edgeHit(b, ys) {
+  _edgeHit(b, ys, edge) {
+    const grow = edge ? (this._padH(edge) - this.paddleH) / 2 : 0;
     for (const y of ys) {
-      if (y != null && b.y > y - 0.025 && b.y < y + this.paddleH + 0.025) return y;
+      if (y != null && b.y > y - 0.025 - grow && b.y < y + this.paddleH + 0.025 + grow) return y;
     }
     return null;
   }
@@ -1090,11 +1713,30 @@ export class ArcPong extends GameBase {
     // the match is decided: hold the final board for a beat so the scoreline
     // is read, then finish the round on it rather than on the clock
     if (this.matchOver) {
-      if (now - this.matchOver > 3000) this._end();
+      if (now - this.matchOver > 6500) this._end();
       this.pads = this._paddles(now, dt);
       return;
     }
+    // the clock: without the smash (no star, or it never landed in the
+    // grace) the game still ends on a board and a result, not a cut
+    if (!this.tut && this.elapsed(now) >= this.roundSeconds - 7) { this._gameOver(now); return; }
     this.pads = this._paddles(now, dt);
+    this.floaters = this.floaters.filter(f => now - f.t < FLOATER_MS);
+
+    // the ceremony between points: paddles still follow the arm (the court
+    // never freezes), confetti for the first moments of a won point, then
+    // the next serve
+    if (this.pointBreak) {
+      const pb = this.pointBreak;
+      if (pb.who === "us" && now - pb.at < 800 && now - pb.lastBurst > (A11Y.calm ? 800 : 90)) {
+        pb.lastBurst = now;
+        const c = this.canvas;
+        this.burstAtPx((0.2 + Math.random() * 0.6) * c.width, (0.2 + Math.random() * 0.5) * c.height,
+                       pb.trick ? pb.trick.cols[1 + Math.floor(Math.random() * 2)] : ["#ffd98a", "#9fc08a", "#e8a86a"][Math.floor(Math.random() * 3)]);
+      }
+      if (now >= pb.until) { this.pointBreak = null; this._startServe(now); }
+      return;
+    }
 
     // second player out of frame: say so once, gently, and again only after
     // they have been back. Their paddle is holding still, which otherwise
@@ -1106,12 +1748,6 @@ export class ArcPong extends GameBase {
         this.say("Second player, step back into the picture when you are ready");
       } else if (!this.p2Waiting) this._p2Cued = false;
     }
-
-    // squeeze edge for the grip shot: remember WHEN the hand closed, so a
-    // catch needs a fresh, intentional squeeze at contact
-    const closedNow = this.t.handClosed(this.side);
-    if (closedNow && !this._wasClosed) this._closedAt = now;
-    this._wasClosed = closedNow;
 
     if (this.tut) {
       this._pongTut(now);
@@ -1128,144 +1764,120 @@ export class ArcPong extends GameBase {
       return;
     }
 
-    // grip shot step 2: ball rides the paddle until the hand opens (or 1.2 s)
-    if (this.caught) {
-      const b = this.ball;
-      const padY = this.patientRight ? this.pads.rightY : this.pads.leftY;
-      b.x = this.caught.edge === "right" ? this.court.right - 0.05 : this.court.left + 0.05;
-      if (padY != null) b.y = padY + this.paddleH / 2;
-      if (!this.t.handClosed(this.side) || now - this.caught.since > 1200) {
-        const dir = this.caught.edge === "right" ? -1 : 1;
-        b.vx = dir * (this.caught.vx0 || 0.25) * 1.35;      // fired back faster
-        // aimed, not random: fire toward the lane half AWAY from the AI paddle
-        const laneMid = (this.wallTop + this.wallBottom) / 2;
-        const ty = this.hasAI
-          ? (this.aiY < laneMid ? this.wallBottom - this.paddleH / 2 : this.wallTop + this.paddleH / 2)
-          : laneMid;
-        b.vy = (ty - b.y) / ((this.court.right - this.court.left) / Math.abs(b.vx));
-        this._capVy(b);
-        this.gripShots++;
-        this.stats.stars += 5;
-        this.burstAtPx(b.x * this.canvas.width, b.y * this.canvas.height, "#9fc08a");
-        this.skillFlash = { text: "Grip shot! ✦", until: now + 1200 };
-        audio.note(6);
-        this.caught = null;
-      }
-      return;
-    }
-
     const b = this.ball, s = dt / 1000;
-    // The star's one misread of the round. Taken on the first ball heading
-    // its way after AI_SLIP_FROM, and caught early in the flight so the steer
-    // to the corner still reads as the patient's shot rather than the ball
-    // bending on its own. AI_SLIP_BY is the backstop: past it, any flight
-    // will do, however far along it already is.
-    if (this.hasAI && !this.isDuo && !this._slip && !this._slipUsed && !this.tut) {
-      const age = this.elapsed(now);
-      const toAI = this.patientRight ? b.vx < 0 : b.vx > 0;
-      if (toAI && (age >= AI_SLIP_BY || (age >= AI_SLIP_FROM &&
-          Math.abs(b.x - (this.patientRight ? this.court.right : this.court.left)) < 0.3))) {
-        this._slip = { fromX: b.x };            // provisional, replaced below
-        this._engageSlip(now);
-      }
-    }
-    b.x += b.vx * s; b.y += b.vy * s;
-    if (b.spin) b.vy += b.spin * s;                          // spin curves the flight
-    this.trail.push({ x: b.x, y: b.y, t: now });
-    this.trail = this.trail.filter(p => now - p.t < 260);
-    // rebound off the lane walls (position clamped so it can't tunnel out)
-    if (b.y < this.wallTop) { b.y = this.wallTop; b.vy = Math.abs(b.vy); audio.bounce(); }
-    else if (b.y > this.wallBottom) { b.y = this.wallBottom; b.vy = -Math.abs(b.vy); audio.bounce(); }
+    // the flight, the trick's shaping of it and the rails, in one place
+    this._stepBall(b, s, true);
+    this.trail.push({ x: b.x, y: b.y, t: now, a: this._ghostAlpha(b) });
+    this.trail = this.trail.filter(p => now - p.t < (this.trick ? TRICK_TRAIL_MS : TRAIL_MS));
 
     const patRight = this.patientRight;
-    const returnBall = (dir, py, isPlayerSide) => {
-      // every return resets to the base speed — skill shots punch briefly,
-      // but the rally itself never accelerates
+    this._orbs(now);
+    const returnBall = (dir, py, isPlayerSide, edge) => {
+      const who = this._whoAt(edge), human = this._humanAt(edge);
+      const H = this._padH(edge);
+      const arriving = Math.abs(b.vx);                 // the pace it came in at, for the heat bonus
+      // the rally builds: each of the patient's returns adds a little speed,
+      // up to PONG_SPEED_MAX of the assessed speed; a fresh serve starts slow again
+      if (isPlayerSide && this.fullVx) {
+        this.baseVx = Math.min(this.fullVx * PONG_SPEED_MAX, (this.baseVx || this.fullVx * PONG_SPEED_START) * (1 + PONG_SPEED_GAIN));
+      }
       b.vx = dir * (this.baseVx || Math.abs(b.vx));
-      b.vy += ((b.y - (py + this.paddleH / 2)) / this.paddleH) * 0.12;   // gentle deflection: flat rallies
-      b.spin = 0;
-      audio.paddle();   // the physical "pock" of the return, both sides
+      b.vy += ((b.y - (py + this.paddleH / 2)) / H) * 0.12;   // gentle deflection: flat rallies
+      this._plainBall(b);
+      b.squash = now;
+      this.lastHit = { who, edge, human };
+      if (human && !this.tut) {
+        // STYLE: the hit times the rally multiplier, and the bonuses
+        const pl = this.pl[who];
+        if (!isPlayerSide) this.rally++;             // the patient's own returns count below
+        const rallyN = this.rally + (isPlayerSide ? 1 : 0);
+        const mult = Math.min(STYLE_MULT_MAX, 1 + Math.floor(rallyN / STYLE_MULT_EVERY));
+        let pts = STYLE_HIT * mult;
+        const off = Math.abs(b.y - (py + this.paddleH / 2)) / (H / 2);   // 0 centre .. 1 the very end
+        const tags = [];
+        if (off >= 1 - CLUTCH_FRAC * 2) { pts += STYLE_CLUTCH; pl.clutch++; tags.push(`+${STYLE_CLUTCH} CLUTCH`); }
+        else if (off >= 1 - EDGE_FRAC * 2) { pts += STYLE_EDGE; pl.edge++; tags.push(`+${STYLE_EDGE} EDGE`); }
+        if (this.fullVx && arriving >= HEAT_AT * this.fullVx) { pts += STYLE_HEAT; pl.heat++; tags.push(`+${STYLE_HEAT} HEAT`); }
+        pl.style += pts; pl.hits++;
+        pl.rallyBest = Math.max(pl.rallyBest, rallyN);
+        const out = this._outward(edge);
+        for (const [i, t] of tags.entries()) this._floater(b.x - out.x * 0.04, b.y + (i - (tags.length - 1) / 2) * 0.07, t, who === "us" ? "#ffd98a" : "#a8d8f0");
+        if (mult > 1 && !tags.length) this._floater(b.x - out.x * 0.04, b.y, `×${mult}`, "rgba(244,236,221,0.8)");
+        // the ghost shot power-up: this return fades out across the middle
+        if (this.fx[who].ghostNext) {
+          this.fx[who].ghostNext = false;
+          b.ghost = { x0: b.x, x1: dir > 0 ? this.court.right : this.court.left };
+          this._floater(b.x, b.y - 0.1, "GHOST", POWERS[3].col);
+        }
+        // the court catches with the rally: a shudder from 8 hits, more as it grows
+        if (rallyN >= 8 && !A11Y.calm) { this.shakeK = Math.min(1, rallyN / 25); this.shakeUntil = now + 140; }
+        if (rallyN >= ON_FIRE_AT && !this.onFire) { this.onFire = true; this.flash = { text: "ON FIRE! 🔥", col: "#ff8a4a", until: now + 1500 }; }
+        this._checkChallenge(who, now);
+      }
+      audio.paddle(isPlayerSide, this.rally);   // the "pock" of the return: brighter for the patient's own, rising with the rally
+      // TWO PLAYERS: the clock is full, so this return, by either of them,
+      // is the SMASH, and whoever takes this point takes the game
+      if (this.isDuo && this.trickReady(now) && !this._finalPoint) {
+        const T = TRICKS[0];
+        this._finalPoint = true;
+        b.free = true; b.vx *= T.speed;
+        this.trick = T; this.trickAt = now; this.trickShots[T.key] = (this.trickShots[T.key] || 0) + 1;
+        this.shakeK = 1; this.shakeUntil = now + SHAKE_MS;
+        this.flash = { text: `${T.word} ✦`, col: T.cols[1], until: now + 1500 };
+        this._burstAt(b.x, b.y, T.cols[2]);
+        audio.trick(T.key);
+      }
       if (isPlayerSide) {
         this.rally++; this.bestRally = Math.max(this.bestRally, this.rally);
-        this.hit({ reachFrac: 0.7, isFar: false }, this.rally);
-        // every return charges the grip gauge; a full bar announces itself
-        const wasFull = this.gripEnergy >= 1;
-        this.gripEnergy = Math.min(1, this.gripEnergy + 0.2);
-        if (this.skills.grip && !wasFull && this.gripEnergy >= 1) {
-          this.skillFlash = { text: "Grip shot charged ✊", until: now + 1600 };
-          audio.note(5);
-        }
-        this.burstAtPx(b.x * this.canvas.width, b.y * this.canvas.height, "#e8b98a");
-        this.flashUntil = now + 160;
-        // spin shot: a rolled palm at contact bends the return
-        if (this.skills.spin && (dir === -1) === this.patientRight) {
-          const roll = this.t.forearmRoll(this.side);
-          if (roll != null && Math.abs(roll) > 0.15) {
-            b.spin = roll > 0 ? 0.4 : -0.4;                  // supinated = topspin (dips)
-            b.vx *= 1.12;
-            this.spinShots++;
-            this.stats.stars += 5;
-            this.skillFlash = { text: roll > 0 ? "Topspin! ↓✦" : "Backspin! ↑✦", until: now + 1200 };
-            audio.note(6);
-          }
-        }
+        if (!this.tut) this.hit({ reachFrac: 0.7, isFar: false }, this.rally);
+        // THE TRICK: the clock is full, so this return is the one. The ball
+        // flies as this point's trick says, and the star misreads it.
+        if (!this.isDuo && this.trickReady(now) && !this._slip && !this._slipUsed) this._engageTrick(now);
+        else { this._burstAt(b.x, b.y, "#e8b98a"); this.flashUntil = now + 160; }
+        // a teaching ball returned: counted, and the next one comes
+        if (this.tut) { this._tutDone(now, "meet"); return; }
       } else {
+        this.bestRally = Math.max(this.bestRally, this.rally);
+        if (!this.isDuo) { this.trick = null; this.trickAt = 0; this._slip = null; }   // the star got it back after all
         if (this.hasAI) {   // AI aims inside the walled lane, near the middle
           const laneMid = (this.wallTop + this.wallBottom) / 2;
           b.tx = laneMid + (Math.random() - 0.5) * 0.5 * (this.wallBottom - this.wallTop - this.paddleH);
           b.vy = (b.tx - b.y) / ((this.court.right - this.court.left) / Math.abs(b.vx)) + (Math.random() - 0.5) * 0.03;
         }
       }
-      this._capVy(b);
+      if (this.ball) this._capVy(b);
     };
 
+    // the shield power-up: one save behind the goal, then it is spent
+    const shieldAt = edge => {
+      const who = this._whoAt(edge);
+      if (!this.fx[who].shield) return false;
+      this.fx[who].shield = false;
+      b.x = edge === "right" ? this.court.right - 0.02 : this.court.left + 0.02;
+      b.vx = (edge === "right" ? -1 : 1) * Math.abs(b.vx);
+      this._plainBall(b);
+      this._burstAt(b.x, b.y, POWERS[2].col);
+      this._floater(b.x, b.y, "SHIELD!", POWERS[2].col);
+      audio.bounce();
+      return true;
+    };
     // right edge
     if (b.vx > 0 && b.x >= this.court.right - 0.02) {
-      const py = this._edgeHit(b, [this.pads.rightY, this.pads.rightY2]);
+      const py = this._edgeHit(b, [this.pads.rightY, this.pads.rightY2], "right");
       const playerSide = patRight || this.mode === "bimanual";
-      if (py != null) { if (!this._tryCatch(now, "right", py)) returnBall(-1, py, patRight || this.mode === "bimanual"); }
-      else if (b.x > this.court.right + 0.04) {
-        const slipped = !!this._slip;
-        if (playerSide) {
-          this.miss({ isFar: false }); this.rally = 0;
-          // in duo the far paddle is a person, not the AI: the same tally
-          // counts their points, and they get named rather than "the star"
-          if ((this.hasAI || this.isDuo) && !this.tut) this.score.ai++;
-          if (this._checkMatch(now)) return;
-          if (this.isDuo) this.say(`Point to ${this.opts.p2Name || "player two"}!`);
-        }
-        else {
-          this.score.us++; this.pointFlash = now + 1300; audio.point();
-          if (this._slip) { this._slipUsed = true; this._slip = null; }
-          if (this._checkMatch(now)) return;
-          this.say(slipped ? "Right into the corner! Point to you!" : "Point to you!");
-        }
-        this._startServe(now);
+      if (py != null) returnBall(-1, py, patRight || this.mode === "bimanual", "right");
+      else if (b.x > this.court.right + 0.04 && !shieldAt("right")) {
+        this._pointTo(playerSide ? "them" : "us", now);
         return;
       }
     }
     // left edge
     if (b.vx < 0 && b.x <= this.court.left + 0.02) {
-      const py = this._edgeHit(b, [this.pads.leftY, this.pads.leftY2]);
+      const py = this._edgeHit(b, [this.pads.leftY, this.pads.leftY2], "left");
       const playerSide = !patRight || this.mode === "bimanual";
-      if (py != null) { if (!this._tryCatch(now, "left", py)) returnBall(1, py, !patRight || this.mode === "bimanual"); }
-      else if (b.x < this.court.left - 0.04) {
-        const slipped = !!this._slip;
-        if (playerSide) {
-          this.miss({ isFar: false }); this.rally = 0;
-          // in duo the far paddle is a person, not the AI: the same tally
-          // counts their points, and they get named rather than "the star"
-          if ((this.hasAI || this.isDuo) && !this.tut) this.score.ai++;
-          if (this._checkMatch(now)) return;
-          if (this.isDuo) this.say(`Point to ${this.opts.p2Name || "player two"}!`);
-        }
-        else {
-          this.score.us++; this.pointFlash = now + 1300; audio.point();
-          if (this._slip) { this._slipUsed = true; this._slip = null; }
-          if (this._checkMatch(now)) return;
-          this.say(slipped ? "Right into the corner! Point to you!" : "Point to you!");
-        }
-        this._startServe(now);
+      if (py != null) returnBall(1, py, !patRight || this.mode === "bimanual", "left");
+      else if (b.x < this.court.left - 0.04 && !shieldAt("left")) {
+        this._pointTo(playerSide ? "them" : "us", now);
         return;
       }
     }
@@ -1292,12 +1904,20 @@ export class ArcPong extends GameBase {
     }
   }
   draw(ctx, c, now) {
-    const X = f => f * c.width, Y = f => f * c.height;
+    const P = (fx, fy) => this._P(fx, fy);
+    const tut = !!this.tut;
+    const abd = this.axis === "abd";
+    ctx.save();
+    // the smash shakes the court for a moment (not under calm motion)
+    if (now < this.shakeUntil && !A11Y.calm) {
+      const k = (this.shakeUntil - now) / SHAKE_MS * 7 * (this.shakeK ?? 1);
+      ctx.translate((Math.random() - 0.5) * k, (Math.random() - 0.5) * k);
+    }
+    // the goal lines: a dashed curve just outside each edge
     ctx.strokeStyle = "rgba(244,236,221,0.16)"; ctx.lineWidth = 2; ctx.setLineDash([5, 7]);
-    for (const side of [this.court.left - 0.015, this.court.right + 0.015]) {
-      ctx.beginPath(); ctx.moveTo(X(side), Y(this.wallTop));
-      ctx.quadraticCurveTo(X(side + (side < 0.5 ? -0.04 : 0.04)), Y((this.wallTop + this.wallBottom) / 2), X(side), Y(this.wallBottom));
-      ctx.stroke();
+    for (const [ex, bulge] of [[this.court.left - 0.015, -0.04], [this.court.right + 0.015, 0.04]]) {
+      const a = P(ex, this.wallTop), m = P(ex + bulge, (this.wallTop + this.wallBottom) / 2), b = P(ex, this.wallBottom);
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.quadraticCurveTo(m.x, m.y, b.x, b.y); ctx.stroke();
     }
     ctx.setLineDash([]);
     // the lane walls: solid glowing rails the ball rebounds off — the whole
@@ -1306,95 +1926,157 @@ export class ArcPong extends GameBase {
     ctx.strokeStyle = "rgba(244,236,221,0.4)"; ctx.lineWidth = 4; ctx.lineCap = "round";
     ctx.shadowColor = "rgba(232,168,106,0.5)"; ctx.shadowBlur = 10;
     for (const wy of [this.wallTop, this.wallBottom]) {
-      ctx.beginPath(); ctx.moveTo(X(this.court.left - 0.015), Y(wy)); ctx.lineTo(X(this.court.right + 0.015), Y(wy)); ctx.stroke();
+      const a = P(this.court.left - 0.015, wy), b = P(this.court.right + 0.015, wy);
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
     }
     ctx.restore();
 
-    // scoreboard: suns (you) vs moons (AI) — only in vs-AI modes
-    if (this.hasAI) {
-      const usX = this.patientRight ? 0.62 : 0.24, aiX = this.patientRight ? 0.24 : 0.62;
-      for (let i = 0; i < Math.min(this.score.us, 9); i++)
-        starShape(ctx, X(usX + i * 0.028), Y(0.06), 9, "#ffd98a");
-      for (let i = 0; i < Math.min(this.score.ai, 9); i++) {
-        ctx.fillStyle = "rgba(200,179,217,0.8)";
-        ctx.beginPath(); ctx.arc(X(aiX + i * 0.028), Y(0.06), 7, 0, TAU); ctx.fill();
-      }
-    }
-    // rally streak stars
-    const n = Math.min(this.rally, 14);
-    for (let i = 0; i < n; i++) {
-      const fx = 0.5 + (i - (n - 1) / 2) * 0.035;
-      ctx.globalAlpha = 0.6 + Math.sin(now / 300 + i) * 0.4;
-      starShape(ctx, X(fx), Y(0.12), i === n - 1 ? 11 : 8, "#fff2c2");
-      ctx.globalAlpha = 1;
-    }
-
-    // paddles: patient amber, teammate teal, opponent lavender — and the
-    // app-wide open/closed language: a squeezing hand turns its paddle sage
-    // (glowing while the ball is held)
-    const pads = this.pads || {};
-    const drawPad = (x, y, kind, gripping) => {
-      if (y == null) return;
-      const cols = gripping ? ["#a8cf92", "#6f9b58"]
-        : kind === "patient" ? ["#e8b98a", "#c77f4a"] : kind === "mate" ? ["#a8d8d0", "#5f9b93"] : ["#c8b3d9", "#8f76b0"];
-      const held = gripping && this.caught;
-      if (held) { ctx.save(); ctx.shadowColor = "rgba(159,192,138,0.9)"; ctx.shadowBlur = 18; }
-      roundedRect(ctx, x - 8, Y(y), 16, Y(this.paddleH), 10, cols[0], cols[1]);
-      if (held) ctx.restore();
-    };
-    const rKind = this.patientRight ? "patient" : (this.mode === "bimanual" ? "patient" : "opp");
-    const lKind = !this.patientRight ? "patient" : (this.mode === "bimanual" ? "patient" : "opp");
-    const otherArm = this.side === "right" ? "left" : "right";
-    const gripMain = this.t.handClosed(this.side);
-    const gripOther = this.mode === "bimanual" && this.t.handClosed(otherArm);
-    drawPad(X(this.court.left), pads.leftY, lKind, this.patientRight ? gripOther : gripMain);
-    drawPad(X(this.court.right), pads.rightY, rKind, this.patientRight ? gripMain : gripOther);
-    drawPad(X(this.court.left) - 26, pads.leftY2, "mate");
-    drawPad(X(this.court.right) + 26, pads.rightY2, "mate");
-
-    // No rope rig, pulley or helper characters: they added a dozen moving
-    // lines beside the two the patient must actually watch (their paddle and
-    // the ball). The paddle IS the arm; nothing else needs drawing to say so.
-    const myPadX = X(this.patientRight ? this.court.right : this.court.left);
-
-    // grip-shot charge gauge under the patient's own paddle: fills with
-    // returns, glows sage when a catch is ready, spends on the catch
-    if (this.skills.grip) {
-      const bw = 56, bh = 8, bx = myPadX - bw / 2, by = Y(this.wallBottom) + 22;
-      const full = this.gripEnergy >= 1;
-      const pulse = Math.sin(now / 260) * 0.5 + 0.5;
+    // scoreboard: the TALLY, a sun and the patient's points on their side,
+    // a grey disc and the star's (or player two's) on the other: a 90 s
+    // game has no target to fill, only a count to beat. Not during the
+    // tutorial: nothing scores there and the screen is kept bare.
+    const scored = this.hasAI || this.isDuo;
+    if (scored && !tut) {
+      const usX = this.patientRight ? 0.72 : 0.20, aiX = this.patientRight ? 0.20 : 0.72;
+      const y = 0.062 * c.height;
       ctx.save();
-      ctx.fillStyle = "rgba(244,236,221,0.15)";
-      ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 4); ctx.fill();
-      if (this.gripEnergy > 0) {
-        ctx.fillStyle = full ? "#9fc08a" : "#e8b98a";
-        if (full) { ctx.shadowColor = "rgba(159,192,138,0.9)"; ctx.shadowBlur = 10 + pulse * 8; }
-        ctx.beginPath(); ctx.roundRect(bx, by, bw * Math.min(1, this.gripEnergy), bh, 4); ctx.fill();
-        ctx.shadowBlur = 0;
+      ctx.textBaseline = "middle"; ctx.shadowColor = "rgba(20,16,40,0.8)"; ctx.shadowBlur = 6;
+      ctx.font = `800 ${Math.round(c.height * 0.045)}px Nunito, sans-serif`;
+      starShape(ctx, usX * c.width, y, 11, "#ffd98a");
+      ctx.fillStyle = "#fff6d8"; ctx.textAlign = "left";
+      ctx.fillText(String(this.score.us), usX * c.width + 20, y + 1);
+      ctx.fillStyle = "rgba(190,190,200,0.85)"; ctx.beginPath(); ctx.arc(aiX * c.width, y, 8, 0, TAU); ctx.fill();
+      ctx.fillStyle = "#fff6d8"; ctx.textAlign = "left";
+      ctx.fillText(String(this.score.ai), aiX * c.width + 20, y + 1);
+      ctx.font = `700 ${Math.round(c.height * 0.02)}px Nunito, sans-serif`;
+      ctx.fillStyle = "rgba(244,236,221,0.7)";
+      ctx.fillText("you", usX * c.width - 2, y + c.height * 0.038);
+      ctx.fillText(this.isDuo ? (this.opts.p2Name || "player two") : "the star", aiX * c.width - 2, y + c.height * 0.038);
+      // the style under each tally (the star earns none)
+      ctx.fillStyle = "rgba(255,217,138,0.8)";
+      ctx.fillText(`✦ ${this.pl.us.style}`, usX * c.width + 50, y + c.height * 0.038);
+      if (this.isDuo) ctx.fillText(`✦ ${this.pl.them.style}`, aiX * c.width + 50, y + c.height * 0.038);
+      ctx.restore();
+    }
+    // the orb: a glowing, breathing light mid court, waiting for the ball
+    if (this.orb && !tut) {
+      const op = P(this.orb.x, this.orb.y), pulse = A11Y.calm ? 0.5 : Math.sin(now / 220) * 0.5 + 0.5;
+      const r = c.height * ORB_R * (0.85 + pulse * 0.3);
+      this.glow(ctx, op.x, op.y, r, "#ffffff", "#ffd98a", 26 + pulse * 10);
+      ctx.save();
+      ctx.strokeStyle = `rgba(255,217,138,${0.4 + pulse * 0.4})`; ctx.lineWidth = 2; ctx.setLineDash([4, 6]);
+      ctx.beginPath(); ctx.arc(op.x, op.y, r * 1.6, now / 900, now / 900 + TAU); ctx.stroke();
+      ctx.restore();
+    }
+    // the challenge, small, under the clock, until it is taken
+    if (this.challenge && !tut && !this.matchOver) {
+      ctx.save();
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.font = `700 ${Math.round(c.height * 0.02)}px Nunito, sans-serif`;
+      ctx.fillStyle = this.challengeWon ? "rgba(159,192,138,0.9)" : "rgba(244,236,221,0.6)";
+      ctx.fillText(this.challengeWon ? `✓ ${this.challenge.text}` : `challenge: ${this.challenge.text}`, c.width / 2, c.height * (abd ? 0.205 : 0.135));
+      ctx.restore();
+    }
+    // the game clock: vs the star, the paddle catching fire over the game
+    // (the smash loader, seconds left in its head); otherwise a plain
+    // shrinking line along the top
+    if (PONG_TRICKS && (this.hasAI || this.isDuo) && !tut && !this.matchOver) this._drawRacket(ctx, c, now);
+    else if (!tut && !this.matchOver) this._drawGameClock(ctx, c, now);
+
+    // rally streak stars, just inside the far rail; ON FIRE past ON_FIRE_AT
+    if (!tut) {
+      const n = Math.min(this.rally, 14);
+      const sy = c.height * (abd ? 0.235 : 0.20);
+      for (let i = 0; i < n; i++) {
+        const fx = 0.5 + (i - (n - 1) / 2) * 0.035;
+        ctx.globalAlpha = 0.6 + Math.sin(now / 300 + i) * 0.4;
+        starShape(ctx, fx * c.width, sy, i === n - 1 ? 11 : 8, this.onFire ? "#ff8a4a" : "#fff2c2");
+        ctx.globalAlpha = 1;
       }
-      ctx.strokeStyle = "rgba(244,236,221,0.4)"; ctx.lineWidth = 1.5;
-      ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 4); ctx.stroke();
-      if (full) {
-        ctx.fillStyle = `rgba(255,242,194,${0.6 + pulse * 0.4})`;
-        ctx.font = `800 ${Math.round(c.height * 0.02)}px Nunito, sans-serif`;
-        ctx.textAlign = "center";
-        ctx.fillText("squeeze to catch ✊", myRig.cx, by + 28);
+      if (this.onFire && this.rally >= ON_FIRE_AT) {
+        ctx.save();
+        ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.font = `800 ${Math.round(c.height * 0.026)}px Nunito, sans-serif`;
+        ctx.fillStyle = `rgba(255,138,74,${0.7 + (A11Y.calm ? 0 : Math.sin(now / 150) * 0.3)})`;
+        ctx.shadowColor = "#ff8a4a"; ctx.shadowBlur = 12;
+        ctx.fillText(`ON FIRE · ${this.rally}`, c.width / 2, sy + c.height * 0.03);
+        ctx.restore();
       }
+    }
+
+    // paddles. The patient's is amber, gold and pulsing under a posture cue
+    // (see PAD_COLS); a teammate's is teal; the star's is grey at every rank.
+    const pads = this.pads || {};
+    const star = this.hasAI ? this.rank : null;
+    const mine = this._myEdge(), theirs = mine === "right" ? "left" : "right";
+    const stMain = this.coach.state === "alert"
+      ? { cols: PAD_COLS.comp, tag: COMP_TAGS[this.coach.type] || "sit tall", pulse: true }
+      : { cols: PAD_COLS.patient, tag: null };
+    const stOther = stMain;
+    const drawPad = (edge, y, kind, st, off = 0) => {
+      if (y == null) return;
+      const cols = kind === "patient" ? st.cols : kind === "mate" || (kind === "opp" && this.isDuo) ? PAD_COLS.mate : star ? star.cols : PAD_COLS.opp;
+      const glow = kind === "opp" && star && star.glow;
+      const r = this._padRect(edge, y, off);
+      ctx.save();
+      if (kind === "patient" && st.pulse) { ctx.shadowColor = cols[0]; ctx.shadowBlur = 14 + (A11Y.calm ? 0 : Math.sin(now / 200) * 8); }
+      else if (kind === "patient" && st.tag) { ctx.shadowColor = cols[0]; ctx.shadowBlur = 12; }
+      else if (glow) { ctx.shadowColor = cols[0]; ctx.shadowBlur = glow + (A11Y.calm ? 0 : Math.sin(now / 300) * 4); }
+      if (kind === "opp" && star?.tail) {
+        // the comet's sparkle: a few fading motes behind where the paddle has been
+        const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+        this._aiTrail.push({ x: cx, y: cy, t: now });
+        this._aiTrail = this._aiTrail.filter(q => now - q.t < 500);
+        for (const q of this._aiTrail) {
+          const age = (now - q.t) / 500;
+          ctx.globalAlpha = 0.5 * (1 - age);
+          ctx.fillStyle = cols[0];
+          const j = ((q.t * 3) % 11) / 11 - 0.5;
+          const along = j * 2 * (abd ? r.w : r.h) * 0.4;
+          ctx.beginPath();
+          ctx.arc(q.x + (abd ? along : j * 26 * age), q.y + (abd ? j * 26 * age : along), 2.5 * (1 - age) + 0.5, 0, TAU);
+          ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+      }
+      roundedRect(ctx, r.x, r.y, r.w, r.h, 8, cols[0], cols[1]);
+      ctx.restore();
+    };
+    const kindOf = edge => edge === mine || this.mode === "bimanual" ? "patient" : "opp";
+    drawPad("left", pads.leftY, kindOf("left"), mine === "left" ? stMain : stOther);
+    drawPad("right", pads.rightY, kindOf("right"), mine === "right" ? stMain : stOther);
+    drawPad("left", pads.leftY2, "mate", null, 26);
+    drawPad("right", pads.rightY2, "mate", null, 26);
+
+    // who is who: "You" at the patient's edge, the star's rank at its own
+    this._edgeLabel(ctx, c, mine, "You", PAD_COLS.patient[0]);
+    if (star && !tut) this._edgeLabel(ctx, c, theirs, star.name, star.cols[0]);
+    else if (this.isDuo) this._edgeLabel(ctx, c, theirs, this.opts.p2Name || "Player two", PAD_COLS.mate[0]);
+
+    // the posture cue in a word, in the strip outside the patient's edge
+    // (below the court in Abd-Add), beside the paddle it colours
+    if (stMain.tag) {
+      const e = P(this._edgeX(mine), this.wallBottom);
+      let tx, ty, align;
+      if (abd) { tx = c.width / 2; ty = e.y + 58; align = "center"; }
+      else { tx = e.x + (this.patientRight ? 30 : -30); ty = e.y + 44; align = this.patientRight ? "right" : "left"; }
+      ctx.save();
+      ctx.fillStyle = stMain.cols[0];
+      ctx.font = `800 ${Math.round(c.height * 0.021)}px Nunito, sans-serif`;
+      ctx.textAlign = align; ctx.textBaseline = "middle";
+      ctx.fillText(stMain.tag, tx, ty);
       ctx.restore();
     }
 
-    // sleepy z's over the AI paddle as a long rally wears the star down —
-    // the coming miss reads as earned, not random
-    // the star tiring is flavour, and it must never be showing while it
-    // misreads a shot — a sleepy cue over a lunge tells the patient the point
-    // was given rather than won
+    // sleepy z's over the star's paddle as a long rally wears it down — the
+    // coming miss reads as earned, not random; never while it misreads a
+    // shot (a sleepy cue over a lunge says the point was given, not won)
     const yawn = (this._tired || 0) / AI_FADE_MAX;
-    if (this.hasAI && this.ball && !this._slip && yawn > 0.55) {
-      const aiEdge = this.patientRight ? this.court.left : this.court.right;
-      const ax = X(aiEdge) + (this.patientRight ? -34 : 34);
-      const ay = Y(this.aiY) - 30;
+    if (this.hasAI && this.ball && !this._slip && !tut && yawn > 0.55) {
+      const zp = this._padOutPx(theirs, this.aiY - this.paddleH / 2, 34);
+      const ax = zp.x, ay = zp.y - 30;
       ctx.save();
-      ctx.fillStyle = `rgba(200,179,217,${0.35 + 0.45 * yawn})`;
+      ctx.fillStyle = `rgba(190,190,200,${0.35 + 0.45 * yawn})`;
       ctx.font = `800 ${Math.round(c.height * 0.032)}px Nunito, sans-serif`;
       ctx.textAlign = "center";
       for (let i = 0; i < (yawn > 0.85 ? 3 : 2); i++) {
@@ -1406,83 +2088,419 @@ export class ArcPong extends GameBase {
       ctx.globalAlpha = 1;
     }
 
-    // round-1 tutorial overlays: pulsing target star for the paddle sweeps,
-    // a guide line from the paddle, and the hover-to-skip pill
-    if (this.tut) {
-      if (this.tut.step === 0) {
-        const fx = this.patientRight ? this.court.right : this.court.left;
-        const ty = this._tutTargetY();
-        const pulse = Math.sin(now / 300) * 0.5 + 0.5;
-        const padY = this.patientRight ? this.pads?.rightY : this.pads?.leftY;
-        if (padY != null) {
-          ctx.setLineDash([5, 8]);
-          ctx.strokeStyle = "rgba(244,236,221,0.35)"; ctx.lineWidth = 2;
-          ctx.beginPath(); ctx.moveTo(X(fx), Y(padY + this.paddleH / 2)); ctx.lineTo(X(fx), Y(ty)); ctx.stroke();
-          ctx.setLineDash([]);
-        }
-        this.glow(ctx, X(fx), Y(ty), 14 + pulse * 6, "#fff6d8", "#e8a86a", 24);
-        starShape(ctx, X(fx), Y(ty), 12 + pulse * 3, "#ffd98a");
-        ctx.strokeStyle = `rgba(255,217,138,${0.4 + pulse * 0.4})`; ctx.lineWidth = 3;
-        ctx.beginPath(); ctx.arc(X(fx), Y(ty), 26 + pulse * 6, 0, TAU); ctx.stroke();
-      }
-      const sx = c.width - 115, sy = 62;
-      ctx.fillStyle = "rgba(20,16,40,0.85)";
-      ctx.strokeStyle = "rgba(244,236,221,0.6)"; ctx.lineWidth = 3;
-      ctx.beginPath(); ctx.roundRect(sx - 75, sy - 26, 150, 52, 26); ctx.fill(); ctx.stroke();
-      ctx.fillStyle = "#f4ecdd";
-      ctx.font = `800 ${Math.round(c.height * 0.03)}px Nunito, sans-serif`;
-      ctx.textAlign = "center";
-      ctx.fillText("Skip ✋", sx, sy + 9);
-      if (this.tut.skipDwell) {
-        const f = Math.min(1, (now - this.tut.skipDwell) / 1200);
-        ctx.strokeStyle = "#9fc08a"; ctx.lineWidth = 5;
-        ctx.beginPath(); ctx.arc(sx, sy, 36, -Math.PI / 2, -Math.PI / 2 + TAU * f); ctx.stroke();
-      }
-    }
+    if (tut) this._drawTut(ctx, c, now);
 
     if (this.serving) {
       const t = (now - this.serving.start) / 550;
       const beat = Math.floor(t), f = t - beat;
       if (beat >= 0 && beat < 3) {
-        const p = { x: X((this.court.left + this.court.right) / 2), y: Y((this.wallTop + this.wallBottom) / 2) };
+        // the countdown ring: where the ball will start from
+        const p = tut ? P(this._aiEdgeX() + (this.patientRight ? 0.02 : -0.02), this.aiY)
+                      : P((this.court.left + this.court.right) / 2, (this.wallTop + this.wallBottom) / 2);
         ctx.strokeStyle = `rgba(244,236,221,${0.7 * (1 - f)})`;
         ctx.lineWidth = 4;
         ctx.beginPath(); ctx.arc(p.x, p.y, 16 + f * 44, 0, TAU); ctx.stroke();
         this.glow(ctx, p.x, p.y, 10, "#ffffff", "#fff6d8", 14);
       }
     } else if (this.ball) {
-      for (const p of this.trail) {
-        const age = (now - p.t) / 260;
-        ctx.globalAlpha = 0.35 * (1 - age);
-        ctx.fillStyle = "#fff6d8";
-        ctx.beginPath(); ctx.arc(X(p.x), Y(p.y), 9 * (1 - age), 0, TAU); ctx.fill();
-      }
-      ctx.globalAlpha = 1;
-      this.glow(ctx, X(this.ball.x), Y(this.ball.y), 14, "#ffffff", "#fff6d8", 24);
-      if (this.caught) {   // held on the paddle — pulsing "charged" ring
-        const f = Math.min(1, (now - this.caught.since) / 1200);
-        ctx.strokeStyle = "#9fc08a"; ctx.lineWidth = 4;
-        ctx.beginPath(); ctx.arc(X(this.ball.x), Y(this.ball.y), 22 + Math.sin(now / 150) * 4, -Math.PI / 2, -Math.PI / 2 + TAU * f); ctx.stroke();
-      }
-      if (this.ball.spin) {   // spinning ball leaves a curl mark
-        ctx.strokeStyle = "rgba(159,192,138,0.7)"; ctx.lineWidth = 2.5;
-        const a = now / 90;
-        ctx.beginPath(); ctx.arc(X(this.ball.x), Y(this.ball.y), 19, a, a + Math.PI * 1.2); ctx.stroke();
+      this._drawTrail(ctx, c, now);
+      const bp = P(this.ball.x, this.ball.y);
+      if (this.trick) this._drawTrickBall(ctx, c, now, bp);
+      else {
+        // squash and stretch: flattened against the paddle at the hit, then
+        // drawn out along its flight, settling over 180 ms (not under calm motion)
+        const age = now - (this.ball.squash || 0);
+        ctx.save();
+        if (age < 180 && !A11Y.calm) {
+          const k = 1 - age / 180, sx = age < 50 ? 1 - 0.35 * k : 1 + 0.35 * k, sy = age < 50 ? 1 + 0.35 * k : 1 - 0.25 * k;
+          const ang = Math.atan2(this.ball.vy, this.ball.vx) + (abd ? Math.PI / 2 : 0);
+          ctx.translate(bp.x, bp.y); ctx.rotate(ang); ctx.scale(sx, sy); ctx.translate(-bp.x, -bp.y);
+        }
+        ctx.globalAlpha = this._ghostAlpha(this.ball);
+        this.glow(ctx, bp.x, bp.y, 14, "#ffffff", "#fff6d8", 24);
+        ctx.restore();
       }
     }
-    if (this.skillFlash && now < this.skillFlash.until) {
-      ctx.fillStyle = `rgba(159,192,138,${(this.skillFlash.until - now) / 1200 * 0.95})`;
+    // the floating words: "+20 EDGE", a power-up's name, rising and fading
+    for (const f of this.floaters) {
+      const k = (now - f.t) / FLOATER_MS, p = P(f.fx, f.fy);
+      ctx.save();
+      ctx.globalAlpha = k < 0.7 ? 1 : (1 - k) / 0.3;
+      ctx.fillStyle = f.col; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.shadowColor = "rgba(20,16,40,0.9)"; ctx.shadowBlur = 8;
+      ctx.font = `800 ${Math.round(c.height * 0.03)}px Nunito, sans-serif`;
+      ctx.fillText(f.text, p.x, p.y - k * c.height * 0.08);
+      ctx.restore();
+    }
+    if (this.flash && now < this.flash.until) {
+      ctx.save();
+      ctx.globalAlpha = Math.min(1, (this.flash.until - now) / 1200) * 0.95;
+      ctx.fillStyle = this.flash.col || "#9fc08a";
+      ctx.shadowColor = "rgba(20,16,40,0.85)"; ctx.shadowBlur = 12;
       ctx.font = `800 ${Math.round(c.height * 0.05)}px Nunito, sans-serif`;
       ctx.textAlign = "center";
-      ctx.fillText(this.skillFlash.text, c.width / 2, c.height * 0.22);
+      ctx.fillText(this.flash.text, c.width / 2, c.height * 0.24);
+      ctx.restore();
     }
-    if (now < this.pointFlash) {
-      ctx.fillStyle = `rgba(255,217,138,${(this.pointFlash - now) / 1300 * 0.9})`;
-      ctx.font = `800 ${Math.round(c.height * 0.07)}px Nunito, sans-serif`;
+    this._drawPointBreak(ctx, c, now);
+    this._drawGameOver(ctx, c, now);
+    ctx.restore();
+  }
+
+  // a name at an edge: above the rail in FE; beside the rail, at the end
+  // away from the posture coach, in Abd-Add
+  _edgeLabel(ctx, c, edge, text, col) {
+    ctx.save();
+    ctx.fillStyle = col; ctx.globalAlpha = 0.85;
+    ctx.font = `700 ${Math.round(c.height * 0.021)}px Nunito, sans-serif`;
+    ctx.textBaseline = "middle";
+    if (this.axis !== "abd") {
+      const p = this._P(this._edgeX(edge), this.wallTop);
       ctx.textAlign = "center";
-      ctx.fillText("Point! ✦", c.width / 2, c.height * 0.3);
+      ctx.fillText(text, p.x, p.y - 14);
+    } else {
+      const y = this._P(this._edgeX(edge), this.wallTop).y;
+      const onRight = !this.patientRight;
+      ctx.textAlign = onRight ? "left" : "right";
+      ctx.fillText(text, onRight ? PONG_ABD_X1 * c.width + 10 : PONG_ABD_X0 * c.width - 10, y);
     }
-    this.drawTimerWhisper(ctx, c, now);
+    ctx.restore();
+  }
+
+  // the tutorial's own marks: where the ball will land on the patient's
+  // rail (with a dashed line from the ball, so "go where it is going" is
+  // drawn, not explained), the three dots of the meet step, and the skip pill
+  _drawTut(ctx, c, now) {
+    const t = this.tut, b = this.ball, P = (fx, fy) => this._P(fx, fy);
+    const mine = this._myEdge();
+    const pulse = Math.sin(now / 300) * 0.5 + 0.5;
+    ctx.save();
+    if (b && Math.sign(b.vx) === (this.patientRight ? 1 : -1)) {
+      const tRemain = Math.abs(this._edgeX(mine) - b.x) / Math.abs(b.vx || 1e-6);
+      const ay = this._predictY(b.y, b.vy, tRemain);
+      const q = P(this._edgeX(mine), ay), bp = P(b.x, b.y);
+      ctx.setLineDash([6, 10]); ctx.strokeStyle = "rgba(255,217,138,0.4)"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(bp.x, bp.y); ctx.lineTo(q.x, q.y); ctx.stroke(); ctx.setLineDash([]);
+      ctx.strokeStyle = `rgba(255,217,138,${0.5 + pulse * 0.4})`; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(q.x, q.y, 18 + pulse * 5, 0, TAU); ctx.stroke();
+    }
+    if (t.step === "meet") {
+      for (let i = 0; i < 3; i++) {
+        const x = c.width / 2 + (i - 1) * 30, y = c.height * 0.2;
+        ctx.beginPath(); ctx.arc(x, y, 8, 0, TAU);
+        if (i < t.n) { ctx.fillStyle = "#ffd98a"; ctx.fill(); }
+        else { ctx.strokeStyle = "rgba(255,217,138,0.5)"; ctx.lineWidth = 2; ctx.stroke(); }
+      }
+    }
+    const sx = c.width - 115, sy = 62;
+    ctx.fillStyle = "rgba(20,16,40,0.85)";
+    ctx.strokeStyle = "rgba(244,236,221,0.6)"; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.roundRect(sx - 75, sy - 26, 150, 52, 26); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = "#f4ecdd";
+    ctx.font = `800 ${Math.round(c.height * 0.03)}px Nunito, sans-serif`;
+    ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+    ctx.fillText("Skip ✋", sx, sy + 9);
+    if (t.skipDwell) {
+      const f = Math.min(1, (now - t.skipDwell) / 1200);
+      ctx.strokeStyle = "#9fc08a"; ctx.lineWidth = 5;
+      ctx.beginPath(); ctx.arc(sx, sy, 36, -Math.PI / 2, -Math.PI / 2 + TAU * f); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // THE TRICK LOADER: a paddle that catches fire. It fills from the handle
+  // up over TRICK_AT seconds of the point, flames licking along the fill
+  // line, and when it is full the whole thing burns, with flames above the
+  // head and sparks rising: the next return is the trick. The fire is in
+  // the coming trick's own colours and its name is beside the paddle, so
+  // which trick is loading is visible all along. The seconds left sit in
+  // the head, so it is a clock as well as a promise. Calm motion keeps the
+  // fill and drops the flicker.
+  _drawRacket(ctx, c, now) {
+    const rt = this.gameT(now);
+    const f = Math.min(1, rt / TRICK_AT);
+    const ready = f >= 1;
+    const T = this.nextTrick || TRICKS[0], K = T.cols;
+    const rgba = (hex, a) => `rgba(${parseInt(hex.slice(1, 3), 16)},${parseInt(hex.slice(3, 5), 16)},${parseInt(hex.slice(5, 7), 16)},${a})`;
+    // bigger since Sep 2026 (by request): the head is 9% of the screen's
+    // height and the court's top rail sits below the handle
+    const R = Math.round(c.height * 0.045);
+    const cx = c.width / 2, cy = Math.round(c.height * 0.062);
+    const hw = R * 0.24, hTop = cy + R * 0.85, hBot = cy + R * 1.95;   // the handle
+    const top = cy - R, H = hBot - top;
+    const calm = A11Y.calm;
+    const flick = (i, sp = 90) => calm ? 0.5 : Math.sin(now / sp + i * 1.7) * 0.5 + 0.5;
+    const pulse = calm ? 0.5 : Math.sin(now / 240) * 0.5 + 0.5;
+    const shape = () => {
+      ctx.beginPath();
+      ctx.arc(cx, cy, R, 0, TAU);
+      ctx.roundRect(cx - hw, hTop, hw * 2, hBot - hTop, hw);
+    };
+    ctx.save();
+    if (ready) { ctx.shadowColor = rgba(K[2], 0.9); ctx.shadowBlur = 14 + pulse * 18; }
+    shape(); ctx.fillStyle = "rgba(20,16,40,0.7)"; ctx.fill();   // dark wood
+    ctx.shadowBlur = 0;
+    if (f > 0) {
+      ctx.save(); shape(); ctx.clip();
+      const fy = hBot - f * H;                                     // the fire line
+      const g = ctx.createLinearGradient(0, hBot, 0, Math.min(fy, hBot - 1));
+      g.addColorStop(0, K[3]); g.addColorStop(0.55, K[2]); g.addColorStop(1, ready ? K[0] : K[1]);
+      ctx.fillStyle = g;
+      ctx.fillRect(cx - R - 2, fy, R * 2 + 4, hBot - fy + 2);
+      // tongues of flame along the fire line
+      const n = 7;
+      for (let i = 0; i < n; i++) {
+        const x = cx - R + (i + 0.5) * (2 * R / n);
+        if (Math.abs(x - cx) > (fy > hTop ? hw : R * 0.98)) continue;   // inside the paddle at that height
+        const h = R * (0.35 + 0.55 * flick(i)) * (ready ? 1.4 : 1);
+        ctx.fillStyle = i % 2 ? rgba(K[1], 0.95) : rgba(K[2], 0.9);
+        ctx.beginPath();
+        ctx.moveTo(x - R * 0.13, fy + 2);
+        ctx.quadraticCurveTo(x + (flick(i + 3, 130) - 0.5) * R * 0.3, fy - h * 0.6, x, fy - h);
+        ctx.quadraticCurveTo(x + R * 0.1, fy - h * 0.5, x + R * 0.13, fy + 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+    if (ready && !calm) {
+      // ablaze: flames climb above the head and sparks rise off it
+      for (let i = 0; i < 5; i++) {
+        const x = cx + (i - 2) * R * 0.42;
+        const h = R * (0.5 + 0.7 * flick(i, 70));
+        ctx.fillStyle = i % 2 ? rgba(K[1], 0.85) : rgba(K[2], 0.8);
+        ctx.beginPath();
+        ctx.moveTo(x - R * 0.16, cy - R * 0.6);
+        ctx.quadraticCurveTo(x + (flick(i + 5, 110) - 0.5) * R * 0.4, cy - R - h * 0.5, x, cy - R - h);
+        ctx.quadraticCurveTo(x + R * 0.16, cy - R - h * 0.4, x + R * 0.16, cy - R * 0.6);
+        ctx.fill();
+      }
+      for (let i = 0; i < 8; i++) {
+        const ph = (now / 900 + i * 0.137) % 1;
+        const x = cx + Math.sin(i * 2.3 + now / 400) * R * 1.3;
+        const y = cy - R * 0.5 - ph * R * 2.6;
+        ctx.globalAlpha = (1 - ph) * 0.9;
+        ctx.fillStyle = i % 3 ? K[1] : K[0];
+        ctx.beginPath(); ctx.arc(x, y, 1.5 + (1 - ph) * 1.5, 0, TAU); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+    shape(); ctx.strokeStyle = ready ? rgba(K[0], 0.9) : "rgba(244,236,221,0.45)"; ctx.lineWidth = 2.5; ctx.stroke();
+    // the seconds left, in the head; the caption beside the paddle
+    ctx.fillStyle = "#fff6d8"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.shadowColor = "rgba(20,16,40,0.9)"; ctx.shadowBlur = 6;
+    ctx.font = `800 ${Math.round(c.height * 0.04)}px Nunito, sans-serif`;
+    ctx.fillText(ready ? "✦" : String(Math.ceil(TRICK_AT - rt)), cx, cy + 1);
+    ctx.shadowBlur = 0;
+    ctx.textAlign = "left";
+    ctx.font = `800 ${Math.round(c.height * 0.026)}px Nunito, sans-serif`;
+    ctx.fillStyle = ready ? rgba(K[1], 0.6 + pulse * 0.4) : "rgba(244,236,221,0.75)";
+    ctx.fillText(ready ? `${T.word} hit the ball to end the game` : `${T.name.toLowerCase()} in ${Math.ceil(TRICK_AT - rt)} s`, cx + R * 1.4, cy + 1);
+    ctx.restore();
+  }
+  // the game clock without a star to smash (bimanual, companion, duo): a
+  // line along the top that shrinks from both ends over the game, with the
+  // seconds left in the middle
+  _drawGameClock(ctx, c, now) {
+    const len = TRICK_AT;
+    const left = Math.max(0, len - this.gameT(now));
+    const f = left / len;
+    ctx.save();
+    ctx.strokeStyle = "rgba(244,236,221,0.35)"; ctx.lineWidth = 4; ctx.lineCap = "round";
+    ctx.beginPath(); ctx.moveTo(c.width * (0.5 - 0.3 * f), c.height * 0.035); ctx.lineTo(c.width * (0.5 + 0.3 * f), c.height * 0.035); ctx.stroke();
+    ctx.fillStyle = "#fff6d8"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.shadowColor = "rgba(20,16,40,0.9)"; ctx.shadowBlur = 6;
+    ctx.font = `800 ${Math.round(c.height * 0.034)}px Nunito, sans-serif`;
+    ctx.fillText(`${Math.ceil(left)} s`, c.width / 2, c.height * 0.075);
+    ctx.restore();
+  }
+
+  // THE TRICK BALL, each trick drawn as itself:
+  //   smash    a fireball with a flickering ring
+  //   curve    a violet ball with a crescent turning about it, the way it bends
+  //   ghost    the ball fading to a shimmer across the middle and back
+  //   zigzag   a gold ball throwing short lightning sparks
+  //   feather  a soft green ball that sways while it floats, a streak once it darts
+  _drawTrickBall(ctx, c, now, bp) {
+    const b = this.ball, T = this.trick, K = T.cols;
+    const calm = A11Y.calm;
+    const pulse = calm ? 0.5 : Math.sin(now / 60) * 0.5 + 0.5;
+    ctx.save();
+    switch (T.key) {
+      case "ghost": {
+        const a = this._ghostAlpha(b);
+        ctx.globalAlpha = a;
+        this.glow(ctx, bp.x, bp.y, 16, K[0], K[2], 30);
+        if (a < 0.5) {   // a faint ring where it is, so the patient never loses it entirely
+          ctx.globalAlpha = 0.18;
+          ctx.strokeStyle = K[1]; ctx.lineWidth = 1.5; ctx.setLineDash([3, 6]);
+          ctx.beginPath(); ctx.arc(bp.x, bp.y, 14 + pulse * 3, 0, TAU); ctx.stroke();
+        }
+        break;
+      }
+      case "curve": {
+        this.glow(ctx, bp.x, bp.y, 17, K[0], K[2], 32);
+        ctx.strokeStyle = K[1]; ctx.lineWidth = 3;
+        const a = calm ? 0 : now / 110;
+        ctx.beginPath(); ctx.arc(bp.x, bp.y, 22, a, a + Math.PI * 1.1); ctx.stroke();
+        break;
+      }
+      case "zigzag": {
+        this.glow(ctx, bp.x, bp.y, 17, K[0], K[2], 34);
+        ctx.strokeStyle = K[1]; ctx.lineWidth = 2; ctx.lineCap = "round";
+        for (let i = 0; i < 4; i++) {   // short jagged sparks, turning with time
+          const a0 = (calm ? i * 1.6 : now / 140 + i * 1.6), r0 = 20, r1 = 30 + pulse * 6;
+          const mx = bp.x + Math.cos(a0 + 0.3) * (r0 + r1) / 2, my = bp.y + Math.sin(a0 + 0.3) * (r0 + r1) / 2;
+          ctx.beginPath();
+          ctx.moveTo(bp.x + Math.cos(a0) * r0, bp.y + Math.sin(a0) * r0);
+          ctx.lineTo(mx, my);
+          ctx.lineTo(bp.x + Math.cos(a0 - 0.2) * r1, bp.y + Math.sin(a0 - 0.2) * r1);
+          ctx.stroke();
+        }
+        break;
+      }
+      case "feather": {
+        if (!b.darted) {
+          const sway = calm ? 0 : Math.sin(now / 260) * 5;
+          this.glow(ctx, bp.x + sway, bp.y, 15, K[0], K[2], 26);
+          ctx.globalAlpha = 0.6; ctx.strokeStyle = K[1]; ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.ellipse(bp.x + sway, bp.y, 24, 12, calm ? 0 : Math.sin(now / 500) * 0.4, 0, TAU); ctx.stroke();
+        } else {
+          this.glow(ctx, bp.x, bp.y, 19 + pulse * 3, K[0], K[2], 36);
+        }
+        break;
+      }
+      default: {   // smash: the fireball
+        this.glow(ctx, bp.x, bp.y, 20 + pulse * 5, K[0], K[2], 40);
+        ctx.strokeStyle = `rgba(255,140,60,${0.5 + pulse * 0.4})`; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.arc(bp.x, bp.y, 26 + pulse * 6, 0, TAU); ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+
+  // TRAIL RENDERER: a comet tail of fading, shrinking discs behind the ball.
+  // A rally leaves a short cream tail; a trick leaves a long one in its own
+  // colours, white-hot to deep with age, and the smash sheds embers. The
+  // ghost's tail fades with the ghost (each sample keeps the alpha it was
+  // drawn at), and the feather's stays short until it darts.
+  _drawTrail(ctx, c, now) {
+    const T = this.trick, b = this.ball;
+    const long = !!T && !(T.key === "feather" && b && !b.darted);
+    const life = long ? TRICK_TRAIL_MS : TRAIL_MS;
+    const fire = T ? T.cols : null;
+    for (const p of this.trail) {
+      const age = Math.min(1, (now - p.t) / life);
+      if (age >= 1) continue;
+      const r = (long ? 16 : 9) * (1 - age) + 1;
+      const q = this._P(p.x, p.y);
+      ctx.globalAlpha = (long ? 0.75 : 0.35) * (1 - age) * (p.a ?? 1);
+      ctx.fillStyle = fire ? fire[Math.min(3, Math.floor(age * 4))] : "#fff6d8";
+      ctx.beginPath(); ctx.arc(q.x, q.y, r, 0, TAU); ctx.fill();
+      if (T?.key === "smash" && !A11Y.calm) {
+        const j = ((p.t * 7) % 13) / 13;                            // ember, deterministic per sample
+        ctx.globalAlpha *= 0.6;
+        ctx.beginPath(); ctx.arc(q.x + (j - 0.5) * 30 * age, q.y - age * 26 * (0.5 + j), 2, 0, TAU); ctx.fill();
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // the ceremony between points, drawn over the court for POINT_BREAK_MS:
+  // the patient's point pops in big under a slowly turning sunburst with the
+  // scoreline beneath; the star's point is a soft lavender card that dims
+  // the court a little and promises the next serve. Both fade out at the
+  // end. Nothing here says "miss" or "lost".
+  _drawPointBreak(ctx, c, now) {
+    const pb = this.pointBreak;
+    if (!pb) return;
+    const t = (now - pb.at) / POINT_BREAK_MS;
+    const k = Math.min(1, t / 0.15);
+    const pop = 0.6 + 0.4 * (1 - Math.pow(1 - k, 3)) + (k < 1 && !A11Y.calm ? 0.15 * Math.sin(k * Math.PI) : 0);
+    const alpha = t > 0.75 ? Math.max(0, (1 - t) / 0.25) : 1;
+    const cx = c.width / 2, cy = c.height * 0.42;
+    const us = this.score.us, them = this.score.ai;
+    const won = pb.who === "us";
+    const scored = this.hasAI || this.isDuo;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    if (!won) {
+      ctx.fillStyle = "rgba(20,16,40,0.28)"; ctx.fillRect(0, 0, c.width, c.height);
+    } else {
+      // sunburst: twelve soft rays turning slowly behind the word
+      ctx.save();
+      ctx.translate(cx, cy); ctx.rotate(A11Y.calm ? 0 : now / 4000);
+      const Rr = c.height * 0.55;
+      for (let i = 0; i < 12; i++) {
+        ctx.fillStyle = pb.trick ? "rgba(255,255,255,0.09)" : "rgba(255,217,138,0.11)";
+        ctx.beginPath(); ctx.moveTo(0, 0);
+        ctx.arc(0, 0, Rr, i * TAU / 12, i * TAU / 12 + TAU / 24); ctx.closePath(); ctx.fill();
+      }
+      ctx.restore();
+    }
+    ctx.translate(cx, cy); ctx.scale(pop, pop);
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.shadowColor = "rgba(20,16,40,0.85)"; ctx.shadowBlur = 16;
+    const big = Math.round(c.height * (won ? 0.11 : 0.075));
+    ctx.font = `800 ${big}px Nunito, sans-serif`;
+    ctx.fillStyle = won ? (pb.trick ? pb.trick.cols[1] : "#ffd98a") : "#c9c9d3";
+    const p2 = this.opts.p2Name || "player two";
+    ctx.fillText(won ? (pb.trick ? pb.trick.word : "POINT!") : this.isDuo ? `${p2}'s point` : scored ? "The star's point" : "Ball away", 0, -big * 0.35);
+    if (scored) {
+      ctx.font = `800 ${Math.round(c.height * 0.075)}px Nunito, sans-serif`;
+      ctx.fillStyle = "#fff6d8";
+      ctx.fillText(`${us}  –  ${them}`, 0, big * 0.55);
+      ctx.font = `700 ${Math.round(c.height * 0.022)}px Nunito, sans-serif`;
+      ctx.fillStyle = "rgba(244,236,221,0.8)";
+      ctx.fillText(`you          ${this.isDuo ? p2 : "the star"}`, 0, big * 0.55 + c.height * 0.055);
+      const note = this.trickReady(now) ? "the smash is ready: hit the next ball"
+        : "next serve coming";
+      ctx.fillText(note, 0, big * 0.55 + c.height * 0.095);
+    } else {
+      ctx.font = `700 ${Math.round(c.height * 0.024)}px Nunito, sans-serif`;
+      ctx.fillStyle = "rgba(244,236,221,0.8)";
+      ctx.fillText("next serve coming", 0, big * 0.5);
+    }
+    ctx.restore();
+  }
+
+  // the final board, held while the match is over: GAME!, the scoreline,
+  // and the outcome in a sentence, before the round ends on it
+  _drawGameOver(ctx, c, now) {
+    if (!this.matchOver) return;
+    const t = (now - this.matchOver) / 600;
+    const pop = 0.7 + 0.3 * Math.min(1, t);
+    const us = this.score.us, them = this.score.ai, won = us > them, draw = us === them;
+    const scored = this.hasAI || this.isDuo;
+    ctx.save();
+    ctx.fillStyle = "rgba(20,16,40,0.35)"; ctx.fillRect(0, 0, c.width, c.height);
+    ctx.translate(c.width / 2, c.height * 0.42); ctx.scale(pop, pop);
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.shadowColor = "rgba(20,16,40,0.85)"; ctx.shadowBlur = 16;
+    const big = Math.round(c.height * 0.12);
+    ctx.font = `800 ${big}px Nunito, sans-serif`;
+    ctx.fillStyle = won ? (this._finalTrick ? this._finalTrick.cols[1] : "#ffd98a") : "#c9c9d3";
+    ctx.fillText(this._finalTrick ? `${this._finalTrick.word} GAME!` : scored ? "GAME!" : "TIME!", 0, -big * 0.4);
+    ctx.font = `800 ${Math.round(c.height * 0.08)}px Nunito, sans-serif`;
+    ctx.fillStyle = "#fff6d8";
+    ctx.fillText(scored ? `${us}  –  ${them}` : `best rally ${this.bestRally}`, 0, big * 0.5);
+    ctx.font = `700 ${Math.round(c.height * 0.026)}px Nunito, sans-serif`;
+    ctx.fillStyle = "rgba(244,236,221,0.85)";
+    ctx.fillText(!scored ? "lovely rallies" : won ? "you won it!" : draw ? "a draw, well played" : "great rallies, next time it is yours", 0, big * 0.5 + c.height * 0.07);
+    // the summary: style, the longest rally, the titles
+    const T = this.titles || this._titles();
+    const p2 = this.isDuo ? (this.opts.p2Name || "player two") : "the star";
+    const two = this.isDuo || this.mode === "companion" || this.mode === "team-keys";
+    const lines = [
+      two ? `style  you ${this.pl.us.style} · ${p2} ${this.pl.them.style}` : `style ${this.pl.us.style}`,
+      `longest rally ${this.bestRally}` + (this.pl.us.orbs ? ` · ${this.pl.us.orbs} orb${this.pl.us.orbs === 1 ? "" : "s"}` : ""),
+    ];
+    if (T.us.length) lines.push(`🏅 you: ${T.us.join(" · ")}`);
+    if (two && T.them.length) lines.push(`🏅 ${p2}: ${T.them.join(" · ")}`);
+    if (this.challenge) lines.push(this.challengeWon ? `challenge done by ${this.challengeWon === "us" ? "you" : p2}` : `challenge not taken: ${this.challenge.text.toLowerCase()}`);
+    ctx.font = `700 ${Math.round(c.height * 0.024)}px Nunito, sans-serif`;
+    ctx.fillStyle = "rgba(244,236,221,0.8)";
+    lines.forEach((l, i) => ctx.fillText(l, 0, big * 0.5 + c.height * (0.12 + i * 0.038)));
+    ctx.restore();
   }
 }
 
@@ -3304,6 +4322,1594 @@ export class ConnectDots extends GameBase {
   }
 }
 
+/* ==================== Lantern (candles): the Lamplighter of Lumen ==================== */
+// Oct 2026, by request: rebuilt from mockups/lantern-game (1).zip, the
+// "Lamplighter of Lumen" (Mira the lamplighter, Pip the owl, the Night
+// Moth). The loop is the mockup's: hold the hand on the BASKET to take a
+// candle, a LANTERN appears in the workspace (hidden until the candle is
+// taken, so the first move out is a reaction), carry the flame to it (the
+// candle burns down while it moves and stops burning while it is held
+// inside the lantern), light it, and come back to the basket for the next
+// candle. The basket moves left / centre / right between candles (a
+// balanced shuffle, so the return is a different reach each time) while the
+// lanterns stay where they are.
+//
+// Twenty-three levels in six stages (LUMEN_LEVELS / LUMEN_STAGES, the
+// mockup's ladder verbatim): Reach (touch to light; more positions, smaller
+// lanterns), Reach and Hold (hold inside until the ring fills), Colour Match
+// (a decoy lantern; the candle's colour and glyph say which one), Number
+// Trail (light in order; every finished trail reveals a constellation for
+// the Star Atlas; level 16 alternates 1 A 2 B), the Night Moth (a no-go
+// circle on the path with a dotted way round) and Moving Lights (the
+// lantern glides along a track; from level 22 the basket drifts too). One
+// level is one STRIVE round (LUMEN_ROUND_S of play); it moves up at
+// LUMEN_UP lit with at least LUMEN_MIN candles and down below LUMEN_DOWN,
+// banked as `candlesLevel`. Pip climbs a pole beside the stage towards a
+// flag as the score grows (the mockup's target score: what a solid run
+// would score under the same rules, later the patient's own best on that
+// level plus 5%, kept per level in the `candlesLumen` progress bag with the
+// Star Atlas); reaching the flag ends the level early with a celebration. A
+// slow candle lets him slip a little, never all the way home: the mockup
+// ends the level when he slides home, and that is a punishment for being
+// slow, which this population does not need.
+//
+// STAGE TWO IS BIMANUAL (Oct 2026, by request): the candle comes out of the
+// basket UNLIT. The trained hand carries it to the lantern and KEEPS it
+// there; then the other hand reaches to the FIRE (a brazier on its own
+// side, where the keeping hand's stand would be), takes the flame, brings
+// it to the lantern, and with both hands held there the ring fills and the
+// lantern lights. Reach and hold, with both hands: the candle hand holds a
+// position while the flame hand reaches, then both hold together. The
+// drawer's keeping-hand modes do not apply in this stage (both hands are
+// busy), and the basket stays in the centre. `c.step` records the trial's
+// progress: candle (to the lantern) → fire (the other hand to the brazier)
+// → bring (the flame to the lantern); `tFire` is when the flame was taken.
+//
+// What stays STRIVE's: the ROM DISC (Oct 2026): a point is a fraction of
+// the measured reach in its direction about the body centre, drawn as a
+// circle filling the middle of the screen (`_geo`/`_px`, CANDLE_DISC_FILL),
+// so a patient's full reach always covers the whole circle whatever its
+// shape and however far from the camera they sit. The basket's home row is
+// low on the disc (LUMEN_BASKET_Y) and every lantern position sits on the
+// ray from that home at its angle (15°..165°, the mockup's arc) where it
+// crosses the circle at the level's reach share (never past
+// CANDLE_REACH_MAX), so a lantern is at exactly that share of THIS
+// patient's reach in its own direction. No HUD numbers (project rule):
+// Pip's pole and flag carry no figures, praise is words, and the score,
+// combo and target are computed and logged for the therapist. The staff
+// modes (`together` / `hold`) keep a second candle-stand for the keeping
+// hand: the flame gutters when it drifts (CANDLE_HOLD_GRACE), lapses and
+// `holdFrac` are logged; the basket stays put in those modes. A burnt-out
+// or moth-blown candle is `miss()` (soft words; the DDA hears about it,
+// and the DDA's `lifetime` sets how long a candle burns); a lit lantern
+// is a hit with its reach fraction. Lighting is a dwell or a hold, never a
+// squeeze: nothing is asked of the hand.
+const CANDLE_REACH_MAX = 0.8;        // no lantern past this fraction of the measured reach, at any level
+const CANDLE_BOX_R = 0.2;            // disc: capture radius at the keeping hand's stand (a rest point, so generous)
+const CANDLE_DISC_FILL = 0.92;       // the disc's diameter as a fraction of the shorter screen side
+const CANDLE_HAND_SMOOTH = 0.45;     // EMA weight of the newest hand sample in disc space
+const CANDLE_HOLD_GRACE = 700;       // ms the keeping hand may drift off its stand before the flame gutters
+const CANDLE_PROMPT_MS = 4200;
+// The ladder, from the mockup: n = fixed lantern positions on the arc, size
+// = lantern size (of LUMEN_LANTERN_R), hold = seconds inside to light, mode
+// = colour | trail | trailAB, moth = the Night Moth on the path, move =
+// target | both (lantern on a track; both = the basket drifts too), speed =
+// back-and-forth cycles per second. `reach` eases the first two levels in.
+const LUMEN_LEVELS = [
+  { n: 3, size: 1.00, hold: 0, reach: 0.7 },
+  { n: 5, size: 1.00, hold: 0, reach: 0.75 },
+  { n: 5, size: 0.80, hold: 0 },
+  { n: 7, size: 0.80, hold: 0 },
+  { n: 7, size: 0.65, hold: 0 },
+  { n: 3, size: 1.00, hold: 1.0 },
+  { n: 5, size: 0.80, hold: 1.0 },
+  { n: 7, size: 0.80, hold: 1.5 },
+  { n: 7, size: 0.65, hold: 2.0 },
+  { n: 9, size: 0.55, hold: 2.0 },
+  { n: 5, size: 0.90, hold: 0, mode: "color" },
+  { n: 7, size: 0.80, hold: 0, mode: "color" },
+  { n: 7, size: 0.80, hold: 1.0, mode: "color" },
+  { n: 5, size: 0.90, hold: 0, mode: "trail" },
+  { n: 7, size: 0.80, hold: 0, mode: "trail" },
+  { n: 8, size: 0.80, hold: 0, mode: "trailAB" },
+  { n: 5, size: 0.90, hold: 0, moth: true },
+  { n: 7, size: 0.80, hold: 1.0, moth: true },
+  { n: 7, size: 0.80, hold: 0, moth: true, mode: "color" },
+  { n: 5, size: 0.95, hold: 1.5, move: "target", speed: 0.18 },
+  { n: 5, size: 0.85, hold: 2.0, move: "target", speed: 0.28 },
+  { n: 5, size: 0.90, hold: 1.5, move: "both", speed: 0.2 },
+  { n: 7, size: 0.80, hold: 2.0, move: "both", speed: 0.3 },
+];
+export const CANDLE_MAX = LUMEN_LEVELS.length;
+export const LUMEN_STAGES = [
+  { name: "Reach", from: 1, to: 5, skill: null, owl: "Hold your hand on the basket to take a candle." },
+  { name: "Reach and hold, both hands", from: 6, to: 10, skill: "Something new: two hands. Carry the candle to the lantern and keep it there. Then reach to the fire with your other hand, bring the flame to the lantern, and hold both there until the ring fills.", owl: "Candle in one hand, flame in the other: hold both at the lantern." },
+  { name: "Colour match", from: 11, to: 13, skill: "Something new: two lanterns. Your candle's colour and its little sign say which one to light.", owl: "Match your candle's colour." },
+  { name: "Number trail", from: 14, to: 16, skill: "Something new: the lanterns are numbered. Light them in order, and a picture appears in the sky.", owl: "Light them in order: one, two, three." },
+  { name: "The Night Moth", from: 17, to: 19, skill: "Something new: a moth waits on the way. Go round its red circle, along the dotted path.", owl: "Watch out for the Night Moth." },
+  { name: "Moving lights", from: 20, to: 23, skill: "Something new: the lantern glides along its track. Follow it, and keep the flame inside.", owl: "Follow the moving lantern." },
+];
+const lumenStageOf = L => LUMEN_STAGES.findIndex(s => L >= s.from && L <= s.to);
+const lumenModeOf = L => LUMEN_LEVELS[L - 1].mode || "reach";
+const lumenIsChoice = L => lumenModeOf(L) !== "reach";
+const lumenIsTrail = L => lumenModeOf(L).startsWith("trail");
+// the story: one chapter per stretch of the ladder, its scene lighting up
+// as the level's lanterns are lit (LUMEN_GOAL wakes it fully)
+const LUMEN_STORY = [
+  { key: "village", title: "The darkened village", owl: "Hoo! Light the village.",
+    intro: "Long ago the Night Moth swept through the valley and put out every flame. Your grandmother left you a basket of candles that never runs empty.",
+    more: "The far streets of Lumen are still asleep. They need their lanterns too.",
+    win: "Windows glow, doors open, and people step out into the warm light. The lamplighter has returned!",
+    part: "A few houses wake and peek outside. A good start, and the rest will follow." },
+  { key: "river", title: "The river crossing", owl: "Light the bridge so travellers can cross.",
+    intro: "Beyond the village the old bridge lies in darkness. Pip ruffles his feathers and points the way.",
+    more: "More travellers are waiting at the riverbank. Light their way across.",
+    win: "Lantern by lantern the bridge shimmers on the water, and the ferryman waves his hat.",
+    part: "Part of the bridge glows on the water. Travellers can find their way, step by step." },
+  { key: "forest", title: "The whispering forest", owl: "Golden lanterns hide star fragments.",
+    intro: "The forest path is so dark that even the fireflies are hiding. Every lantern wakes a few of them.",
+    more: "The deep forest is darker still. These old lanterns only catch when you hold the flame steady.",
+    win: "The forest fills with dancing fireflies. They swirl around you and lead you to the mountain.",
+    part: "A small swarm of fireflies wakes and follows you, lighting the path ahead." },
+  { key: "tower", title: "The mountain beacon", owl: "Up we go. The beacon is waiting.",
+    intro: "At the top of the mountain stands the great beacon. Each lantern on the path fills it a little more.",
+    more: "The beacon is nearly full. A few more lanterns on the high path will set it ablaze.",
+    win: "With a roar of golden light the beacon blazes, and the Night Moth flees beyond the hills.",
+    part: "The beacon flickers awake and glows softly. The Night Moth has not won." },
+  { key: "festival", title: "The festival of lights", owl: "Make the sky sparkle.",
+    intro: "The darkness is broken. Tonight the valley gathers for the festival of lights, and the lamplighter sends the first lanterns into the sky.",
+    more: "The grand finale. The festival wants the sky full of lanterns.",
+    win: "The sky fills with lanterns and the whole valley cheers your name.",
+    part: "Lanterns rise over the valley and the festival music begins." },
+];
+const lumenSceneOf = L => Math.min(LUMEN_STORY.length - 1, Math.floor((L - 1) * LUMEN_STORY.length / CANDLE_MAX));
+// colour match: each colour also has a sign, for colour-blind players
+const LUMEN_COLORS = [
+  { name: "red", hex: "#ff5f5f", glyph: "♥" },
+  { name: "blue", hex: "#4da6ff", glyph: "◆" },
+  { name: "green", hex: "#4fdc7f", glyph: "▲" },
+  { name: "purple", hex: "#c084ff", glyph: "★" },
+];
+// number trail: every finished trail uncovers one hidden constellation
+// (points in a 0..1 box, lines join point indices)
+const LUMEN_CONSTELLATIONS = [
+  { name: "The Owl", lore: "That is my great-great-grandmother. She watched over Lumen.",
+    pts: [[.25, 0], [.75, 0], [.15, .3], [.85, .3], [.38, .33], [.62, .33], [.25, .85], [.75, .85], [.5, .58]],
+    lines: [[0, 2], [1, 3], [0, 4], [1, 5], [4, 5], [2, 6], [3, 7], [6, 7], [4, 8], [5, 8]] },
+  { name: "The Whale", lore: "The sky whale swims across the night and brings the rain.",
+    pts: [[0, .5], [.15, .3], [.45, .2], [.75, .3], [.88, .5], [.75, .7], [.4, .76], [.98, .22], [1, .7], [.22, .44]],
+    lines: [[0, 1], [1, 2], [2, 3], [3, 4], [4, 5], [5, 6], [6, 0], [4, 7], [4, 8]] },
+  { name: "The Fox", lore: "The star fox knows every secret path through the forest.",
+    pts: [[.1, 0], [.3, .38], [.5, .16], [.7, .38], [.9, 0], [.5, .72], [.62, 1], [.98, .86]],
+    lines: [[0, 2], [2, 4], [0, 1], [4, 3], [1, 5], [3, 5], [5, 6], [6, 7]] },
+  { name: "The Deer", lore: "The sky deer leaps over the mountains every winter.",
+    pts: [[.33, 0], [.22, .16], [.4, .22], [.67, 0], [.78, .16], [.6, .22], [.5, .42], [.5, .62], [.2, .66], [.8, .66], [.24, 1], [.76, 1]],
+    lines: [[0, 1], [1, 2], [2, 6], [3, 4], [4, 5], [5, 6], [6, 7], [7, 8], [7, 9], [8, 10], [9, 11]] },
+  { name: "The Butterfly", lore: "Not every moth is a Night Moth. This one is a friend.",
+    pts: [[.5, .2], [.5, .82], [.1, 0], [0, .42], [.5, .46], [.9, 0], [1, .42], [.15, .96], [.85, .96]],
+    lines: [[0, 2], [2, 3], [3, 4], [4, 0], [0, 5], [5, 6], [6, 4], [4, 7], [7, 1], [4, 8], [8, 1], [0, 1]] },
+  { name: "The Swan", lore: "The swan glides on the river of stars.",
+    pts: [[.15, .1], [.25, 0], [.3, .2], [.3, .5], [.1, .7], [.5, .9], [.9, .75], [.75, .55], [.45, .6]],
+    lines: [[0, 1], [1, 2], [2, 3], [3, 4], [4, 5], [5, 6], [6, 7], [7, 8], [8, 3]] },
+  { name: "The Fish", lore: "The ferryman says the star fish brings good luck.",
+    pts: [[0, .5], [.25, .2], [.6, .25], [.76, .5], [.6, .75], [.25, .8], [1, .2], [1, .8], [.16, .45]],
+    lines: [[0, 1], [1, 2], [2, 3], [3, 4], [4, 5], [5, 0], [3, 6], [6, 7], [7, 3]] },
+  { name: "The Great Lantern", lore: "The very first lantern ever lit. You found it.",
+    pts: [[.5, 0], [.3, .16], [.7, .16], [.2, .5], [.8, .5], [.3, .85], [.7, .85], [.5, 1]],
+    lines: [[0, 1], [0, 2], [1, 3], [2, 4], [3, 5], [4, 6], [5, 7], [6, 7], [1, 2], [5, 6]] },
+];
+const LUMEN_PRAISE = ["Lovely reach!", "Hoo-ray!", "Nice and smooth!", "Bright work!", "Wonderful!", "Keep it glowing!"];
+const LUMEN_ROUND_S = 90;            // play time per level (the story, the level line and 3-2-1 come before it)
+const LUMEN_GOAL = 10;               // lanterns that wake the chapter's scene fully
+const LUMEN_UP = 0.8, LUMEN_DOWN = 0.5, LUMEN_MIN = 5;   // level up / down rule, min candles
+const LUMEN_BASKET_Y = -0.62;        // disc: the basket's home row
+const LUMEN_BASKET_SIDE = 0.22;      // disc: the left / right basket spots (near enough the low lanterns to be clear of them)
+const LUMEN_MOVE_PEAK = 2.2;         // a moving lantern's peak speed, disc units/s, is this over the DDA's lifetime (clamped below)
+const LUMEN_BASKET_R = 0.17;         // disc: hover radius at the basket
+const LUMEN_LANTERN_R = 0.16;        // disc: lantern capture radius at size 1 (× A11Y.radiusScale)
+const LUMEN_STAND = { x: 0.62, y: -0.55 };   // disc: the keeping hand's candle-stand, on its own side
+const LUMEN_HOLD_GRACE = 400;        // ms out of the lantern a hold survives (tremor)
+const LUMEN_SLOW_S = 10;             // a candle taking longer than this lets Pip slip
+const LUMEN_GOLDEN = 0.15;           // share of plain-reach lanterns that are golden (a chime and a star fragment)
+const LUMEN_MOVE_AMP = 45;           // degrees either side of a moving lantern's base angle
+const LUMEN_DRIFT = 0.28;            // disc: the basket's drift either side of centre (levels 22 and 23)
+const LUMEN_INTRO_S = 5.2, LUMEN_COUNT_S = 3;
+
+const lumenSeed = i => { const v = Math.sin(i * 12.9898) * 43758.5453; return v - Math.floor(v); };
+const lumenRand = (a, b) => a + Math.random() * (b - a);
+const lumenRi = (a, b) => a + Math.floor(Math.random() * (b - a + 1));
+const lumenShuffle = a => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+const lumenHexA = (h, a) => `rgba(${parseInt(h.substr(1, 2), 16)},${parseInt(h.substr(3, 2), 16)},${parseInt(h.substr(5, 2), 16)},${a})`;
+const lumenMix = (a, b, t) => {
+  const pa = [1, 3, 5].map(i => parseInt(a.substr(i, 2), 16)), pb = [1, 3, 5].map(i => parseInt(b.substr(i, 2), 16));
+  return "rgb(" + pa.map((v, i) => Math.round(v + (pb[i] - v) * t)).join(",") + ")";
+};
+const lumenDist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+// the scoring rule, one place (the mockup's `scoreParts`): per lantern =
+// (100 + speed bonus 0..100 + steady hold 50 + challenge 50/50) × combo
+// (1 + 0.25 per lantern in a row, max ×3) × level (1 + 0.1 per level)
+// × golden ×2 × wrong-lantern-first ×0.4
+function lumenScore({ speedFrac, holdSteady, choice, moth, combo, level, golden, clean }) {
+  const base = 100, speed = Math.round(100 * speedFrac), hold = holdSteady ? 50 : 0, chal = (choice ? 50 : 0) + (moth ? 50 : 0);
+  const raw = base + speed + hold + chal;
+  const m1 = 1 + 0.25 * Math.min(combo, 8), m2 = 1 + 0.1 * (level - 1), g = golden ? 2 : 1, cl = clean ? 1 : 0.4;
+  return { total: Math.round(raw * m1 * m2 * g * cl), speed, m1, m2 };
+}
+
+export class Candles extends GameBase {
+  id = "candles";
+  setup() {
+    this.mode = ["solo", "together", "hold"].includes(this.opts.mode) ? this.opts.mode : "solo";
+    const other = this.side === "right" ? "left" : "right";
+    this.lightSide = this.mode === "hold" ? other : this.side;
+    this.holdSide = this.mode === "solo" ? null : this.mode === "hold" ? this.side : other;
+    this.level = Math.max(1, Math.min(CANDLE_MAX, this.opts.level || 1));
+    this.lv = LUMEN_LEVELS[this.level - 1];
+    this.stage = lumenStageOf(this.level);
+    this.chap = lumenSceneOf(this.level);
+    const pr = this.opts.lumen || {};
+    this.prog = { best: { ...(pr.best || {}) }, atlas: [...(pr.atlas || [])], atlasNext: pr.atlasNext || 0, stars: { ...(pr.stars || {}) } };
+    // how long a candle burns: from the DDA's lifetime, generous
+    this.burnMax = Math.max(8, this.params.lifetime * 3);
+    this.tips = {
+      objective: "Hold your hand on the basket to take a candle.",
+      miss: "No rush. Take another candle when you are ready.",
+    };
+    this.score = 0; this.combo = 0; this.bestCombo = 0; this.lit = 0; this.fail = 0; this.clean = 0; this.frags = 0; this.mothHits = 0;
+    this.trials = []; this.cur = null; this.trialN = 0; this.prevTrial = null; this.returnStart = null;
+    this.targets = []; this.seq = []; this.lastIdx = -1; this.target = null; this.moth = null; this.trail = null;
+    this.homeSeq = []; this.home = 0; this.bph = 0;
+    this.basket = { x: 0, y: LUMEN_BASKET_Y, hx: 0 };   // disc; hx = where it is heading
+    this.stand = this.holdSide ? { x: (this.holdSide === "right" ? 1 : -1) * LUMEN_STAND.x, y: LUMEN_STAND.y } : null;
+    // stage two: both hands (see the header). The fire sits on the other
+    // hand's side; the keeping-hand modes stand down.
+    this.bimanual = this.stage === 1;
+    this.otherSide = other;
+    if (this.bimanual) {
+      this.holdSide = null; this.stand = null; this.lightSide = this.side;
+      this.fire = { x: (other === "right" ? 1 : -1) * LUMEN_STAND.x, y: LUMEN_STAND.y };
+    } else this.fire = null;
+    this.matchLit = false;
+    this.sky = []; this.texts = []; this.lightTrail = []; this.smoke = [];
+    this.owl = { msg: "", life: 0, hop: 0, pos: 0 };
+    this.targetScore = this._targetScoreFor(this.level); this.targetHit = false;
+    this.slip = 0; this.slipping = false; this.slipWarned = false; this.cycleStart = 0; this.hasClimbed = false;
+    this.endReason = "time"; this.endDelay = 0;
+    this.goalHit = false; this.constellations = 0; this.revealed = []; this.revealFx = null; this.trailFx = null; this.popT = 0; this.lastShown = 0;
+    this.held = false; this.lostSince = null; this.holdMs = 0; this.activeMs = 0; this.holdLapses = 0;
+    this.burn = 0; this.holdT = 0; this.inside = false; this.outSince = null; this.insideWrong = false;
+    this._sm = {}; this._lastH = null; this.clock = 0; this.playT = 0; this.cd = null; this.nearlySaid = false;
+    this.stars = [];
+    for (let i = 0; i < 140; i++) this.stars.push({ x: lumenSeed(i + 1), y: lumenSeed(i + 300) * 0.7, r: 0.3 + lumenSeed(i + 600) * 1.4, p: lumenSeed(i + 900) * TAU });
+    this._buildTargets();
+    this._setHome(this._nextHome(), true);
+    this._spawnTarget();
+    // before play: the story (round 1), the level's own line, then 3-2-1
+    const storyMs = this.tellStory(STORIES.candles);
+    this.introAt = storyMs / 1000;
+    this.playAt = this.introAt + LUMEN_INTRO_S + LUMEN_COUNT_S;
+    this.roundSeconds = this.playAt + LUMEN_ROUND_S;
+    this.phase = "story";          // story | intro | countdown | toBasket | carrying | over
+  }
+
+  // ---- the ROM disc ----
+  _geo() {
+    const c = this.canvas;
+    return { cx: c.width / 2, cy: c.height / 2, Rs: Math.min(c.width, c.height) * CANDLE_DISC_FILL / 2, U: Math.min(c.width, c.height) };
+  }
+  _px(d) { const g = this._geo(); return { x: g.cx + d.x * g.Rs, y: g.cy - d.y * g.Rs }; }
+  _disc(side) {
+    const h = this.t.palmRel(side) || this.t.handRel(side);
+    if (!h) { delete this._sm[side]; return null; }
+    const dx = h.x - CENTER.x, dy = h.y - CENTER.y;
+    const r = Math.hypot(dx, dy), th = Math.atan2(dy, dx);
+    const f = Math.min(1.25, r / Math.max(0.2, this.envAt(th)));
+    const raw = { x: Math.cos(th) * f, y: Math.sin(th) * f };
+    const s = this._sm[side];
+    if (!s) return (this._sm[side] = raw);
+    s.x += (raw.x - s.x) * CANDLE_HAND_SMOOTH; s.y += (raw.y - s.y) * CANDLE_HAND_SMOOTH;
+    return s;
+  }
+  _near(side, pos, radius) {
+    const d = this._disc(side);
+    return !!d && Math.hypot(d.x - pos.x, d.y - pos.y) < radius;
+  }
+  _lanternR() { return LUMEN_LANTERN_R * this.lv.size * (A11Y.radiusScale || 1); }
+  _reach() { return Math.min(CANDLE_REACH_MAX, this.lv.reach ?? CANDLE_REACH_MAX); }
+
+  // a lantern position: on the ray from the basket's home at angle a (0 =
+  // right, 90 = up, 180 = left) where it crosses the circle at the level's
+  // reach share (× rs for the moving track), never nearer the basket than a
+  // lantern and a half
+  _anglePos(a, rs = 1) {
+    const reach = Math.min(0.92, this._reach() * rs);
+    const H = { x: 0, y: LUMEN_BASKET_Y };
+    const u = { x: Math.cos(a * Math.PI / 180), y: Math.sin(a * Math.PI / 180) };
+    const hu = H.x * u.x + H.y * u.y, hh = H.x * H.x + H.y * H.y;
+    const disc = Math.max(0, hu * hu - hh + reach * reach);
+    let t = -hu + Math.sqrt(disc);
+    t = Math.max(t, LUMEN_BASKET_R + this._lanternR() * 1.8);
+    // and clear of every spot the basket can sit at (the low lanterns at
+    // the ends of the arc pass close to the side spots): pushed out along
+    // the ray, never past the rim
+    const minD = LUMEN_BASKET_R + this._lanternR() * 1.5;
+    const tMax = -hu + Math.sqrt(Math.max(0, hu * hu - hh + 0.92 * 0.92));
+    const spots = [-LUMEN_BASKET_SIDE, 0, LUMEN_BASKET_SIDE].map(x => ({ x, y: LUMEN_BASKET_Y }));
+    for (let k = 0; k < 40 && t < tMax; k++) {
+      const p = { x: H.x + u.x * t, y: H.y + u.y * t };
+      if (spots.every(s => lumenDist(p, s) >= minD)) break;
+      t = Math.min(tMax, t + 0.02);
+    }
+    return { x: H.x + u.x * t, y: H.y + u.y * t };
+  }
+  // a moving lantern's rate: the level's cycles per second, capped so its
+  // peak speed along the track suits THIS patient (quicker as the DDA's
+  // lifetime shortens). The mockup's speeds are for a mouse.
+  _moveSpeed(base) {
+    const [lo, hi] = this._moveRange(base);
+    const H = { x: 0, y: LUMEN_BASKET_Y };
+    // the track's farthest point from the basket's home is where it moves fastest
+    const dist = Math.max(...[lo, (lo + hi) / 2, hi].map(a => lumenDist(H, this._anglePos(a))));
+    const peakAllowed = Math.max(0.4, Math.min(1.4, LUMEN_MOVE_PEAK / Math.max(1, this.params.lifetime)));
+    // peak linear speed at 1 cycle/s: the sweep, plus the in-and-out at twice the rate
+    const perCycle = dist * (hi - lo) / 2 * Math.PI / 180 * TAU + 0.18 * this._reach() * 2 * TAU;
+    return Math.min(this.lv.speed, peakAllowed / Math.max(0.1, perCycle));
+  }
+  _buildTargets() {
+    const n = this.lv.n;
+    this.targets = [];
+    for (let i = 0; i < n; i++) {
+      const a = n === 1 ? 90 : 15 + i * 150 / (n - 1);
+      const p = this._anglePos(a);
+      // visual-field policy: in comfort mode a position on the cut side is
+      // left out of the draw when enough remain (scan mode keeps them all)
+      const cut = A11Y.field === "left" ? p.x < -0.05 : A11Y.field === "right" ? p.x > 0.05 : false;
+      this.targets.push({ i, ang: Math.round(a * 10) / 10, x: p.x, y: p.y, cut });
+    }
+  }
+  _moveRange(base) {
+    let lo = base - LUMEN_MOVE_AMP, hi = base + LUMEN_MOVE_AMP;
+    if (lo < 10) { hi += 10 - lo; lo = 10; } if (hi > 170) { lo -= hi - 170; hi = 170; }
+    return [Math.max(10, lo), Math.min(170, hi)];
+  }
+  _trackPos(mv, ph) {
+    const [lo, hi] = this._moveRange(mv.base);
+    const a = (lo + hi) / 2 + (hi - lo) / 2 * Math.sin(ph);
+    return { a, ...this._anglePos(a, 1 + 0.18 * Math.sin(2 * ph)) };
+  }
+  _homeX(side) {
+    if (!side) return 0;
+    return side * LUMEN_BASKET_SIDE;
+  }
+  _nextHome() {
+    if (this.holdSide || this.bimanual || this.lv.move === "both") return 0;   // the keeping hand's stand (or the fire) needs the basket to stay put
+    if (!this.homeSeq.length) {
+      let a; do { a = lumenShuffle([-1, 0, 1]); } while (a[0] === this.home);
+      this.homeSeq = a;
+    }
+    return this.homeSeq.shift();
+  }
+  _setHome(side, instant) {
+    this.home = side; this.basket.hx = this._homeX(side);
+    if (instant) this.basket.x = this.basket.hx;
+  }
+  _nextIdx() {
+    if (!this.seq.length) {
+      let pool = this.targets.map(p => p.i);
+      if (A11Y.field !== "none" && A11Y.fieldMode === "comfort") {
+        const kept = this.targets.filter(p => !p.cut).map(p => p.i);
+        if (kept.length >= 2) pool = kept;
+      }
+      do { lumenShuffle(pool); } while (pool.length > 1 && pool[0] === this.lastIdx);
+      this.seq = pool;
+    }
+    return this.seq.shift();
+  }
+  _trailLabels(n, ab) {
+    const out = [];
+    for (let k = 0; k < n; k++) out.push(ab ? (k % 2 === 0 ? "" + (k / 2 + 1) : "ABCDEFGH"[(k - 1) / 2]) : "" + (k + 1));
+    return out;
+  }
+  _newTrail() {
+    const n = this.targets.length, seqL = this._trailLabels(n, lumenModeOf(this.level) === "trailAB");
+    const order = lumenShuffle([...Array(n).keys()]);
+    const labels = new Array(n);
+    order.forEach((pos, k) => { labels[pos] = seqL[k]; });
+    this.trail = { labels, order, k: 0, lit: [], fig: this.prog.atlasNext % LUMEN_CONSTELLATIONS.length };
+  }
+  _spawnTarget() {
+    const mode = lumenModeOf(this.level);
+    let i;
+    if (lumenIsTrail(this.level)) {
+      if (!this.trail || this.trail.k >= this.trail.order.length) this._newTrail();
+      i = this.trail.order[this.trail.k];
+    } else i = this._nextIdx();
+    this.lastIdx = i;
+    const p = this.targets[i];
+    this.target = { i, ang: p.ang, x: p.x, y: p.y, r: this._lanternR(),
+                    golden: mode === "reach" && !this.lv.moth && !this.lv.move && Math.random() < LUMEN_GOLDEN,
+                    born: this.clock, match: null, decoys: [], reachFrac: Math.hypot(p.x, p.y) };
+    if (mode === "color" && this.targets.length > 1) {
+      const ci = lumenRi(0, LUMEN_COLORS.length - 1);
+      let di; do { di = lumenRi(0, LUMEN_COLORS.length - 1); } while (di === ci);
+      let j; do { j = lumenRi(0, this.targets.length - 1); } while (j === i);
+      const c = LUMEN_COLORS[ci], d = LUMEN_COLORS[di], q = this.targets[j];
+      this.target.match = { cue: c.glyph, cueName: c.name, tint: c.hex, label: c.glyph, key: c.name };
+      this.target.decoys = [{ i: j, ang: q.ang, x: q.x, y: q.y, label: d.glyph, tint: d.hex, key: d.name, shake: 0 }];
+    } else if (lumenIsTrail(this.level)) {
+      const lab = this.trail.labels;
+      this.target.match = { cue: lab[i], cueName: lab[i], tint: null, label: lab[i], key: lab[i] };
+      this.target.decoys = this.targets.filter(q => q.i !== i && !this.trail.lit.includes(q.i))
+        .map(q => ({ i: q.i, ang: q.ang, x: q.x, y: q.y, label: lab[q.i], tint: null, key: lab[q.i], shake: 0 }));
+    }
+    this.moth = this.lv.moth ? this._placeMoth(this.target) : null;
+    if (this.lv.move) this.target.move = { base: p.ang, ph: lumenRand(0, TAU), speed: this._moveSpeed(p.ang) };
+  }
+  // the Night Moth: on the straight way from the basket's coming home to the
+  // lantern, a little off the line, touching neither
+  _placeMoth(tg) {
+    const r = Math.max(tg.r * 0.85, 0.1);
+    const b = { x: this.basket.hx, y: LUMEN_BASKET_Y };
+    const dx = tg.x - b.x, dy = tg.y - b.y, L = Math.hypot(dx, dy) || 1;
+    for (let k = 0; k < 20; k++) {
+      const t = lumenRand(0.38, 0.62), off = lumenRand(-0.25, 0.25) * tg.r;
+      const x = b.x + dx * t - dy / L * off, y = b.y + dy * t + dx / L * off;
+      if (Math.hypot(x - tg.x, y - tg.y) > tg.r + r + 0.03 && Math.hypot(x - b.x, y - b.y) > LUMEN_BASKET_R + r + 0.03)
+        return { x0: x, y0: y, x, y, r, ph: lumenRand(0, TAU), flee: 0 };
+    }
+    return null;   // the reach is too short for a moth to fit safely
+  }
+
+  // ---- the target score and Pip's climb ----
+  _expectedLanterns(L) {
+    const lv = LUMEN_LEVELS[L - 1];
+    const cycle = A11Y.dwellMs / 1000 + 5 + lv.hold + (lumenIsChoice(L) ? 1 : 0) + (lv.moth ? 0.8 : 0) + (lv.move ? 1 : 0);
+    return Math.max(3, Math.floor(0.8 * LUMEN_ROUND_S / cycle));
+  }
+  _expectedScore(L) {
+    const lv = LUMEN_LEVELS[L - 1], n = this._expectedLanterns(L);
+    let sum = 0;
+    for (let k = 0; k < n; k++) sum += lumenScore({ speedFrac: 0.5, holdSteady: lv.hold > 0, choice: lumenIsChoice(L), moth: !!lv.moth, combo: k, level: L, golden: false, clean: true }).total;
+    if (lumenIsTrail(L)) sum += Math.floor(n / lv.n) * Math.round(300 * (1 + 0.1 * (L - 1)));
+    return sum;
+  }
+  _targetScoreFor(L) {
+    const best = this.prog.best[L];
+    return Math.max(50, Math.round((best ? best * 1.05 : this._expectedScore(L)) / 50) * 50);
+  }
+  _climb() { return Math.max(0, this.score - this.slip); }
+
+  // ---- words ----
+  _say(main, sub, spoken) {
+    this._prompt(main, sub);
+    clearTimeout(this._promptTimer);
+    this._promptTimer = setTimeout(() => { if (this.active) this._prompt(""); }, CANDLE_PROMPT_MS);
+    if (spoken !== false) this._speak(spoken || main);
+  }
+  // Pip's bubble: short, hooted, never spoken (the therapist voice is `say`)
+  _pip(msg, life = 2.6) {
+    this.owl.msg = msg; this.owl.life = life; this.owl.hop = 0.9;
+    audio.lumen("hoot");
+  }
+  _text(d, s, col, size) { const p = this._px(d); this.texts.push({ x: p.x, y: p.y, s, col, size, life: 1.2 }); }
+  _textPx(x, y, s, col, size) { this.texts.push({ x, y, s, col, size, life: 1.2 }); }
+  _askBasket() {
+    if (this.holdSide && !this.held) {
+      this._say(`Keep the candle on its stand with your ${this.holdSide} hand`, "Hold it there, and keep it there");
+      return;
+    }
+    const hand = this.holdSide ? `your ${this.lightSide} hand` : "your hand";
+    this.tips.objective = "Hold your hand on the basket to take a candle.";
+    if (this.trialN === 0) this._say("Take a candle from the basket", `Hold ${hand} on the basket`);
+    else this._prompt("Back to the basket", "for the next candle");
+  }
+  _sayLevel() {
+    const st = LUMEN_STAGES[this.stage], sc = LUMEN_STORY[this.chap];
+    const firstOfScene = this.level === 1 || lumenSceneOf(this.level - 1) !== this.chap;
+    const newSkill = st.skill && this.level === st.from ? st.skill : null;
+    const line = newSkill || (firstOfScene ? sc.intro : sc.more);
+    this._prompt(`${sc.title}`, `${st.name}. ${line}`);
+    this._speak(`${st.name}. ${line}`);
+  }
+
+  // ---- the candle's life ----
+  _pickup(now) {
+    this.phase = "carrying";
+    this.burn = this.burnMax; this.holdT = 0; this.inside = false; this.outSince = null; this.insideWrong = false;
+    this.trialN++;
+    const tg = this.target, lv = this.lv;
+    this.cur = { trial: this.trialN, level: this.level, angle: tg.ang, golden: tg.golden,
+      reachFrac: Math.round(tg.reachFrac * 100) / 100, targetR: Math.round(tg.r * 100) / 100, holdReq: lv.hold,
+      basket: ["left", "centre", "right"][(this.home || 0) + 1],
+      tPickup: this.playT, tLeave: null, leave: null, tEnter: null, lastEnter: null, path: 0, eff: null, peak: 0,
+      holdBreaks: 0, outcome: "", mt: null, rt: null, returnTime: null, points: 0,
+      challenge: lumenModeOf(this.level), cue: tg.match ? tg.match.cueName : "",
+      firstChoice: "", wrongTouches: 0, moth: this.moth ? 1 : 0, mothHit: 0, minClear: null, warned: false, success: 0,
+      bimanual: this.bimanual ? 1 : 0, step: this.bimanual ? "candle" : null, tFire: null };
+    tg.born = this.clock;
+    this.matchLit = false; this.matchOut = null;
+    this._burstAt(this.basket, "#ffd27a", 10);
+    audio.lumen("pickup");
+    if (this.bimanual) {
+      this.tips.objective = `Carry the candle to the lantern and keep it there. Then fetch the flame from the fire with your ${this.otherSide} hand and bring it to the lantern.`;
+      if (this.trialN === 1) this._say("Carry the candle to the lantern", `Keep it there, then fetch the flame with your ${this.otherSide} hand`, this.tips.objective);
+      else this._prompt("");
+      return;
+    }
+    this.tips.objective = lv.hold ? "Carry the flame to the lantern, and hold it inside until the ring fills."
+      : tg.match ? (lumenIsTrail(this.level) ? "Light the lanterns in order. The number on your candle is the next one." : "Light the lantern that matches your candle's colour.")
+      : this.moth ? "Carry the flame to the lantern, round the moth."
+      : "Carry the flame to the lantern.";
+    if (this.trialN === 1) this._say("Carry the flame to the lantern", lv.hold ? "Hold it inside until the ring fills" : tg.match ? "The sign on your candle says which" : "", this.tips.objective);
+    else this._prompt("");
+  }
+  _hitQuiet(reachFrac) {   // GameBase.hit without its note: the bell below is the sound
+    this.stats.hits++; this.stats.stars += 10;
+    if (reachFrac) this.stats.reachFracs.push(reachFrac);
+    this.fb.lastEvent = performance.now(); this.fb.hitStreak++; this.fb.missStreak = 0;
+  }
+  _light(now) {
+    const c = this.cur, tg = this.target, lv = this.lv;
+    this.matchLit = false; this.matchOut = null;
+    c.tEnd = this.playT; c.outcome = "lit";
+    c.mt = Math.round(((c.tEnter ?? this.playT) - (c.tLeave ?? c.tPickup)) * 100) / 100;
+    c.holdDur = c.holdReq > 0 ? Math.round((this.playT - c.lastEnter) * 100) / 100 : 0;
+    const clean = !lumenIsChoice(this.level) || c.firstChoice === "correct";
+    c.success = clean ? 1 : 0;
+    if (clean) this.clean++;
+    const P = lumenScore({ speedFrac: Math.max(0, this.burn / this.burnMax), holdSteady: c.holdReq > 0 && c.holdBreaks === 0,
+      choice: lumenIsChoice(this.level), moth: !!c.moth, combo: this.combo, level: this.level, golden: tg.golden, clean });
+    c.points = P.total;
+    this.score += P.total;
+    audio.lumen("light", this.combo, tg.golden);
+    this.combo++; this.bestCombo = Math.max(this.bestCombo, this.combo); this.lit++;
+    this._hitQuiet(tg.reachFrac);
+    // praise in words, never points
+    if (c.holdReq > 0 && c.holdBreaks === 0) this._text({ x: tg.x, y: tg.y + tg.r * 1.7 }, "Steady hand!", "#c9b8ff", 22);
+    else if (P.speed > 80) this._text({ x: tg.x, y: tg.y + tg.r * 1.7 }, "Swift!", "#9fe8ff", 22);
+    else this._text({ x: tg.x, y: tg.y + tg.r * 1.7 }, "Lit!", "#ffd27a", 22);
+    if (tg.golden) { this.frags++; this._text({ x: tg.x, y: tg.y - tg.r * 1.9 }, "A star fragment!", "#fff1a0", 18); }
+    this._burstAt(tg, tg.golden ? "#fff1a0" : "#ffb84d", tg.golden ? 40 : 26);
+    if (!lumenIsTrail(this.level)) this.sky.push({ ...this._px(tg), vy: -lumenRand(38, 60), sway: lumenRand(0, TAU), s: lv.size, golden: tg.golden, tint: tg.match && tg.match.tint });
+    if (lumenIsTrail(this.level)) {
+      this.trail.lit.push(tg.i); this.trail.k++;
+      if (this.trail.k >= this.trail.order.length) {      // the constellation is complete
+        const pts2 = Math.round(300 * P.m2);
+        this.score += pts2; this.constellations++;
+        this.trailFx = { pts: this.trail.order.map(k => this._px(this.targets[k])), life: 2 };
+        for (const k of this.trail.order) this.sky.push({ ...this._px(this.targets[k]), vy: -lumenRand(38, 60), sway: lumenRand(0, TAU), s: lv.size });
+        const fig = LUMEN_CONSTELLATIONS[this.trail.fig];
+        this.revealFx = { fig: this.trail.fig, life: 5 };
+        this.revealed.push(this.trail.fig);
+        if (!this.prog.atlas.includes(this.trail.fig)) this.prog.atlas.push(this.trail.fig);
+        this.prog.atlasNext++;
+        this._textPx(this.canvas.width / 2, this.canvas.height * 0.32, `You revealed ${fig.name}!`, "#cfe1ff", 30);
+        this._pip(fig.lore, 4);
+        audio.lumen("constellation");
+      }
+    }
+    if (!this.goalHit && this.lit >= LUMEN_GOAL) {
+      this.goalHit = true;
+      this._textPx(this.canvas.width / 2, this.canvas.height * 0.3, LUMEN_STORY[this.chap].win.split(/[.!]/)[0] + "!", "#ffe08a", 34);
+      this._burstPx(this.canvas.width / 2, this.canvas.height * 0.3, "#ffe08a", 50);
+      this.say("Wonderful! The whole street is awake. Keep going.");
+    } else if ([3, 5, 8, 12].includes(this.combo)) this._pip(`${this.combo} in a row! Hoo-hoo!`);
+    else if (Math.random() < 0.3) this._pip(LUMEN_PRAISE[Math.floor(Math.random() * LUMEN_PRAISE.length)]);
+    this._finishTrial(c);
+    this._spawnTarget();
+  }
+  _extinguish(now) {
+    const c = this.cur;
+    c.tEnd = this.playT; c.outcome = "burnt_out";
+    if (c.tEnter != null) c.mt = Math.round((c.tEnter - (c.tLeave ?? c.tPickup)) * 100) / 100;
+    this.combo = 0; this.fail++;
+    this.miss({ isFar: this.target.reachFrac > 0.7 * this._reach() }, true);
+    const h = this._disc(this.lightSide);
+    if (h) { this._smokeAt(h); this._text({ x: h.x, y: h.y + 0.12 }, "The candle went out", "#b9b4d6", 20); }
+    audio.lumen("puff");
+    this._pip("No worries, take another candle.");
+    this._finishTrial(c);                 // the same lantern stays: that direction again
+  }
+  _mothHit(now) {
+    const c = this.cur;
+    c.tEnd = this.playT; c.outcome = "moth"; c.mothHit = 1;
+    this.combo = 0; this.fail++; this.mothHits++;
+    this.miss({ isFar: this.target.reachFrac > 0.7 * this._reach() }, true);
+    const h = this._disc(this.lightSide);
+    if (h) { this._smokeAt(h); this._text({ x: h.x, y: h.y + 0.12 }, "The moth blew it out", "#d9b8ff", 20); }
+    if (this.moth) this.moth.flee = 0.5;
+    audio.lumen("moth");
+    this._pip("Go round the moth next time.");
+    this._finishTrial(c);
+  }
+  _finishTrial(c) {
+    // the record kept per candle, compact: what the therapist's log needs
+    this.trials.push({ trial: c.trial, angle: c.angle, basket: c.basket, reachFrac: c.reachFrac, golden: c.golden ? 1 : 0,
+      rt: c.rt, mt: c.mt, eff: c.eff == null ? null : Math.round(c.eff * 100) / 100, peak: Math.round(c.peak * 100) / 100,
+      holdBreaks: c.holdBreaks, holdDur: c.holdDur ?? null, outcome: c.outcome, success: c.success,
+      challenge: c.challenge, cue: c.cue, firstChoice: c.firstChoice, wrongTouches: c.wrongTouches,
+      moth: c.moth, mothHit: c.mothHit, minClear: c.minClear == null ? null : Math.round(c.minClear * 100) / 100,
+      onTargetPct: c.onTargetPct ?? null, trackErr: c.trackErr == null ? null : Math.round(c.trackErr * 100) / 100,
+      points: c.points, returnTime: null });
+    this.prevTrial = this.trials[this.trials.length - 1];
+    this.returnStart = this.playT;
+    this.cycleStart = this.playT; this.slipWarned = false;
+    if (!this.lv.move) this._setHome(this._nextHome(), false);   // the basket slides to its next spot
+    this.cur = null; this.phase = "toBasket"; this.holdT = 0; this.inside = false; this.outSince = null;
+    this.matchLit = false; this.matchOut = null;
+    this.clearDwell("basket");
+    this._askBasket();
+  }
+
+  // ---- effects ----
+  _burstAt(d, color, n = 14) { const p = this._px(d); this._burstPx(p.x, p.y, color, n); }
+  _burstPx(x, y, color, n = 14) {
+    const m = A11Y.calm ? Math.ceil(n / 3) : n;
+    for (let i = 0; i < m; i++) {
+      const a = Math.random() * TAU, s = A11Y.calm ? 1 + Math.random() * 1.5 : 2 + Math.random() * 4;
+      this.particles.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 1, color });
+    }
+  }
+  _smokeAt(d) {
+    const p = this._px(d);
+    for (let i = 0; i < 12; i++) this.smoke.push({ x: p.x + lumenRand(-4, 4), y: p.y - 20, vx: lumenRand(-15, 15), vy: lumenRand(-60, -25), life: lumenRand(0.8, 1.4), max: 1.4, r: lumenRand(4, 8) });
+  }
+  _fx(dts) {
+    for (const p of this.smoke) { p.x += p.vx * dts; p.y += p.vy * dts; p.life -= dts; p.r += 6 * dts; }
+    this.smoke = this.smoke.filter(p => p.life > 0);
+    for (const t of this.texts) { t.y -= 40 * dts; t.life -= dts; }
+    this.texts = this.texts.filter(t => t.life > 0);
+    for (const l of this.sky) { l.y += l.vy * dts; l.sway += dts * 1.5; }
+    this.sky = this.sky.filter(l => l.y > -80);
+    if (this.owl.life > 0) this.owl.life -= dts;
+    if (this.owl.hop > 0) this.owl.hop -= dts;
+    if (this.target) for (const d of this.target.decoys) if (d.shake > 0) d.shake -= dts;
+    if (this.trailFx) { this.trailFx.life -= dts; if (this.trailFx.life <= 0) this.trailFx = null; }
+    if (this.popT > 0) this.popT -= dts;
+    if (this.revealFx) { this.revealFx.life -= dts; if (this.revealFx.life <= 0) this.revealFx = null; }
+    for (const p of this.lightTrail) p.life -= dts * 1.6;
+    this.lightTrail = this.lightTrail.filter(p => p.life > 0);
+    if (this.moth) {
+      const m = this.moth; m.ph += dts;
+      m.x = m.x0 + Math.sin(m.ph * 1.3) * m.r * 0.35; m.y = m.y0 + Math.cos(m.ph * 1.9) * m.r * 0.25;
+      if (m.flee > 0) m.flee -= dts;
+    }
+  }
+  _updateMovers(dts) {
+    const tg = this.target;
+    if (tg && tg.move) {
+      const mv = tg.move;
+      mv.ph += dts * mv.speed * TAU;
+      const p = this._trackPos(mv, mv.ph); tg.x = p.x; tg.y = p.y; tg.ang = Math.round(p.a * 10) / 10;
+    }
+    if (this.lv.move === "both") {
+      this.bph += dts * (this.target?.move?.speed ?? this.lv.speed) * 0.8 * TAU;
+      this.basket.x = LUMEN_DRIFT * Math.sin(this.bph);
+    } else this.basket.x += (this.basket.hx - this.basket.x) * Math.min(1, dts * 6);
+  }
+
+  update(now, dt) {
+    const dts = dt / 1000;
+    const el = this.elapsed(now);
+    this.clock += dts;
+    this._fx(dts);
+    // Pip eases up the pole towards the flag
+    {
+      const climb = this._climb();
+      const goal = this.phase !== "story" && this.phase !== "intro" && this.targetScore ? Math.min(1, climb / this.targetScore) : 0;
+      this.owl.pos += (goal - this.owl.pos) * Math.min(1, dts * 2.5);
+    }
+    if (this.phase === "story") { if (el >= this.introAt) { this.phase = "intro"; this._sayLevel(); } return; }
+    if (this.phase === "intro") {
+      if (el >= this.introAt + LUMEN_INTRO_S) { this.phase = "countdown"; this.cd = null; this._prompt("Get ready", "3… 2… 1…"); }
+      return;
+    }
+    if (this.phase === "countdown") {
+      const left = LUMEN_COUNT_S - Math.floor(el - this.introAt - LUMEN_INTRO_S);
+      if (left !== this.cd && left > 0) { this.cd = left; audio.serveTick(false); }
+      if (el >= this.playAt) {
+        this.phase = "toBasket"; audio.serveTick(true);
+        const st = LUMEN_STAGES[this.stage];
+        this._pip(st.owl, 3.5);
+        this._askBasket();
+      }
+      return;
+    }
+    if (this.phase === "over") {
+      if (this.endDelay > 0) { this.endDelay -= dts; if (this.endDelay <= 0) this.roundSeconds = el; }
+      return;
+    }
+    this.playT = el - this.playAt;
+    this.activeMs += dt;
+    // the keeping hand (together / hold): sticky, so a tremor off the stand
+    // does not gutter the flame, but a real drift does
+    if (this.holdSide) {
+      const on = this._near(this.holdSide, this.stand, CANDLE_BOX_R);
+      if (on) {
+        this.lostSince = null;
+        if (!this.held) { this.held = true; audio.note(0); if (this.phase === "toBasket") this._askBasket(); }
+      } else if (this.held) {
+        this.lostSince ??= now;
+        if (now - this.lostSince > CANDLE_HOLD_GRACE) {
+          this.held = false; this.holdLapses++;
+          this.say(`Keep your ${this.holdSide} hand on the candle stand.`);
+        }
+      }
+      if (this.held) this.holdMs += dt;
+    }
+    const flame = !this.holdSide || this.held;
+    this._flameAlive = flame;
+    this._updateMovers(dts);
+    // the target score: Pip reaches the flag and the level ends on a high
+    const climb = this._climb();
+    if (climb > 0) this.hasClimbed = true;
+    if (!this.targetHit && climb >= this.targetScore) {
+      this.targetHit = true;
+      const P = this._owlPole();
+      this._burstPx(P.x, P.top - P.s, "#ffd27a", 40);
+      this._textPx(this.canvas.width / 2, this.canvas.height * 0.26, "Pip reached the flag!", "#ffd27a", 34);
+      this.owl.msg = "I made it to the top! Hoo-hoo!"; this.owl.life = 3.2; this.owl.hop = 0.9;
+      audio.lumen("target");
+      this.say("Pip reached the flag! What a lamplighter.");
+      this.phase = "over"; this.endReason = "target"; this.endDelay = 2.5;
+      if (this.cur) { this.cur.outcome = "time_up"; this.cur.tEnd = this.playT; this._closeTrial(); }
+      return;
+    }
+    // a slow candle lets Pip slip a little (never home: see the header)
+    this.slipping = !this.targetHit && climb > 0 && this.playT - this.cycleStart > LUMEN_SLOW_S;
+    if (this.slipping) {
+      this.slip = Math.min(this.score * 0.85, this.slip + this.targetScore * 0.03 * dts);
+      if (!this.slipWarned) { this.slipWarned = true; this._pip("Hoo! I'm slipping!", 2.4); }
+      this.slipSnd = (this.slipSnd || 0) - dts;
+      if (this.slipSnd <= 0) { this.slipSnd = 0.6; audio.lumen("slip"); }
+    }
+    if (!this.nearlySaid && this.roundSeconds - el < 10) { this.nearlySaid = true; this._pip("Nearly time!"); }
+
+    // the lighting hand
+    const h = this._disc(this.lightSide);
+    const step = h && this._lastH ? lumenDist(h, this._lastH) : 0;
+    const speed = dts > 0 ? step / dts : 0;
+    this._lastH = h ? { x: h.x, y: h.y } : null;
+    if (!h) return;
+    if (this.phase === "carrying") {
+      const last = this.lightTrail[this.lightTrail.length - 1], hp = this._px(h);
+      if (!last || Math.hypot(hp.x - last.x, hp.y - last.y) > 6) this.lightTrail.push({ x: hp.x, y: hp.y - this._geo().U * 0.04, life: 1 });
+      if (this.lightTrail.length > 60) this.lightTrail.shift();
+    }
+    const dB = lumenDist(h, this.basket);
+    if (this.phase === "toBasket") {
+      const inB = dB < LUMEN_BASKET_R;
+      if (inB && this.returnStart != null && this.prevTrial) {
+        this.prevTrial.returnTime = Math.round((this.playT - this.returnStart) * 100) / 100; this.returnStart = null;
+      }
+      if (!flame) return;
+      if (this.dwellProgress("basket", inB, now) >= 1) { this.clearDwell("basket"); this._pickup(now); }
+      return;
+    }
+    // carrying
+    const c = this.cur, tg = this.target, hold = this.lv.hold;
+    const inside = flame && lumenDist(h, tg) < tg.r;
+    if (c.tLeave == null && dB > LUMEN_BASKET_R) { c.tLeave = this.playT; c.leave = { x: h.x, y: h.y }; c.rt = Math.round((c.tLeave - c.tPickup) * 100) / 100; }
+    // the decoy lantern (a thinking challenge)
+    if (tg.decoys.length) {
+      const dj = tg.decoys.find(d => lumenDist(h, d) < tg.r);
+      if (dj && !this.insideWrong) {
+        c.wrongTouches++; if (!c.firstChoice) c.firstChoice = "wrong";
+        this.combo = 0; dj.shake = 0.45; audio.lumen("wrong");
+        this._text({ x: dj.x, y: dj.y + tg.r * 1.8 }, lumenModeOf(this.level) === "color" ? "Not that colour" : "Not that one", "#ff9a9a", 20);
+        this._pip(lumenModeOf(this.level) === "color" ? `Find the ${tg.match.cueName} lantern.` : `Look for ${tg.match.cue}.`, 2);
+      }
+      this.insideWrong = !!dj;
+    }
+    // the Night Moth
+    if (this.moth && c.tLeave != null && c.tEnter == null) {
+      const clear = lumenDist(h, this.moth) - this.moth.r;
+      c.minClear = c.minClear == null ? clear : Math.min(c.minClear, clear);
+      if (clear < this.moth.r * 0.8 && !c.warned) { c.warned = true; this.say("Careful. Go round the moth."); }
+      if (clear < -this.moth.r * 0.15) { this._mothHit(now); return; }
+    }
+    if (inside && !c.firstChoice) c.firstChoice = "correct";
+    // STAGE TWO, the other hand: once the candle is at the lantern, the
+    // flame is fetched from the fire and brought to it (see the header)
+    let matchIn = false;
+    if (this.bimanual) {
+      const h2 = this._disc(this.otherSide);
+      if (c.step === "candle" && inside) {
+        c.step = "fire";
+        audio.note(2);
+        this._say("Now the flame", `Reach to the fire with your ${this.otherSide} hand`, `Keep the candle there. Now reach to the fire with your ${this.otherSide} hand.`);
+      }
+      if (c.step === "fire") {
+        const atFire = !!h2 && lumenDist(h2, this.fire) < CANDLE_BOX_R;
+        if (this.dwellProgress("fire", atFire, now, 600) >= 1) {
+          this.clearDwell("fire");
+          this.matchLit = true; c.step = "bring"; c.tFire = this.playT;
+          this._burstAt(this.fire, "#ffd27a", 12);
+          audio.lumen("pickup");
+          this._say("Bring the flame to the lantern", "and hold both hands there until the ring fills");
+        }
+      }
+      matchIn = c.step === "bring" && !!h2 && lumenDist(h2, tg) < tg.r * 1.25;
+    }
+    const holdOn = this.bimanual ? (inside && matchIn) : inside;
+    if (tg.move && c.tEnter != null) {         // pursuit: time on target and distance to its centre
+      c.trackT = (c.trackT || 0) + dts; if (inside) c.inT = (c.inT || 0) + dts;
+      c.errSum = (c.errSum || 0) + lumenDist(h, tg); c.errN = (c.errN || 0) + 1;
+      c.onTargetPct = Math.round(100 * (c.inT || 0) / c.trackT);
+      c.trackErr = c.errSum / c.errN;
+    }
+    if (c.tLeave != null && c.tEnter == null && step < 0.4) { c.path += step; c.peak = Math.max(c.peak, speed); }
+    if (inside) {
+      this.outSince = null;
+      if (c.tEnter == null) {
+        c.tEnter = this.playT;
+        const straight = c.leave ? lumenDist(h, c.leave) : 0;
+        c.eff = c.path > 0 ? Math.min(1, straight / c.path) : null;
+        if (hold > 0 && Math.random() < 0.35) this.say("Steady. Hold it there.");
+      }
+      if (!this.inside) { c.lastEnter = this.playT; this.inside = true; }
+      if (hold <= 0) { this._light(now); return; }
+      if (holdOn) {
+        this.matchOut = null;
+        const before = Math.floor(this.holdT / 0.25);
+        this.holdT += dts;
+        if (Math.floor(this.holdT / 0.25) !== before) audio.lumen("hold", Math.min(1, this.holdT / hold));
+        if (this.holdT >= hold) { this._light(now); return; }
+      } else if (this.bimanual && this.holdT > 0) {
+        // the flame hand slipped out of the lantern: a wobble is forgiven, a
+        // real exit empties the ring
+        this.matchOut ??= now;
+        if (now - this.matchOut > LUMEN_HOLD_GRACE) {
+          c.holdBreaks++; this.holdT = 0; this.matchOut = null;
+          if (Math.random() < 0.5) this.say("Keep the flame at the lantern too.");
+        }
+      }
+    } else {
+      if (this.inside) { this.inside = false; this.outSince = now; }
+      // a brief wobble out of the lantern is forgiven; a real exit is a break
+      const inGrace = this.outSince != null && now - this.outSince <= LUMEN_HOLD_GRACE;
+      if (this.outSince != null && !inGrace && this.holdT > 0) {
+        c.holdBreaks++; this.holdT = 0; this.outSince = null;
+        if (hold > 0 && Math.random() < 0.5) this.say("Keep the flame inside the lantern.");
+      }
+      if (!inGrace) this.burn -= dts;         // the candle only burns while it travels
+      if (this.burn <= 0) { this._extinguish(now); return; }
+    }
+  }
+  _closeTrial() {
+    const c = this.cur; if (!c) return;
+    this._finishTrial(c);
+    this.phase = "over";
+  }
+
+  // ---- drawing ----
+  _glowAt(ctx, x, y, r, col, a) {
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, col.replace("A", a)); g.addColorStop(1, col.replace("A", 0));
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.fill();
+  }
+  _sceneP() { return Math.min(1, this.lit / LUMEN_GOAL); }
+  _sceneKey() { return LUMEN_STORY[this.chap].key; }
+  drawBg(ctx, c) {
+    const W = c.width, H = c.height, p = this._sceneP(), key = this._sceneKey();
+    const glow = key === "festival" ? Math.max(p, 0.6) : p;
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, "#070b1f");
+    g.addColorStop(0.6, lumenMix("#141a44", "#3a2a55", glow));
+    g.addColorStop(1, lumenMix("#1d1f45", "#5a3a4a", glow));
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = "#fff";
+    for (const s of this.stars) {
+      ctx.globalAlpha = A11Y.calm ? 0.6 : 0.4 + 0.6 * Math.abs(Math.sin(this.clock * 1.3 + s.p));
+      ctx.beginPath(); ctx.arc(s.x * W, s.y * H, s.r, 0, TAU); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    const { U, cx, cy, Rs } = this._geo();
+    const mx = W * 0.1, my = H * 0.12, mr = U * 0.045;
+    this._glowAt(ctx, mx, my, mr * 3, "rgba(255,240,200,A)", 0.25);
+    ctx.fillStyle = "#f6ecc9"; ctx.beginPath(); ctx.arc(mx, my, mr, 0, TAU); ctx.fill();
+    if (key === "village" || key === "festival") this._drawVillage(ctx, c, p, key === "festival");
+    else if (key === "river") this._drawRiver(ctx, c, p);
+    else if (key === "forest") this._drawForest(ctx, c, p);
+    else this._drawTower(ctx, c, p);
+    // the disc: the patient's whole reach, faint, so the world has an edge
+    const rg = ctx.createRadialGradient(cx, cy, Rs * 0.2, cx, cy, Rs);
+    rg.addColorStop(0, "rgba(244,236,221,0.04)"); rg.addColorStop(1, "rgba(244,236,221,0)");
+    ctx.fillStyle = rg; ctx.beginPath(); ctx.arc(cx, cy, Rs, 0, TAU); ctx.fill();
+    ctx.strokeStyle = "rgba(244,236,221,0.08)"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(cx, cy, Rs, 0, TAU); ctx.stroke();
+    this._drawCandleLight(ctx);
+    this._drawSky(ctx);
+    if (lumenIsTrail(this.level)) this._drawConstellation(ctx, c);
+  }
+  _hills(ctx, c, col, base, amp, f, ph) {
+    const W = c.width, H = c.height;
+    ctx.fillStyle = col; ctx.beginPath(); ctx.moveTo(0, H);
+    for (let x = 0; x <= W; x += 20) ctx.lineTo(x, H * base - Math.sin(x / W * f + ph) * H * amp - Math.sin(x / W * f * 2.6) * H * amp * 0.3);
+    ctx.lineTo(W, H); ctx.fill();
+  }
+  _drawVillage(ctx, c, p, fest) {
+    const W = c.width, H = c.height;
+    this._hills(ctx, c, "#10132e", 0.8, 0.04, 5, 1);
+    const houses = 9, order = [4, 2, 6, 0, 8, 3, 5, 1, 7], nLit = fest ? houses : Math.round(p * houses), base = H * 0.93;
+    for (let i = 0; i < houses; i++) {
+      const hx = (i + 0.3) * W / houses, hw = W / houses * 0.55, hh = H * (0.06 + (i * 37 % 5) * 0.012);
+      ctx.fillStyle = "#0a0c22";
+      ctx.fillRect(hx, base - hh, hw, hh + H * 0.1);
+      ctx.beginPath(); ctx.moveTo(hx - hw * 0.1, base - hh); ctx.lineTo(hx + hw / 2, base - hh - hw * 0.45); ctx.lineTo(hx + hw * 1.1, base - hh); ctx.fill();
+      const lit = order.indexOf(i) < nLit;
+      const wx = hx + hw * 0.35, wy = base - hh * 0.6, ww = hw * 0.3, wh = hh * 0.3;
+      if (lit) this._glowAt(ctx, wx + ww / 2, wy + wh / 2, hw * 0.7, "rgba(255,190,90,A)", 0.35);
+      ctx.fillStyle = lit ? "rgba(255,200,110,.95)" : "rgba(70,80,120,.35)";
+      ctx.fillRect(wx, wy, ww, wh);
+    }
+    if (fest) {
+      for (let i = 0; i <= 40; i++) {
+        const t = i / 40, x = t * W, y = H * 0.905 + Math.sin(t * Math.PI * 5) * H * 0.008;
+        ctx.globalAlpha = 0.45;
+        ctx.fillStyle = `hsl(${i * 37 % 360},70%,62%)`; ctx.beginPath(); ctx.arc(x, y, 2.5, 0, TAU); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+    ctx.fillStyle = "#080a1c"; ctx.fillRect(0, base, W, H - base);
+  }
+  _drawRiver(ctx, c, p) {
+    const W = c.width, H = c.height;
+    this._hills(ctx, c, "#10132e", 0.78, 0.05, 4, 2);
+    const top = H * 0.9;
+    ctx.fillStyle = "#0c1636"; ctx.fillRect(0, top, W, H - top);
+    ctx.strokeStyle = "rgba(150,180,255,.15)"; ctx.lineWidth = 2;
+    for (let i = 0; i < 26; i++) {
+      const y = top + 6 + lumenSeed(i) * (H - top - 8), x = ((lumenSeed(i + 50) * W + this.clock * 20 * (0.5 + lumenSeed(i + 9))) % (W + 80)) - 40;
+      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + 30, y); ctx.stroke();
+    }
+    const N = 10, nLit = Math.round(p * N);
+    const by = t => top - Math.sin(t * Math.PI) * H * 0.07;
+    ctx.strokeStyle = "#1b1733"; ctx.lineWidth = 9; ctx.beginPath();
+    for (let i = 0; i <= 50; i++) { const t = i / 50, x = W * (0.03 + 0.94 * t); i ? ctx.lineTo(x, by(t)) : ctx.moveTo(x, by(t)); }
+    ctx.stroke();
+    for (let i = 0; i < N; i++) {
+      const t = (i + 0.5) / N, x = W * (0.03 + 0.94 * t), y = by(t), ph = Math.min(W, H) * 0.045;
+      ctx.strokeStyle = "#1b1733"; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y - ph); ctx.stroke();
+      const lit = i < nLit;
+      if (lit) { this._glowAt(ctx, x, y - ph, Math.min(W, H) * 0.05, "rgba(255,190,90,A)", 0.5); this._glowAt(ctx, x, top + (H - top) * 0.5, Math.min(W, H) * 0.035, "rgba(255,190,90,A)", 0.25); }
+      ctx.fillStyle = lit ? "#ffcf73" : "#2a2648"; ctx.fillRect(x - 5, y - ph - 6, 10, 12);
+    }
+  }
+  _drawForest(ctx, c, p) {
+    const W = c.width, H = c.height;
+    this._hills(ctx, c, "#0e1430", 0.8, 0.05, 6, 0.5);
+    const base = H * 0.95;
+    for (let i = 0; i < 24; i++) {
+      const x = (i / 23) * W + (lumenSeed(i) - 0.5) * 40, h = H * (0.13 + lumenSeed(i + 30) * 0.12), w = h * 0.45;
+      ctx.fillStyle = i % 2 ? "#0a1124" : "#0c1428";
+      for (let k = 0; k < 3; k++) {
+        const ty = base - h + k * h * 0.25, tw = w * (0.55 + k * 0.25);
+        ctx.beginPath(); ctx.moveTo(x, ty); ctx.lineTo(x - tw / 2, ty + h * 0.4); ctx.lineTo(x + tw / 2, ty + h * 0.4); ctx.fill();
+      }
+      ctx.fillRect(x - w * 0.06, base - h * 0.2, w * 0.12, h * 0.2);
+    }
+    ctx.fillStyle = "#070a1a"; ctx.fillRect(0, base, W, H - base);
+    const n = Math.round(4 + p * (A11Y.calm ? 20 : 60));
+    for (let i = 0; i < n; i++) {
+      const fx = lumenSeed(i + 100) * W + Math.sin(this.clock * 0.6 + i) * 40;
+      const fy = H * (0.4 + lumenSeed(i + 200) * 0.5) + Math.cos(this.clock * 0.8 + i * 1.3) * 25;
+      const a = 0.3 + 0.7 * Math.abs(Math.sin(this.clock * 2.2 + i * 0.7));
+      this._glowAt(ctx, fx, fy, 10, "rgba(210,255,140,A)", 0.35 * a);
+      ctx.globalAlpha = a; ctx.fillStyle = "#e4ff9a"; ctx.beginPath(); ctx.arc(fx, fy, 2, 0, TAU); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+  _drawTower(ctx, c, p) {
+    const W = c.width, H = c.height, U = Math.min(W, H);
+    this._hills(ctx, c, "#0f1330", 0.82, 0.03, 4, 3);
+    const pk = { x: W * 0.8, y: H * 0.36 };
+    ctx.fillStyle = "#121536";
+    ctx.beginPath(); ctx.moveTo(W * 0.4, H); ctx.lineTo(pk.x, pk.y); ctx.lineTo(W * 1.2, H); ctx.fill();
+    const N = 9, nLit = Math.round(p * N);
+    for (let i = 0; i < N; i++) {
+      const t = (i + 0.5) / N;
+      const x = W * 0.9 - t * (W * 0.9 - pk.x) + Math.sin(t * 14) * W * 0.03 * (1 - t);
+      const y = H * 0.95 - t * (H * 0.95 - pk.y - U * 0.02);
+      const lit = i < nLit;
+      if (lit) this._glowAt(ctx, x, y, U * 0.03, "rgba(255,190,90,A)", 0.55);
+      ctx.fillStyle = lit ? "#ffcf73" : "#2a2648"; ctx.beginPath(); ctx.arc(x, y, 3.5, 0, TAU); ctx.fill();
+    }
+    const tw = U * 0.032, th = U * 0.1, ty = pk.y - th;
+    ctx.fillStyle = "#1d1a38";
+    ctx.beginPath(); ctx.moveTo(pk.x - tw, pk.y + 4); ctx.lineTo(pk.x - tw * 0.6, ty); ctx.lineTo(pk.x + tw * 0.6, ty); ctx.lineTo(pk.x + tw, pk.y + 4); ctx.fill();
+    ctx.fillRect(pk.x - tw * 0.9, ty - tw * 0.3, tw * 1.8, tw * 0.3);
+    const bx = pk.x, byy = ty - tw * 0.5;
+    if (p > 0) {
+      this._glowAt(ctx, bx, byy, U * (0.04 + 0.3 * p), "rgba(255,200,90,A)", 0.2 + 0.45 * p);
+      if (p >= 1 && !A11Y.calm) {
+        ctx.save(); ctx.translate(bx, byy); ctx.rotate(this.clock * 0.3);
+        ctx.fillStyle = "rgba(255,220,140,.08)";
+        for (let k = 0; k < 8; k++) { ctx.rotate(Math.PI / 4); ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(-U * 0.04, -U * 0.6); ctx.lineTo(U * 0.04, -U * 0.6); ctx.fill(); }
+        ctx.restore();
+      }
+      this._drawFlame(ctx, bx, byy + tw * 0.3, tw * (0.3 + 0.6 * p));
+    }
+    ctx.fillStyle = "#080a1c"; ctx.fillRect(0, H * 0.95, W, H * 0.05);
+  }
+  // the candle lights the night around it: a warm pool that follows the
+  // flame (shrinking as the candle burns) and a fading trail where it moved
+  _drawCandleLight(ctx) {
+    const carrying = this.phase === "carrying";
+    if (!carrying && !this.lightTrail.length) return;
+    const { U } = this._geo();
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    for (const p of this.lightTrail) this._glowAt(ctx, p.x, p.y, U * 0.07 * p.life, "rgba(255,160,70,A)", 0.045 * p.life);
+    // the light rides with the flame: on the candle, or in stage two on the
+    // match in the other hand (and nowhere until it is taken from the fire)
+    const glowSide = this.bimanual ? (this.matchLit ? this.otherSide : null) : this.lightSide;
+    const h = carrying && glowSide ? this._disc(glowSide) : null;
+    if (h) {
+      const hp = this._px(h);
+      const frac = Math.max(0, this.burn / this.burnMax);
+      const flick = A11Y.calm ? 1 : 1 + 0.03 * Math.sin(this.clock * 19) + 0.02 * Math.sin(this.clock * 31);
+      this._glowAt(ctx, hp.x, hp.y - U * 0.04, U * 0.36 * (0.55 + 0.45 * frac) * flick, "rgba(255,170,80,A)", 0.09 + 0.05 * frac);
+      this._glowAt(ctx, hp.x, hp.y - U * 0.04, U * 0.11 * flick, "rgba(255,205,140,A)", 0.06 + 0.03 * frac);
+    }
+    ctx.restore();
+  }
+  _drawSky(ctx) {
+    const { U } = this._geo();
+    for (const l of this.sky) {
+      const x = l.x + Math.sin(l.sway) * 10, s = U * 0.03 * Math.max(0.6, l.s);
+      this._glowAt(ctx, x, l.y, s * 3, l.tint ? lumenHexA(l.tint, "A") : l.golden ? "rgba(255,240,150,A)" : "rgba(255,170,70,A)", 0.4);
+      ctx.fillStyle = l.tint || (l.golden ? "#ffe680" : "#ff9a3c");
+      ctx.beginPath();
+      ctx.moveTo(x - s * 0.7, l.y - s); ctx.lineTo(x + s * 0.7, l.y - s);
+      ctx.lineTo(x + s * 0.5, l.y + s); ctx.lineTo(x - s * 0.5, l.y + s); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = "#fff3c4"; ctx.beginPath(); ctx.ellipse(x, l.y + s * 0.7, s * 0.25, s * 0.18, 0, 0, TAU); ctx.fill();
+    }
+  }
+  // the hidden picture's box: top right, clear of the disc's upper arc
+  _constBox(c) {
+    const W = c.width, H = c.height, U = Math.min(W, H);
+    const w = Math.min(W * 0.22, U * 0.38), h = Math.min(H * 0.22, U * 0.3);
+    return { x: W - w - Math.max(24, W * 0.02), y: Math.max(H * 0.06, 40), w, h };
+  }
+  _drawFigure(ctx, c, fig, shown, bright, scaleIn) {
+    const b = this._constBox(c), P = fig.pts.map(([px, py]) => ({ x: b.x + px * b.w, y: b.y + py * b.h }));
+    ctx.strokeStyle = `rgba(190,215,255,${bright ? 0.85 : 0.45})`; ctx.lineWidth = bright ? 2.5 : 1.5;
+    if (bright) { ctx.shadowColor = "#9fc3ff"; ctx.shadowBlur = 14; }
+    for (const [i, j] of fig.lines) if (i < shown && j < shown) { ctx.beginPath(); ctx.moveTo(P[i].x, P[i].y); ctx.lineTo(P[j].x, P[j].y); ctx.stroke(); }
+    ctx.shadowBlur = 0;
+    P.forEach((p, i) => {
+      if (i >= shown) { ctx.fillStyle = "rgba(190,215,255,.12)"; ctx.beginPath(); ctx.arc(p.x, p.y, 2, 0, TAU); ctx.fill(); return; }
+      const pop = i === shown - 1 && scaleIn ? 1 + 1.5 * scaleIn : 1;
+      this._glowAt(ctx, p.x, p.y, 12 * pop, "rgba(200,225,255,A)", bright ? 0.6 : 0.4);
+      ctx.fillStyle = "#f4f8ff"; ctx.beginPath(); ctx.arc(p.x, p.y, (bright ? 3.2 : 2.6) * pop, 0, TAU); ctx.fill();
+    });
+    return b;
+  }
+  _drawConstellation(ctx, c) {
+    ctx.save();
+    ctx.textAlign = "center"; ctx.textBaseline = "top";
+    if (this.revealFx) {
+      const fig = LUMEN_CONSTELLATIONS[this.revealFx.fig];
+      ctx.globalAlpha = Math.min(1, this.revealFx.life / 1.2);
+      const b = this._drawFigure(ctx, c, fig, fig.pts.length, true, 0);
+      ctx.font = "800 18px Nunito, sans-serif"; ctx.fillStyle = "#dfeaff";
+      ctx.fillText(fig.name, b.x + b.w / 2, b.y + b.h + 10);
+      ctx.restore();
+      return;
+    }
+    if (!this.trail) { ctx.restore(); return; }
+    const fig = LUMEN_CONSTELLATIONS[this.trail.fig], n = this.trail.order.length;
+    const shown = Math.round(fig.pts.length * this.trail.k / n);
+    if (shown !== this.lastShown) { this.popT = 0.4; this.lastShown = shown; }
+    const b = this._drawFigure(ctx, c, fig, shown, false, this.popT > 0 ? this.popT / 0.4 : 0);
+    ctx.font = "600 13px Nunito, sans-serif"; ctx.fillStyle = "rgba(200,215,255,.6)";
+    ctx.fillText(shown ? "A hidden picture is appearing" : "Light the lanterns in order to reveal a picture", b.x + b.w / 2, b.y + b.h + 10);
+    ctx.restore();
+  }
+  _drawFlame(ctx, x, y, s) {
+    const f = A11Y.calm ? 1 : 1 + 0.12 * Math.sin(this.clock * 23) + 0.08 * Math.sin(this.clock * 37);
+    const lean = A11Y.calm ? 0 : Math.sin(this.clock * 5) * s * 0.08;
+    this._glowAt(ctx, x, y - s * 0.6, s * 3, "rgba(255,180,60,A)", 0.45);
+    ctx.fillStyle = "#ff9a2e";
+    ctx.beginPath(); ctx.moveTo(x - s * 0.45, y);
+    ctx.quadraticCurveTo(x - s * 0.5, y - s * 0.9 * f, x + lean, y - s * 1.7 * f);
+    ctx.quadraticCurveTo(x + s * 0.5, y - s * 0.9 * f, x + s * 0.45, y);
+    ctx.quadraticCurveTo(x, y + s * 0.35, x - s * 0.45, y); ctx.fill();
+    ctx.fillStyle = "#fff2b8";
+    ctx.beginPath(); ctx.ellipse(x + lean * 0.3, y - s * 0.4, s * 0.2, s * 0.45 * f, 0, 0, TAU); ctx.fill();
+  }
+  _drawLantern(ctx, x, y, r, lit, golden, pre, label, tint) {
+    const w = r, h = r * 1.35;
+    const metal = golden ? "#ffd34d" : "#d9b97a";
+    ctx.strokeStyle = "#5b5470"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(x, y - h * 0.95); ctx.lineTo(x, y - h * 1.5); ctx.stroke();
+    if (label == null) { ctx.beginPath(); ctx.arc(x, y - h * 0.92, r * 0.12, 0, TAU); ctx.stroke(); }
+    if (lit) this._glowAt(ctx, x, y, r * 3.5, tint ? lumenHexA(tint, "A") : "rgba(255,190,80,A)", 0.5);
+    else if (pre > 0) this._glowAt(ctx, x, y, r * 3 * pre, "rgba(255,190,80,A)", 0.45 * pre);
+    ctx.fillStyle = metal; ctx.strokeStyle = "#fff6dc"; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(x - w * 0.75, y - h * 0.5); ctx.lineTo(x, y - h * 0.85); ctx.lineTo(x + w * 0.75, y - h * 0.5); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = tint ? lumenHexA(tint, lit ? 0.95 : 0.8)
+      : lit ? "#ffcf73" : pre > 0 ? `rgba(255,207,115,${0.4 + 0.6 * pre})` : (golden ? "rgba(255,236,160,.55)" : "rgba(255,244,215,.42)");
+    ctx.fillRect(x - w * 0.55, y - h * 0.5, w * 1.1, h);
+    ctx.strokeStyle = metal; ctx.lineWidth = Math.max(3, r * 0.1);
+    ctx.strokeRect(x - w * 0.55, y - h * 0.5, w * 1.1, h);
+    if (label == null) { ctx.beginPath(); ctx.moveTo(x, y - h * 0.5); ctx.lineTo(x, y + h * 0.5); ctx.stroke(); }
+    ctx.fillStyle = metal; ctx.fillRect(x - w * 0.7, y + h * 0.5, w * 1.4, h * 0.14);
+    if (label != null) {
+      ctx.fillStyle = tint ? "#ffffff" : "#3a2410";
+      ctx.font = `800 ${Math.round(r * (label.length > 1 ? 0.75 : 0.95))}px Nunito, sans-serif`;
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(label, x, y + h * 0.04);
+      return;
+    }
+    ctx.fillStyle = "#e8dcc0"; ctx.fillRect(x - r * 0.08, y + h * 0.15, r * 0.16, h * 0.3);
+    if (lit) this._drawFlame(ctx, x, y + h * 0.12, r * 0.35);
+  }
+  _drawChoiceLanterns(ctx, litOnly, hp) {
+    const tg = this.target, hold = this.lv.hold, pulse = A11Y.calm ? 0.5 : 0.5 + 0.5 * Math.sin(this.clock * 4);
+    const { Rs } = this._geo();
+    const T = this._px(tg), tr = tg.r * Rs;
+    const trail = lumenIsTrail(this.level) ? this.trail : null;
+    if (trail) {
+      const pts = trail.order.slice(0, trail.k).map(k => this._px(this.targets[k]));
+      if (pts.length > 1) {
+        ctx.strokeStyle = "rgba(207,225,255,.75)"; ctx.lineWidth = 3; ctx.shadowColor = "#9fc3ff"; ctx.shadowBlur = 12;
+        ctx.beginPath(); pts.forEach((p, k) => k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)); ctx.stroke();
+        ctx.shadowBlur = 0;
+      }
+      for (const k of trail.lit) {
+        const p = this._px(this.targets[k]);
+        this._drawLantern(ctx, p.x, p.y, tr * 0.9, true, false, 0, trail.labels[k], null);
+      }
+    }
+    if (this.trailFx) {
+      const a = Math.min(1, this.trailFx.life);
+      ctx.strokeStyle = `rgba(207,225,255,${a})`; ctx.lineWidth = 4; ctx.shadowColor = "#9fc3ff"; ctx.shadowBlur = 20;
+      ctx.beginPath(); this.trailFx.pts.forEach((p, k) => k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)); ctx.stroke();
+      ctx.shadowBlur = 0;
+    }
+    if (litOnly) return;
+    const all = [{ x: tg.x, y: tg.y, label: tg.match.label, tint: tg.match.tint, shake: 0, me: true }, ...tg.decoys];
+    const holdFrac = hold > 0 && this.phase === "carrying" && this.inside ? Math.min(1, this.holdT / hold) : 0;
+    for (const d of all) {
+      const p = this._px(d);
+      const sx = d.shake > 0 ? Math.sin(d.shake * 60) * 6 : 0;
+      this._glowAt(ctx, p.x, p.y, tr * 2.1, d.tint ? lumenHexA(d.tint, "A") : "rgba(190,210,255,A)", 0.22 + 0.1 * pulse);
+      ctx.strokeStyle = d.shake > 0 ? "#ff7a7a" : d.tint ? lumenHexA(d.tint, 0.85) : "rgba(255,236,190,.75)";
+      ctx.lineWidth = 3; if (!hold) ctx.setLineDash([10, 7]);
+      ctx.beginPath(); ctx.arc(p.x + sx, p.y, tr, 0, TAU); ctx.stroke(); ctx.setLineDash([]);
+      ctx.globalAlpha = Math.min(1, (this.clock - tg.born) / 0.3);
+      this._drawLantern(ctx, p.x + sx, p.y + (A11Y.calm ? 0 : Math.sin(this.clock * 2 + p.x) * tr * 0.04), tr * 0.9, false, false, d.me ? holdFrac : 0, d.label, d.tint);
+      ctx.globalAlpha = 1;
+    }
+    if (holdFrac > 0) {
+      ctx.strokeStyle = "#c9b8ff"; ctx.lineWidth = 6; ctx.lineCap = "round";
+      ctx.beginPath(); ctx.arc(T.x, T.y, tr * 1.18, -Math.PI / 2, -Math.PI / 2 + TAU * holdFrac); ctx.stroke();
+      ctx.lineCap = "butt";
+    }
+  }
+  _drawMoth(ctx, hp) {
+    const m = this.moth, { Rs, U } = this._geo();
+    const M = this._px(m), r = m.r * Rs, flap = A11Y.calm ? 0 : Math.sin(this.clock * 14);
+    const carrying = this.phase === "carrying";
+    const clear = hp ? Math.hypot(hp.x - M.x, hp.y - M.y) - r : Infinity;
+    const near = carrying && clear < r * 0.8;
+    ctx.save(); ctx.translate(M.x, M.y);
+    if (m.flee > 0) ctx.translate(0, -(0.5 - m.flee) * 60);
+    const flash = near && !A11Y.calm ? 0.5 + 0.5 * Math.sin(this.clock * 18) : near ? 0.5 : 0;
+    ctx.fillStyle = `rgba(255,70,100,${0.14 + 0.18 * flash})`;
+    ctx.beginPath(); ctx.arc(0, 0, r, 0, TAU); ctx.fill();
+    ctx.strokeStyle = near ? `rgba(255,90,110,${0.7 + 0.3 * flash})` : "rgba(255,110,130,.75)";
+    ctx.lineWidth = near ? 4 : 2.5;
+    ctx.beginPath(); ctx.arc(0, 0, r, 0, TAU); ctx.stroke();
+    for (const sd of [-1, 1]) {
+      ctx.save(); ctx.scale(sd, 1); ctx.rotate(-0.25 + flap * 0.35);
+      ctx.fillStyle = "#a58be6"; ctx.strokeStyle = "#f4ecff"; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.ellipse(r * 0.42, -r * 0.14, r * 0.5, r * 0.34, -0.4, 0, TAU); ctx.fill(); ctx.stroke();
+      ctx.beginPath(); ctx.ellipse(r * 0.32, r * 0.27, r * 0.32, r * 0.22, 0.5, 0, TAU); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = "#3d2a63"; ctx.beginPath(); ctx.arc(r * 0.46, -r * 0.14, r * 0.13, 0, TAU); ctx.fill();
+      ctx.restore();
+    }
+    ctx.fillStyle = "#20163a"; ctx.beginPath(); ctx.ellipse(0, 0, r * 0.16, r * 0.5, 0, 0, TAU); ctx.fill();
+    ctx.fillStyle = "#ff6b8f";
+    ctx.beginPath(); ctx.arc(-r * 0.07, -r * 0.38, r * 0.06, 0, TAU); ctx.arc(r * 0.07, -r * 0.38, r * 0.06, 0, TAU); ctx.fill();
+    ctx.strokeStyle = "#20163a"; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(-r * 0.05, -r * 0.48); ctx.lineTo(-r * 0.2, -r * 0.75); ctx.moveTo(r * 0.05, -r * 0.48); ctx.lineTo(r * 0.2, -r * 0.75); ctx.stroke();
+    ctx.restore();
+    if (near) {
+      ctx.font = `800 ${Math.max(14, U * 0.018)}px Nunito, sans-serif`; ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+      ctx.fillStyle = "#ff8a9a"; ctx.fillText("Too close", M.x, M.y - r - 8);
+    }
+  }
+  // the way round the moth: a dotted path that bends away from it, shown
+  // through the first moth level and for the first candles of the others
+  _drawMothGuide(ctx) {
+    const m = this.moth, tg = this.target;
+    if (!m || !(this.level === LUMEN_STAGES[4].from || this.trialN < 3 || (this.trialN === 3 && this.phase === "carrying"))) return;
+    const B = this._px(this.basket), T = this._px(tg), M = this._px(m), { Rs } = this._geo();
+    const sx = B.x, sy = B.y - LUMEN_BASKET_R * Rs * 0.5, dx = T.x - sx, dy = T.y - sy, L = Math.hypot(dx, dy) || 1;
+    const nx = -dy / L, ny = dx / L;
+    const side = ((M.x - sx) * nx + (M.y - sy) * ny) > 0 ? -1 : 1;
+    const off = m.r * Rs * 2.8;
+    const cx = M.x + nx * side * off, cy = M.y + ny * side * off;
+    const qx = 2 * cx - 0.5 * (sx + T.x), qy = 2 * cy - 0.5 * (sy + T.y);
+    const a = A11Y.calm ? 0.55 : 0.45 + 0.25 * Math.sin(this.clock * 3);
+    ctx.strokeStyle = `rgba(150,235,150,${a})`; ctx.lineWidth = 3; ctx.setLineDash([3, 9]); ctx.lineDashOffset = A11Y.calm ? 0 : -this.clock * 30;
+    ctx.beginPath(); ctx.moveTo(sx, sy); ctx.quadraticCurveTo(qx, qy, T.x, T.y); ctx.stroke();
+    ctx.setLineDash([]); ctx.lineDashOffset = 0;
+    const t = 0.88, px = (1 - t) ** 2 * sx + 2 * (1 - t) * t * qx + t * t * T.x, py = (1 - t) ** 2 * sy + 2 * (1 - t) * t * qy + t * t * T.y;
+    const ang = Math.atan2(T.y - py, T.x - px);
+    ctx.fillStyle = `rgba(150,235,150,${a + 0.2})`;
+    ctx.save(); ctx.translate(px, py); ctx.rotate(ang);
+    ctx.beginPath(); ctx.moveTo(10, 0); ctx.lineTo(-6, -7); ctx.lineTo(-6, 7); ctx.fill(); ctx.restore();
+  }
+  _drawMoveTrack(ctx) {
+    const mv = this.target.move, tg = this.target, { Rs } = this._geo();
+    ctx.strokeStyle = "rgba(255,236,190,.4)"; ctx.lineWidth = 3; ctx.setLineDash([2, 9]); ctx.lineCap = "round";
+    ctx.beginPath();
+    for (let k = 0; k <= 120; k++) { const p = this._px(this._trackPos(mv, k / 120 * TAU)); k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y); }
+    ctx.stroke(); ctx.setLineDash([]); ctx.lineCap = "butt";
+    for (const ph of [Math.PI / 2, -Math.PI / 2]) { const p = this._px(this._trackPos(mv, ph)); ctx.fillStyle = "rgba(255,236,190,.6)"; ctx.beginPath(); ctx.arc(p.x, p.y, 4, 0, TAU); ctx.fill(); }
+    const T = this._px(tg), ahead = this._px(this._trackPos(mv, mv.ph + 0.15));
+    const ang = Math.atan2(ahead.y - T.y, ahead.x - T.x), tr = tg.r * Rs;
+    ctx.save(); ctx.translate(T.x + Math.cos(ang) * tr * 1.45, T.y + Math.sin(ang) * tr * 1.45); ctx.rotate(ang);
+    ctx.fillStyle = "rgba(255,236,190,.8)"; ctx.beginPath(); ctx.moveTo(9, 0); ctx.lineTo(-5, -6); ctx.lineTo(-5, 6); ctx.fill(); ctx.restore();
+  }
+  _drawBasketRail(ctx) {
+    const { Rs } = this._geo();
+    const a = this._px({ x: -LUMEN_DRIFT, y: LUMEN_BASKET_Y }), b = this._px({ x: LUMEN_DRIFT, y: LUMEN_BASKET_Y });
+    ctx.strokeStyle = "rgba(255,236,190,.3)"; ctx.lineWidth = 3; ctx.setLineDash([2, 9]); ctx.lineCap = "round";
+    ctx.beginPath(); ctx.moveTo(a.x, a.y + LUMEN_BASKET_R * Rs * 0.7); ctx.lineTo(b.x, b.y + LUMEN_BASKET_R * Rs * 0.7); ctx.stroke();
+    ctx.setLineDash([]); ctx.lineCap = "butt";
+  }
+  _drawTargetLantern(ctx, hp) {
+    const tg = this.target, { Rs } = this._geo();
+    if (this.phase !== "carrying") { if (tg.match) this._drawChoiceLanterns(ctx, true, hp); return; }   // the lantern appears with the candle
+    if (this.moth) { this._drawMothGuide(ctx); this._drawMoth(ctx, hp); }
+    if (tg.match) { this._drawChoiceLanterns(ctx, false, hp); return; }
+    if (tg.move) this._drawMoveTrack(ctx);
+    const T = this._px(tg), tr = tg.r * Rs, pulse = A11Y.calm ? 0.5 : 0.5 + 0.5 * Math.sin(this.clock * 4);
+    const hold = this.lv.hold;
+    for (const p of this.targets) {   // faint marks for the level's other positions
+      if (p.i === tg.i) continue;
+      const q = this._px(p);
+      ctx.strokeStyle = "rgba(255,210,122,.1)"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(q.x, q.y, tr * 0.5, 0, TAU); ctx.stroke();
+    }
+    this._glowAt(ctx, T.x, T.y, tr * 2.4, tg.golden ? "rgba(255,230,140,A)" : "rgba(190,210,255,A)", 0.28 + 0.14 * pulse);
+    if (!A11Y.calm) {
+      const rip = (this.clock * 0.8) % 1;
+      ctx.strokeStyle = `rgba(255,236,190,${0.55 * (1 - rip)})`; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(T.x, T.y, tr * (1 + 0.9 * rip), 0, TAU); ctx.stroke();
+    }
+    ctx.strokeStyle = tg.golden ? `rgba(255,230,120,${0.7 + 0.3 * pulse})` : `rgba(255,236,190,${0.65 + 0.3 * pulse})`;
+    ctx.lineWidth = 4;
+    if (!hold) ctx.setLineDash([10, 7]);
+    ctx.beginPath(); ctx.arc(T.x, T.y, tr, 0, TAU); ctx.stroke(); ctx.setLineDash([]);
+    if (tg.golden) {
+      for (let i = 0; i < 4; i++) {
+        const a = this.clock * 2 + i * 1.57;
+        ctx.fillStyle = "#fff1a0"; ctx.beginPath(); ctx.arc(T.x + Math.cos(a) * tr * 1.3, T.y + Math.sin(a) * tr * 1.3, 2.5, 0, TAU); ctx.fill();
+      }
+    }
+    const holdFrac = hold > 0 && this.inside ? Math.min(1, this.holdT / hold) : 0;
+    ctx.globalAlpha = Math.min(1, (this.clock - tg.born) / 0.3);
+    this._drawLantern(ctx, T.x, T.y + (A11Y.calm ? 0 : Math.sin(this.clock * 2) * tr * 0.04), tr * 0.9, false, tg.golden, holdFrac);
+    ctx.globalAlpha = 1;
+    if (holdFrac > 0) {
+      ctx.strokeStyle = "#c9b8ff"; ctx.lineWidth = 6; ctx.lineCap = "round";
+      ctx.beginPath(); ctx.arc(T.x, T.y, tr * 1.18, -Math.PI / 2, -Math.PI / 2 + TAU * holdFrac); ctx.stroke();
+      ctx.lineCap = "butt";
+    }
+  }
+  _drawBasket(ctx, hp) {
+    const { Rs } = this._geo();
+    const B = this._px(this.basket), x = B.x, y = B.y, r = LUMEN_BASKET_R * Rs;
+    const waiting = this.phase === "toBasket";
+    const hover = waiting && hp && Math.hypot(hp.x - x, hp.y - y) < r;
+    if (waiting) this._glowAt(ctx, x, y - r * 0.2, r * 2, "rgba(255,200,100,A)", hover ? 0.35 : 0.12 + (A11Y.calm ? 0.05 : 0.1 * Math.abs(Math.sin(this.clock * 1.5))));
+    const cols = ["#f4ead2", "#efe0c0", "#f7f0de", "#eadbb8", "#f4ead2"];
+    for (let i = 0; i < 5; i++) {
+      const cx = x + (i - 2) * r * 0.32, ch = r * (0.75 + (i % 2) * 0.2), cw = r * 0.18;
+      ctx.save(); ctx.translate(cx, y - r * 0.2); ctx.rotate((i - 2) * 0.12);
+      ctx.fillStyle = cols[i]; ctx.fillRect(-cw / 2, -ch, cw, ch);
+      ctx.strokeStyle = "#333"; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(0, -ch); ctx.lineTo(0, -ch - r * 0.1); ctx.stroke();
+      ctx.restore();
+    }
+    ctx.fillStyle = "#7a4d26";
+    ctx.beginPath(); ctx.moveTo(x - r, y - r * 0.25); ctx.lineTo(x + r, y - r * 0.25); ctx.lineTo(x + r * 0.78, y + r * 0.55); ctx.lineTo(x - r * 0.78, y + r * 0.55); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = "#5a361a"; ctx.lineWidth = 2;
+    for (let k = 1; k < 4; k++) { const yy = y - r * 0.25 + k * r * 0.2; ctx.beginPath(); ctx.moveTo(x - r + k * 0.055 * r, yy); ctx.lineTo(x + r - k * 0.055 * r, yy); ctx.stroke(); }
+    for (let k = -4; k <= 4; k++) { ctx.beginPath(); ctx.moveTo(x + k * r * 0.22, y - r * 0.25); ctx.lineTo(x + k * r * 0.17, y + r * 0.55); ctx.stroke(); }
+    ctx.fillStyle = "#9a6634"; ctx.beginPath(); ctx.ellipse(x, y - r * 0.25, r, r * 0.12, 0, 0, TAU); ctx.fill();
+    // what "on the basket" means, and the dwell filling
+    if (waiting) {
+      ctx.strokeStyle = "rgba(255,210,122,0.45)"; ctx.lineWidth = 3; ctx.setLineDash([8, 9]);
+      ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.stroke(); ctx.setLineDash([]);
+      const f = Math.min(1, (this._dwells?.basket?.acc ?? 0) / A11Y.dwellMs);
+      if (f > 0) {
+        ctx.strokeStyle = "#ffd27a"; ctx.lineWidth = 5;
+        ctx.beginPath(); ctx.arc(x, y, r * 1.15, -Math.PI / 2, -Math.PI / 2 + TAU * f); ctx.stroke();
+      }
+    }
+  }
+  // the keeping hand's candle-stand (together / hold)
+  _drawStand(ctx) {
+    if (!this.stand) return;
+    const { Rs } = this._geo(), p = this._px(this.stand), R = CANDLE_BOX_R * Rs, w = Rs * 0.14, h = w * 0.5;
+    ctx.save();
+    ctx.fillStyle = "#3b2a2a"; ctx.strokeStyle = "rgba(244,236,221,0.35)"; ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.roundRect(p.x - w / 2, p.y - h * 0.3, w, h, 8); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = "#f4ecdd"; ctx.beginPath(); ctx.roundRect(p.x - w * 0.06, p.y - h * 0.9, w * 0.12, h * 0.65, 3); ctx.fill();
+    if (this.held) {
+      ctx.strokeStyle = "rgba(159,192,138,0.85)"; ctx.lineWidth = 5;
+      ctx.beginPath(); ctx.arc(p.x, p.y, R, 0, TAU); ctx.stroke();
+      this._drawFlame(ctx, p.x, p.y - h * 0.95, Math.max(8, Rs * 0.03));
+    } else {
+      const pulse = A11Y.calm ? 0.6 : Math.sin(this.clock * 3.3) * 0.5 + 0.5;
+      ctx.strokeStyle = `rgba(232,168,106,${0.4 + pulse * 0.45})`; ctx.lineWidth = 5; ctx.setLineDash([8, 9]);
+      ctx.beginPath(); ctx.arc(p.x, p.y, R, 0, TAU); ctx.stroke(); ctx.setLineDash([]);
+    }
+    ctx.restore();
+  }
+  // stage two's FIRE: a brazier on the other hand's side. Its ring pulses
+  // when it is the flame hand's turn, and the bowl burns on either way.
+  _drawFire(ctx) {
+    if (!this.fire) return;
+    const { Rs, U } = this._geo(), p = this._px(this.fire), R = CANDLE_BOX_R * Rs, w = Rs * 0.16, h = w * 0.45;
+    const turn = this.phase === "carrying" && this.cur?.step === "fire";
+    ctx.save();
+    this._glowAt(ctx, p.x, p.y - h * 0.6, U * 0.12, "rgba(255,160,70,A)", turn ? 0.16 : 0.08);
+    ctx.fillStyle = "#3b2a2a"; ctx.strokeStyle = "rgba(244,236,221,0.35)"; ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.moveTo(p.x - w / 2, p.y - h * 0.4); ctx.lineTo(p.x + w / 2, p.y - h * 0.4);
+    ctx.lineTo(p.x + w * 0.35, p.y + h * 0.5); ctx.lineTo(p.x - w * 0.35, p.y + h * 0.5); ctx.closePath(); ctx.fill(); ctx.stroke();
+    for (let i = -1; i <= 1; i++) this._drawFlame(ctx, p.x + i * w * 0.18, p.y - h * 0.45, Math.max(7, Rs * (0.028 - Math.abs(i) * 0.006)));
+    if (turn) {
+      const pulse = A11Y.calm ? 0.6 : Math.sin(this.clock * 3.3) * 0.5 + 0.5;
+      ctx.strokeStyle = `rgba(232,168,106,${0.4 + pulse * 0.45})`; ctx.lineWidth = 5; ctx.setLineDash([8, 9]);
+      ctx.beginPath(); ctx.arc(p.x, p.y, R, 0, TAU); ctx.stroke(); ctx.setLineDash([]);
+    } else {
+      ctx.strokeStyle = "rgba(244,236,221,0.2)"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(p.x, p.y, R, 0, TAU); ctx.stroke();
+    }
+    ctx.restore();
+  }
+  _owlPole() {
+    const c = this.canvas, U = Math.min(c.width, c.height);
+    const s = U * 0.042, x = Math.max(s * 1.4, c.width * 0.05);
+    const B = this._px({ x: 0, y: LUMEN_BASKET_Y });
+    return { s, x, base: B.y + LUMEN_BASKET_R * this._geo().Rs * 0.05, top: Math.max(c.height * 0.24, 150) };
+  }
+  // Pip on his pole: he climbs towards the flag as the score grows. No
+  // figures on the pole (project rule), just the notches and the flag.
+  _drawOwl(ctx, hp) {
+    const P = this._owlPole(), s = P.s, x = P.x, c = this.canvas;
+    const inLevel = this.phase !== "story" && this.phase !== "intro";
+    if (inLevel) {
+      const tTop = P.top - s * 0.9;
+      ctx.fillStyle = "#3a2a1c"; ctx.fillRect(x - s * 0.13, tTop, s * 0.26, c.height - tTop);
+      const reached = this.targetHit;
+      for (const f of [0.25, 0.5, 0.75]) {
+        const yy = P.base + s * 0.9 - (P.base - P.top) * f;
+        const on = this.owl.pos >= f - 0.001;
+        ctx.fillStyle = on ? "#ffd27a" : "#5a4a3a"; ctx.fillRect(x - s * 0.45, yy - 2, s * 0.9, 4);
+      }
+      const fy = tTop;
+      if (reached) this._glowAt(ctx, x, fy, s * 3, "rgba(255,220,120,A)", 0.4 + (A11Y.calm ? 0.1 : 0.2 * Math.sin(this.clock * 5)));
+      ctx.fillStyle = reached ? "#ffd27a" : "#e8dfc6";
+      ctx.beginPath(); ctx.moveTo(x + s * 0.13, fy); ctx.lineTo(x + s * 1.2, fy + s * 0.35 + (A11Y.calm ? 0 : Math.sin(this.clock * 4) * 3)); ctx.lineTo(x + s * 0.13, fy + s * 0.7); ctx.fill();
+    }
+    const climbTop = P.top + s * 1.4;
+    const y = P.base - (inLevel ? (P.base - climbTop) * this.owl.pos : 0);
+    if (!inLevel) { ctx.fillStyle = "#3a2a1c"; ctx.fillRect(x - s * 0.15, y + s * 0.9, s * 0.3, c.height - y); }
+    ctx.fillStyle = "#4a3524"; ctx.fillRect(x - s * 0.9, y + s * 0.85, s * 1.8, s * 0.18);
+    const o = this.owl;
+    const hp2 = o.hop > 0 ? (0.9 - o.hop) / 0.9 : 1;
+    const bounce = o.hop > 0 && !A11Y.calm ? Math.abs(Math.sin(hp2 * Math.PI * 2)) * (1 - hp2 * 0.4) : 0;
+    const lift = bounce * s * 1.1 + (A11Y.calm ? 0 : Math.sin(this.clock * 2) * s * 0.04);
+    const squash = o.hop > 0 && bounce < 0.15 && !A11Y.calm ? 0.88 : 1;
+    const flap = o.hop > 0 && !A11Y.calm ? Math.sin(this.clock * 30) * 0.9 : Math.sin(this.clock * 1.5) * 0.08;
+    const tilt = o.hop > 0 && !A11Y.calm ? Math.sin(hp2 * Math.PI * 4) * 0.12
+      : this.slipping && !A11Y.calm ? Math.sin(this.clock * 9) * 0.18
+      : Math.sin(this.clock * 0.7) * 0.04;
+    ctx.save();
+    ctx.translate(x, y + s * 0.9); ctx.rotate(tilt); ctx.scale(1 / squash, squash); ctx.translate(-x, -(y + s * 0.9) - lift);
+    ctx.fillStyle = "#7a5636";
+    ctx.save(); ctx.translate(x - s * 0.6, y - s * 0.2); ctx.rotate(0.25 + flap);
+    ctx.beginPath(); ctx.ellipse(-s * 0.1, s * 0.35, s * 0.28, s * 0.65, 0, 0, TAU); ctx.fill(); ctx.restore();
+    ctx.save(); ctx.translate(x + s * 0.6, y - s * 0.2); ctx.rotate(-0.25 - flap);
+    ctx.beginPath(); ctx.ellipse(s * 0.1, s * 0.35, s * 0.28, s * 0.65, 0, 0, TAU); ctx.fill(); ctx.restore();
+    ctx.fillStyle = "#8a6440";
+    ctx.beginPath(); ctx.ellipse(x, y, s * 0.8, s, 0, 0, TAU); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(x - s * 0.62, y - s * 0.6); ctx.lineTo(x - s * 0.72, y - s * 1.2); ctx.lineTo(x - s * 0.2, y - s * 0.85); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(x + s * 0.62, y - s * 0.6); ctx.lineTo(x + s * 0.72, y - s * 1.2); ctx.lineTo(x + s * 0.2, y - s * 0.85); ctx.fill();
+    ctx.fillStyle = "#d8b98a"; ctx.beginPath(); ctx.ellipse(x, y + s * 0.32, s * 0.5, s * 0.58, 0, 0, TAU); ctx.fill();
+    const blink = (this.clock % 4) < 0.13;
+    for (const ex of [x - s * 0.32, x + s * 0.32]) {
+      const ey = y - s * 0.3;
+      ctx.fillStyle = blink ? "#8a6440" : "#fff8e6"; ctx.beginPath(); ctx.arc(ex, ey, s * 0.3, 0, TAU); ctx.fill();
+      if (blink) continue;
+      const dx = hp ? hp.x - ex : 0, dy = hp ? hp.y - ey : 0, d = Math.hypot(dx, dy) || 1;
+      ctx.fillStyle = "#1a1208"; ctx.beginPath(); ctx.arc(ex + dx / d * s * 0.11, ey + dy / d * s * 0.11, s * 0.14, 0, TAU); ctx.fill();
+    }
+    ctx.fillStyle = "#f2a03a"; ctx.beginPath(); ctx.moveTo(x - s * 0.12, y - s * 0.08); ctx.lineTo(x + s * 0.12, y - s * 0.08); ctx.lineTo(x, y + s * 0.18); ctx.fill();
+    ctx.restore();
+    if (o.life > 0 && o.msg) {
+      ctx.globalAlpha = Math.min(1, o.life * 3);
+      const fs = Math.max(15, Math.round(c.height * 0.02));
+      ctx.font = `700 ${fs}px Nunito, sans-serif`;
+      const tw = ctx.measureText(o.msg).width + 24, th = fs * 2.1;
+      const bx = Math.min(c.width - tw - 8, x + s * 1.3), byy = y - s * 0.9 - th / 2;
+      ctx.fillStyle = "#fff4dc";
+      ctx.beginPath(); ctx.roundRect(bx, byy, tw, th, 12); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(bx, byy + th * 0.35); ctx.lineTo(bx - 12, byy + th * 0.6); ctx.lineTo(bx, byy + th * 0.8); ctx.fill();
+      ctx.fillStyle = "#2a1d10"; ctx.textAlign = "left"; ctx.textBaseline = "middle";
+      ctx.fillText(o.msg, bx + 12, byy + th / 2);
+      ctx.globalAlpha = 1;
+    }
+  }
+  _drawTexts(ctx) {
+    ctx.save();
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    for (const t of this.texts) {
+      ctx.globalAlpha = Math.min(1, t.life * 1.5);
+      ctx.font = `800 ${t.size}px Nunito, sans-serif`; ctx.fillStyle = t.col; ctx.fillText(t.s, t.x, t.y);
+    }
+    ctx.restore();
+  }
+  _drawCandle(ctx, x, y, frac, match, unlit = false) {
+    const { U } = this._geo();
+    const ch = U * 0.06 * (0.35 + 0.65 * frac), cw = U * 0.016;
+    ctx.fillStyle = match && match.tint ? match.tint : "#f4ead2"; ctx.fillRect(x - cw / 2, y - ch, cw, ch);
+    ctx.fillStyle = "#e2d3ae"; ctx.beginPath(); ctx.ellipse(x, y - ch, cw / 2, cw * 0.2, 0, 0, TAU); ctx.fill();
+    ctx.fillStyle = "#8a6a3a"; ctx.beginPath(); ctx.ellipse(x, y + 2, cw * 1.3, cw * 0.4, 0, 0, TAU); ctx.fill();
+    if (unlit) {   // stage two: a bare wick until the flame arrives
+      ctx.strokeStyle = "#5a4a3a"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(x, y - ch); ctx.lineTo(x, y - ch - U * 0.008); ctx.stroke();
+    } else if (this._flameAlive) this._drawFlame(ctx, x, y - ch - 2, U * 0.014 * (0.6 + 0.4 * frac));
+    else {   // guttered: a wisp of smoke
+      ctx.strokeStyle = "rgba(244,236,221,0.35)"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(x, y - ch - 4); ctx.quadraticCurveTo(x + cw, y - ch - U * 0.03, x, y - ch - U * 0.06); ctx.stroke();
+    }
+    if (match) {   // the cue badge beside the candle: the colour and its sign, or the next number
+      const bx = x + U * 0.04, by = y - ch * 0.6, br = U * 0.024;
+      ctx.fillStyle = match.tint || "#fff4dc"; ctx.strokeStyle = "#fff"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(bx, by, br, 0, TAU); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = match.tint ? "#fff" : "#3a2410";
+      ctx.font = `800 ${Math.round(br * (match.cue.length > 1 ? 0.95 : 1.25))}px Nunito, sans-serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(match.cue, bx, by + 1);
+    }
+  }
+
+  draw(ctx, c, now) {
+    const h = this._disc(this.lightSide), hp = h ? this._px(h) : null;
+    const inLevel = this.phase !== "story" && this.phase !== "intro";
+    if (inLevel && this.target) this._drawTargetLantern(ctx, hp);
+    if (inLevel && this.lv.move === "both") this._drawBasketRail(ctx);
+    this._drawBasket(ctx, hp);
+    this._drawStand(ctx);
+    this._drawFire(ctx);
+    this._drawOwl(ctx, hp);
+    // smoke from a candle that went out
+    for (const p of this.smoke) {
+      ctx.globalAlpha = Math.max(0, p.life / p.max) * 0.5;
+      ctx.fillStyle = "#8a87a3"; ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, TAU); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    this._drawTexts(ctx);
+    if (this.phase === "countdown" && this.cd) {
+      const { U } = this._geo();
+      ctx.save();
+      ctx.fillStyle = "#ffd27a"; ctx.font = `800 ${Math.round(U * 0.16)}px Nunito, sans-serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(String(this.cd), c.width / 2, c.height * 0.42);
+      ctx.restore();
+    }
+    // the level's time, a whisper at the top (play time only)
+    if (inLevel && this.phase !== "over") {
+      const f = Math.max(0, 1 - (this.elapsed(now) - this.playAt) / LUMEN_ROUND_S);
+      ctx.strokeStyle = "rgba(244,236,221,0.22)"; ctx.lineWidth = 3; ctx.lineCap = "round";
+      ctx.beginPath(); ctx.moveTo(c.width * (0.5 - 0.4 * f), 10); ctx.lineTo(c.width * (0.5 + 0.4 * f), 10); ctx.stroke();
+    }
+  }
+
+  // The hand on the disc, not the camera's arm: a glow with its capture
+  // ring, and while carrying the candle itself riding on the lighting hand,
+  // burning down as it travels. The keeping hand (modes) gets its own ring.
+  _drawArmAndCursor(ctx, c, now) {
+    const { Rs } = this._geo();
+    const sides = this.holdSide ? [this.holdSide, this.lightSide] : this.bimanual ? [this.otherSide, this.lightSide] : [this.lightSide];
+    for (const side of sides) {
+      const d = this._disc(side);
+      if (!d) continue;
+      const hp = this._px(d);
+      const lighting = side === this.lightSide;
+      // stage two: the match in the other hand, once it is lit
+      if (this.bimanual && !lighting && this.phase === "carrying" && this.matchLit) {
+        const { U } = this._geo(), len = U * 0.045;
+        ctx.save();
+        ctx.strokeStyle = "#c9a26a"; ctx.lineWidth = 3; ctx.lineCap = "round";
+        ctx.beginPath(); ctx.moveTo(hp.x, hp.y + len * 0.3); ctx.lineTo(hp.x, hp.y - len * 0.7); ctx.stroke();
+        this._drawFlame(ctx, hp.x, hp.y - len * 0.75, U * 0.013 * (0.6 + 0.4 * Math.max(0, this.burn / this.burnMax)));
+        ctx.restore();
+        continue;
+      }
+      if (lighting && this.phase === "carrying") {
+        this._drawCandle(ctx, hp.x, hp.y, Math.max(0, this.burn / this.burnMax), this.target && this.target.match, this.bimanual);
+        ctx.strokeStyle = "rgba(244,236,221,0.2)"; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.arc(hp.x, hp.y, this.target.r * Rs * 0.35, 0, TAU); ctx.stroke();
+        continue;
+      }
+      ctx.strokeStyle = lighting ? "rgba(244,236,221,0.22)" : "rgba(200,230,235,0.18)";
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(hp.x, hp.y, (lighting ? LUMEN_BASKET_R * 0.6 : CANDLE_BOX_R) * Rs, 0, TAU); ctx.stroke();
+      this.glow(ctx, hp.x, hp.y, lighting ? 13 : 11, "#fff2c2", lighting ? "#e8a86a" : "#9fc0c8", 22);
+    }
+  }
+  // Pip has the bottom-left corner, so the posture coach docks bottom-right
+  coachDock(c) {
+    const h = c.height * 0.18, w = h * 0.95;
+    return { x: c.width - w - c.width * 0.02, y: c.height * 0.96, h };
+  }
+
+  extra() {
+    if (this.cur) { this.cur.outcome = "time_up"; this.cur.tEnd = this.playT; this._finishTrial(this.cur); this.cur = null; }
+    const L = this.level, choice = lumenIsChoice(L);
+    const good = choice ? this.clean : this.lit;
+    const att = this.lit + this.fail, rate = att ? good / att : 0, pct = Math.round(rate * 100);
+    const enough = att >= LUMEN_MIN || this.endReason === "target";
+    let verdict = "same";
+    if (enough && rate >= LUMEN_UP) verdict = "up";
+    else if (att >= 3 && rate < LUMEN_DOWN && L > 1) verdict = "down";
+    const stars = (rate >= LUMEN_DOWN ? 1 : 0) + (rate >= LUMEN_UP && enough ? 1 : 0) + (rate >= LUMEN_UP && this.targetHit ? 1 : 0);
+    const next = Math.max(1, Math.min(CANDLE_MAX, verdict === "up" ? L + 1 : verdict === "down" ? L - 1 : L));
+    this.prog.best[L] = Math.max(this.prog.best[L] || 0, this.score);
+    this.prog.stars[L] = Math.max(this.prog.stars[L] || 0, stars);
+    const done = this.trials.filter(t => t.outcome === "lit");
+    const mean = a => a.length ? a.reduce((s, v) => s + v, 0) / a.length : null;
+    const r2 = v => v == null ? null : Math.round(v * 100) / 100;
+    const mt = mean(done.map(t => t.mt).filter(v => v != null));
+    return {
+      candlesLevel: next,                       // the level the next round starts at (banked by main.js)
+      levelPlayed: L,
+      stage: LUMEN_STAGES[this.stage].name,
+      chapter: LUMEN_STORY[this.chap].key,
+      mode: this.mode,
+      lightArm: this.lightSide,
+      lanternsLit: this.lit,
+      burntOut: this.fail - this.mothHits,
+      mothHits: this.mothHits,
+      candles: att,
+      successPct: pct,
+      verdict,
+      lumenStars: stars,
+      score: this.score,
+      bestCombo: this.bestCombo,
+      targetScore: this.targetScore,
+      targetHit: this.targetHit,
+      climbLost: Math.round(this.slip),
+      endReason: this.endReason,
+      starFragments: this.frags,
+      meanReachMs: mt == null ? null : Math.round(mt * 1000),
+      pathEfficiency: r2(mean(done.map(t => t.eff).filter(v => v != null))),
+      meanPeakSpeed: r2(mean(done.map(t => t.peak))),          // reach fractions per second
+      holdBreaks: this.lv.hold ? r2(mean(done.map(t => t.holdBreaks))) : null,
+      meanReturnS: r2(mean(this.trials.map(t => t.returnTime).filter(v => v != null))),
+      correctFirst: choice ? this.clean : null,
+      wrongTouches: this.trials.reduce((s, t) => s + (t.wrongTouches || 0), 0),
+      constellations: lumenIsTrail(L) ? this.constellations : null,
+      atlasFound: this.prog.atlas.length,
+      onTargetPct: this.lv.move ? r2(mean(done.map(t => t.onTargetPct).filter(v => v != null))) : null,
+      trackErr: this.lv.move ? r2(mean(done.map(t => t.trackErr).filter(v => v != null))) : null,
+      holdFrac: this.holdSide && this.activeMs ? Math.round(this.holdMs / this.activeMs * 100) / 100 : null,
+      holdLapses: this.holdSide ? this.holdLapses : null,
+      burnSeconds: Math.round(this.burnMax * 10) / 10,
+      candlesProgress: this.prog,
+      trials: this.trials,
+    };
+  }
+}
+
 /* ==================== G11 Crane Keeper (hold high + squeeze) ==================== */
 // Progressive abduction loading made playful: keep the arm inside a raised
 // band (the crane stays up) and, while holding, squeeze to catch passing
@@ -5066,6 +7672,7 @@ export class RainbowCrossing extends GameBase {
       this.tut.skipDwell ??= now;
       if (now - this.tut.skipDwell > 1200) {
         this.tut = null;
+        this._rallyT0 = this.elapsed(now);
         this._prompt("");
         this.say("Alright, off you go!");
         return;
@@ -5438,6 +8045,364 @@ function crateShape(ctx, x, y, s, bright) {
 // circle assessment). The originals stay implemented but hidden via
 // `disabled`. The Aug 2026 additions (research pass in GAME_IDEAS.md) ship
 // enabled for review — flip `disabled: true` to curate the patient menu.
+
+/* ==================== Memory Pairs — the card-matching game, rebuilt for the arm ==================== */
+// The classic Memory (Concentration) game from the mockup
+// (mockups/memory-game-master.zip: a grid of face-down cards, turn two, a
+// matching pair stays up, the rest turn back), rebuilt for the arm (Sep
+// 2026, by request). What the mockup has that this keeps: a grid, two cards
+// at a time, a pair stays, a mismatch turns back after a moment, and the
+// board is done when every pair is found. What is different, and why:
+//   - a card is turned by HOLDING the hand on it (sticky dwell), never by a
+//     click or a squeeze: every turn is a reach to a place in the patient's
+//     own workspace, and nothing is asked of the hand;
+//   - the grid is laid INSIDE the measured envelope (like Connect the Dots:
+//     a box on the axes the arm actually has, every card pulled radially in
+//     to `spread × envAt`, and kept on screen), so no card is ever quietly
+//     out of reach, and the levels widen the grid across more of the reach
+//     while the cards get more numerous and the capture radius smaller;
+//   - every board opens with a PEEK, all cards face up for a study time
+//     that grows with the pairs, then they turn down: a memory task proper
+//     (study, then recall) rather than blind guessing at first, which for
+//     someone with cognitive as well as motor impairment is the difference
+//     between a game and a lottery;
+//   - a mismatch is not a miss: the DDA reads motor performance and a
+//     forgotten card is not a motor error, so mismatches are counted as
+//     `wrongTurns` in the round record and never fed to miss();
+//   - the mockup's emoji fruit become drawn glyphs in the suite's own
+//     palette (star, moon, heart, boat, fish, house, sun, cloud, lantern,
+//     anchor): emoji render differently on every machine and a clinic PC
+//     may have no colour emoji font at all;
+//   - no moves counter, no clock on screen (diegetic rule): the count goes
+//     to the therapist's log and the between-rounds card;
+//   - THE CARDS NEVER MOVE (Sep 2026, by request after the first play): the
+//     grid is laid out ONCE per board, in screen pixels, from the envelope
+//     as it stands at that moment, and then frozen: positions, card size
+//     and capture radius. Re-projecting each card from the body frame every
+//     frame, as the other games do with their targets, let a tracking
+//     re-snap or a scale change shift the whole board under the hand, and
+//     a board you are trying to remember must not shift. Only the level's
+//     `spread` changes how big the grid is, board to board.
+const PAIR_LEVELS = [
+  // cols x rows = cards; radius = capture radius, SW; spread = fraction of the envelope the grid fills
+  { cols: 2, rows: 2, radius: 0.30, spread: 0.60 },
+  { cols: 3, rows: 2, radius: 0.27, spread: 0.70 },
+  { cols: 4, rows: 2, radius: 0.24, spread: 0.80 },
+  { cols: 4, rows: 3, radius: 0.21, spread: 0.90 },
+  { cols: 4, rows: 4, radius: 0.18, spread: 1.00 },
+  { cols: 5, rows: 4, radius: 0.16, spread: 1.00 },
+];
+const PAIR_MAX = PAIR_LEVELS.length;
+const PAIR_PEEK_MS = 2200;      // study time per pair when a board opens (plus a base)
+const PAIR_PEEK_BASE = 2500;
+const PAIR_SHOW_MS = 1800;      // a mismatched pair stays face up this long before turning back
+const PAIR_FLIP_MS = 380;       // the turn animation (instant under calm motion)
+const PAIR_COOL_MS = 700;       // after cards turn back, a hand still on one does not re-turn it at once
+const PAIR_GLYPHS = ["star", "moon", "heart", "boat", "fish", "house", "sun", "cloud", "lantern", "anchor"];
+
+function pairShuffle(a) {
+  const out = [...a];
+  for (let i = out.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [out[i], out[j]] = [out[j], out[i]]; }
+  return out;
+}
+// the card faces: simple shapes in the suite's palette, s = half size in px,
+// `bg` is the card's face colour for the moon's cut-out
+function drawGlyph(ctx, kind, x, y, s, col, bg) {
+  ctx.save();
+  ctx.fillStyle = col; ctx.strokeStyle = col; ctx.lineWidth = Math.max(2, s * 0.22); ctx.lineCap = "round"; ctx.lineJoin = "round";
+  switch (kind) {
+    case "star": starShape(ctx, x, y, s, col); break;
+    case "moon":
+      ctx.beginPath(); ctx.arc(x, y, s, 0, TAU); ctx.fill();
+      ctx.fillStyle = bg; ctx.beginPath(); ctx.arc(x + s * 0.45, y - s * 0.2, s * 0.8, 0, TAU); ctx.fill();
+      break;
+    case "heart":
+      ctx.beginPath();
+      ctx.moveTo(x, y + s * 0.9);
+      ctx.bezierCurveTo(x - s * 1.3, y - s * 0.1, x - s * 0.6, y - s * 1.0, x, y - s * 0.35);
+      ctx.bezierCurveTo(x + s * 0.6, y - s * 1.0, x + s * 1.3, y - s * 0.1, x, y + s * 0.9);
+      ctx.fill();
+      break;
+    case "boat":
+      ctx.beginPath(); ctx.moveTo(x - s, y + s * 0.3); ctx.lineTo(x + s, y + s * 0.3); ctx.lineTo(x + s * 0.65, y + s * 0.85); ctx.lineTo(x - s * 0.65, y + s * 0.85); ctx.closePath(); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(x, y + s * 0.2); ctx.lineTo(x, y - s * 0.95); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x + s * 0.08, y - s * 0.9); ctx.lineTo(x + s * 0.8, y + s * 0.1); ctx.lineTo(x + s * 0.08, y + s * 0.1); ctx.closePath(); ctx.fill();
+      break;
+    case "fish":
+      ctx.beginPath(); ctx.ellipse(x - s * 0.15, y, s * 0.75, s * 0.5, 0, 0, TAU); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(x + s * 0.45, y); ctx.lineTo(x + s, y - s * 0.55); ctx.lineTo(x + s, y + s * 0.55); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = bg; ctx.beginPath(); ctx.arc(x - s * 0.5, y - s * 0.12, s * 0.1, 0, TAU); ctx.fill();
+      break;
+    case "house":
+      ctx.beginPath(); ctx.rect(x - s * 0.7, y - s * 0.1, s * 1.4, s * 1.0); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(x - s * 0.95, y - s * 0.05); ctx.lineTo(x, y - s * 0.95); ctx.lineTo(x + s * 0.95, y - s * 0.05); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = bg; ctx.beginPath(); ctx.rect(x - s * 0.18, y + s * 0.3, s * 0.36, s * 0.6); ctx.fill();
+      break;
+    case "sun":
+      ctx.beginPath(); ctx.arc(x, y, s * 0.5, 0, TAU); ctx.fill();
+      for (let i = 0; i < 8; i++) {
+        const a = i * TAU / 8;
+        ctx.beginPath(); ctx.moveTo(x + Math.cos(a) * s * 0.68, y + Math.sin(a) * s * 0.68); ctx.lineTo(x + Math.cos(a) * s, y + Math.sin(a) * s); ctx.stroke();
+      }
+      break;
+    case "cloud":
+      ctx.beginPath();
+      ctx.arc(x - s * 0.45, y + s * 0.15, s * 0.42, 0, TAU);
+      ctx.arc(x + s * 0.05, y - s * 0.2, s * 0.55, 0, TAU);
+      ctx.arc(x + s * 0.55, y + s * 0.15, s * 0.42, 0, TAU);
+      ctx.rect(x - s * 0.45, y + s * 0.15, s * 1.0, s * 0.42);
+      ctx.fill();
+      break;
+    case "lantern":
+      ctx.beginPath(); ctx.roundRect(x - s * 0.55, y - s * 0.6, s * 1.1, s * 1.3, s * 0.25); ctx.fill();
+      ctx.beginPath(); ctx.rect(x - s * 0.35, y - s * 0.95, s * 0.7, s * 0.3); ctx.fill();
+      ctx.fillStyle = bg; ctx.beginPath(); ctx.ellipse(x, y + s * 0.05, s * 0.22, s * 0.4, 0, 0, TAU); ctx.fill();
+      break;
+    case "anchor":
+      ctx.beginPath(); ctx.arc(x, y - s * 0.7, s * 0.22, 0, TAU); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x, y - s * 0.48); ctx.lineTo(x, y + s * 0.9); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x - s * 0.55, y - s * 0.1); ctx.lineTo(x + s * 0.55, y - s * 0.1); ctx.stroke();
+      ctx.beginPath(); ctx.arc(x, y + s * 0.1, s * 0.8, Math.PI * 0.15, Math.PI * 0.85); ctx.stroke();
+      break;
+  }
+  ctx.restore();
+}
+
+export class MemoryPairs extends GameBase {
+  id = "pairs";
+  setup() {
+    this.tips = { objective: "Hold your hand on a card to turn it over. Find the two that match." };
+    this.roundSeconds = 150;
+    this.level = Math.max(1, Math.min(PAIR_MAX, this.opts.level || 1));
+    this.boardsCleared = 0;
+    this.pairsFound = 0; this.turns = 0; this.wrongTurns = 0;
+    this.doneAt = 0;
+    const wait = this.tellStory(STORIES.pairs);
+    this._newBoard(performance.now() + wait);
+  }
+  _lv() { return PAIR_LEVELS[this.level - 1]; }
+
+  // a fresh board: the deck, the grid inside the envelope, and the peek
+  _newBoard(peekFrom) {
+    const lv = this._lv();
+    const n = lv.cols * lv.rows, pairs = n / 2;
+    const kinds = pairShuffle(PAIR_GLYPHS).slice(0, pairs);
+    const deck = pairShuffle([...kinds, ...kinds]);
+    // the grid's box: the axis reaches this patient actually has (the
+    // shorter side of each axis, so a lopsided envelope still gets a whole
+    // grid), then every card pulled inside the reach in its own direction
+    const hw = Math.min(this.envAt(0), this.envAt(Math.PI)) * lv.spread;
+    const hh = Math.min(this.envAt(Math.PI / 2), this.envAt(-Math.PI / 2)) * lv.spread;
+    const c = this.canvas, M = 70;
+    this.cards = deck.map((kind, i) => {
+      const ci = i % lv.cols, ri = Math.floor(i / lv.cols);
+      const ux = lv.cols === 1 ? 0.5 : ci / (lv.cols - 1), uy = lv.rows === 1 ? 0.5 : ri / (lv.rows - 1);
+      let x = CENTER.x + (ux - 0.5) * 2 * hw;
+      let y = CENTER.y - (uy - 0.5) * 2 * hh;
+      const dx = x - CENTER.x, dy = y - CENTER.y;
+      const r = Math.hypot(dx, dy), th = Math.atan2(dy, dx);
+      const lim = lv.spread * this.envAt(th);
+      if (r > lim && r > 0) { x = CENTER.x + dx / r * lim; y = CENTER.y + dy / r * lim; }
+      // to pixels ONCE, kept on screen, and frozen for the board
+      const px = this.toPx({ x, y });
+      px.x = Math.min(Math.max(px.x, M), c.width - M);
+      px.y = Math.min(Math.max(px.y, M), c.height - M);
+      const reachFrac = Math.hypot(dx, dy) / (this.envAt(th) || 1);
+      return { px: px.x, py: px.y, reachFrac, kind, up: true, f: 1, matched: false, coolUntil: 0 };
+    });
+    // card size from the closest two cards, so a grid squeezed by a small
+    // envelope or the screen edge never overlaps; frozen with the positions
+    let cell = Infinity;
+    for (let i = 0; i < this.cards.length; i++) for (let j = i + 1; j < this.cards.length; j++) {
+      const a = this.cards[i], b = this.cards[j];
+      cell = Math.min(cell, Math.hypot(a.px - b.px, a.py - b.py));
+    }
+    if (!isFinite(cell)) cell = c.height * 0.25;
+    this.cardW = Math.min(cell * 0.78, c.height * 0.2);
+    this.cardH = this.cardW * 1.18;
+    this.radiusPx = lv.radius * this.sw();
+    this.open = [];               // the one or two cards turned up and not yet matched
+    this.hideAt = 0;              // when a mismatched pair turns back
+    this._dwells = {};
+    this.peekUntil = peekFrom + PAIR_PEEK_BASE + PAIR_PEEK_MS * pairs;
+    this.phase = "peek";
+    this._prompt("Have a good look", "The cards turn face down in a moment");
+    if (this.boardsCleared === 0 || this.level <= 2) {
+      this._speak("Have a good look at the cards. In a moment they turn face down, and you find the pairs.");
+    }
+  }
+
+  // the nearest card the hand is over, or null: one card at a time, so a
+  // hand between two cards never turns both. In pixels, against the frozen
+  // board, at the palm (wrist fallback) like every other game.
+  _hovered() {
+    const c = this.canvas;
+    const h = this.t.palmPx?.(this.side, c) || this.t.handPx(this.side, c);
+    if (!h) return null;
+    let best = null, bd = Infinity;
+    this.cards.forEach((k, i) => { const d = Math.hypot(h.x - k.px, h.y - k.py); if (d < bd) { bd = d; best = i; } });
+    return bd < this.radiusPx ? best : null;
+  }
+
+  update(now, dt) {
+    const lv = this._lv();
+    // the turn animation
+    const step = A11Y.calm ? 1 : dt / PAIR_FLIP_MS;
+    for (const k of this.cards) k.f = k.up ? Math.min(1, k.f + step) : Math.max(0, k.f - step);
+
+    if (this.doneAt) {
+      if (now - this.doneAt > 3400) {
+        this.doneAt = 0;
+        this.boardsCleared++;
+        if (this.level < PAIR_MAX) { this.level++; this.say(`Level ${this.level}. A few more cards this time.`); }
+        else this.say("Another board.");
+        this._newBoard(now);
+      }
+      return;
+    }
+    if (this.phase === "peek") {
+      if (now >= this.peekUntil) {
+        this.phase = "play";
+        for (const k of this.cards) k.up = false;
+        this._prompt("Find the pairs", "Hold your hand on a card to turn it over");
+        setTimeout(() => { if (this.active && this.phase === "play") this._prompt(""); }, 3200);
+        this.fb.lastEvent = now;
+      }
+      return;
+    }
+    // a mismatched pair turns back after its moment
+    if (this.hideAt) {
+      if (now >= this.hideAt) {
+        for (const i of this.open) { this.cards[i].up = false; this.cards[i].coolUntil = now + PAIR_COOL_MS; this.clearDwell(`c${i}`); }
+        this.open = []; this.hideAt = 0;
+      }
+      return;
+    }
+    const hi = this._hovered();
+    // dwell on one card at a time: any other card's progress is dropped
+    for (let i = 0; i < this.cards.length; i++) if (i !== hi) this.clearDwell(`c${i}`);
+    if (hi == null) return;
+    const k = this.cards[hi];
+    if (k.up || k.matched || now < k.coolUntil || this.open.length >= 2) return;
+    const f = this.dwellProgress(`c${hi}`, true, now);
+    if (f < 1) return;
+    this.clearDwell(`c${hi}`);
+    k.up = true;
+    this.open.push(hi);
+    this.hit({ reachFrac: k.reachFrac }, Math.min(7, this.open.length + 1));
+    if (this.open.length < 2) return;
+    // two are up: a pair stays, anything else goes back after a moment
+    this.turns++;
+    const [a, b] = this.open.map(i => this.cards[i]);
+    if (a.kind === b.kind) {
+      a.matched = b.matched = true;
+      this.open = [];
+      this.pairsFound++;
+      this.stats.stars += 15;
+      audio.note(6);
+      this.burstAtPx(a.px, a.py, "#9fc08a"); this.burstAtPx(b.px, b.py, "#9fc08a");
+      if (this.cards.every(q => q.matched)) {
+        this.doneAt = now;
+        audio.fanfare();
+        this.say("You found them all!");
+      } else if (this.pairsFound % 3 === 0) this.say(["A pair! Lovely.", "That's a match.", "Well remembered."][this.pairsFound % 3]);
+    } else {
+      this.wrongTurns++;
+      this.hideAt = now + PAIR_SHOW_MS;
+      audio.note(1);
+      if (this.wrongTurns === 2 || this.wrongTurns % 5 === 0) this.say("Not those two. They go back. Have another go.");
+    }
+  }
+
+  drawBg(ctx, c) {
+    const g = ctx.createRadialGradient(c.width / 2, c.height * 0.45, 60, c.width / 2, c.height * 0.45, c.height * 0.95);
+    g.addColorStop(0, "#2c3556"); g.addColorStop(1, "#141830");
+    ctx.fillStyle = g; ctx.fillRect(0, 0, c.width, c.height);
+    twinkles(ctx, c);
+  }
+
+  // a burst at a screen point (the board lives in pixels, not the body frame)
+  burstAtPx(x, y, color) {
+    for (let i = 0; i < 14; i++) {
+      const a = Math.random() * TAU, sp = 2 + Math.random() * 4;
+      this.particles.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: 1, color });
+    }
+  }
+
+  draw(ctx, c, now) {
+    const P = this.cards.map(k => ({ x: k.px, y: k.py }));
+    const W = this.cardW, H = this.cardH, R = W * 0.14;
+    const pulse = Math.sin(now / 360) * 0.5 + 0.5;
+    const hi = this.phase === "play" && !this.hideAt && !this.doneAt ? this._hovered() : null;
+    ctx.save();
+    this.cards.forEach((k, i) => {
+      const p = P[i];
+      // the turn: the card narrows to an edge and widens again, face up
+      // for the second half
+      const s = Math.abs(Math.cos(k.f * Math.PI));
+      const faceUp = k.f > 0.5;
+      const w = Math.max(W * s, 2);
+      const x = p.x - w / 2, y = p.y - H / 2;
+      ctx.save();
+      if (k.matched) ctx.globalAlpha = 0.72;
+      if (faceUp) {
+        roundedRect(ctx, x, y, w, H, R, k.matched ? "#dfe9c8" : "#fdf6e3", k.matched ? "#b9cf9c" : "#e9dcc0");
+        if (s > 0.35) {
+          ctx.save();
+          ctx.translate(p.x, p.y); ctx.scale(s, 1);
+          drawGlyph(ctx, k.kind, 0, 0, W * 0.3, k.matched ? "#6f9b58" : "#c77f4a", k.matched ? "#dfe9c8" : "#fdf6e3");
+          ctx.restore();
+        }
+      } else {
+        roundedRect(ctx, x, y, w, H, R, "#2f3358", "#1b1b3a");
+        ctx.strokeStyle = "rgba(244,236,221,0.35)"; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.roundRect(x + 5, y + 5, Math.max(w - 10, 1), H - 10, R * 0.7); ctx.stroke();
+        if (s > 0.35) {   // a small mark on the back, so the backs read as cards
+          ctx.fillStyle = "rgba(232,168,106,0.55)";
+          ctx.beginPath(); ctx.arc(p.x, p.y, W * 0.08, 0, TAU); ctx.fill();
+        }
+      }
+      ctx.restore();
+      // the card the hand is over: a soft ring and the hold's progress
+      if (hi === i && !k.up && !k.matched) {
+        ctx.strokeStyle = `rgba(232,168,106,${0.45 + pulse * 0.4})`; ctx.lineWidth = 4; ctx.setLineDash([8, 9]);
+        ctx.beginPath(); ctx.roundRect(x - 8, y - 8, w + 16, H + 16, R + 6); ctx.stroke(); ctx.setLineDash([]);
+        const f = Math.min(1, (this._dwells?.[`c${i}`]?.acc ?? 0) / A11Y.dwellMs);
+        if (f > 0) {
+          ctx.strokeStyle = "#9fc08a"; ctx.lineWidth = 6;
+          ctx.beginPath(); ctx.arc(p.x, p.y, W * 0.62, -Math.PI / 2, -Math.PI / 2 + TAU * f); ctx.stroke();
+        }
+      }
+    });
+    ctx.restore();
+    // the peek's remaining time, as a thin bar above the grid: "they turn
+    // over in a moment" drawn, not counted down out loud
+    if (this.phase === "peek" && this.peekUntil > now) {
+      const total = PAIR_PEEK_BASE + PAIR_PEEK_MS * (this.cards.length / 2);
+      const f = Math.max(0, Math.min(1, (this.peekUntil - now) / total));
+      const top = Math.min(...P.map(p => p.y)) - H / 2 - 26;
+      const bw = c.width * 0.28;
+      ctx.fillStyle = "rgba(244,236,221,0.18)";
+      ctx.beginPath(); ctx.roundRect(c.width / 2 - bw / 2, top, bw, 8, 4); ctx.fill();
+      ctx.fillStyle = "#e8a86a";
+      ctx.beginPath(); ctx.roundRect(c.width / 2 - bw / 2, top, bw * f, 8, 4); ctx.fill();
+    }
+    this.drawTimerWhisper(ctx, c, now);
+  }
+
+  extra() {
+    return {
+      pairsLevel: this.level,
+      boardsCleared: this.boardsCleared,
+      pairsFound: this.pairsFound,
+      turns: this.turns,             // two-card turns taken
+      wrongTurns: this.wrongTurns,   // of which mismatches (a memory slip, never a motor miss)
+      cards: this._lv().cols * this._lv().rows,
+      cardRadiusSW: this._lv().radius,
+    };
+  }
+}
+
 // `trains` = the one movement the game trains, shown on its card so
 // therapists can prescribe by movement (MindMotion labeling pattern).
 export const GAMES = [
@@ -5445,16 +8410,23 @@ export const GAMES = [
   { id: "drift", name: "Drift", cls: Drift, disabled: true, trains: "Interception" },
   { id: "ember", name: "Ember Watch", cls: EmberWatch, disabled: true, trains: "Reach and hold" },
   { id: "lantern", name: "Lantern Release", cls: LanternRelease, disabled: true, trains: "Carry and release" },
-  { id: "pong", name: "Arc Pong", cls: ArcPong, trains: "Continuous control" },
+  // two cards on the select screen (main.js): Pong FE (elevation) and Pong
+  // Abd-Add (sideways), the same class with opts.axis "fe" | "abd"
+  { id: "pong", name: "Pong", cls: ArcPong, trains: "Continuous control" },
   { id: "rhythm", name: "Melody Tiles", cls: MelodyTiles, disabled: true, trains: "Timed reaching" },
   { id: "boxes", name: "Harbor Crates", cls: HarborCrates, disabled: true, trains: "Grasp and carry" },
   { id: "compass", name: "Compass Rose", cls: CompassRose, disabled: true, trains: "Center-out reach" },
   { id: "echo", name: "Echo Reach", cls: EchoReach, disabled: true, trains: "Position sense" },
   // --- Aug 2026 additions: Tier 1 (no new tracking needed) ---
-  { id: "lens", name: "Scratch Cards", cls: LighthouseLens, trains: "Sweeping coverage" },
-  { id: "dots", name: "Connect the Dots", cls: ConnectDots, trains: "Point-to-point reach" },
-  { id: "rgs", name: "Catch Together", cls: CatchTogether, trains: "Both arms together" },
-  { id: "sling", name: "Cloud Slingshot", cls: CloudSlingshot, trains: "Pull, hold and release" },
+  { id: "lens", name: "Scratch Cards", disabled: true, cls: LighthouseLens, trains: "Sweeping coverage" },
+  { id: "dots", name: "Connect the Dots", disabled: true, cls: ConnectDots, trains: "Point-to-point reach" },
+  // Lantern (Oct 2026, by request): chained reaches along a glowing line, from a candle box and back
+  { id: "candles", name: "Lantern", cls: Candles, trains: "Point-to-point reach" },
+  // the card-matching Memory game from the mockups (Sep 2026, by request)
+  { id: "pairs", name: "Memory Pairs", cls: MemoryPairs, trains: "Reach and remember" },
+  // bimanual by definition, so off while every game is for the chosen arm alone
+  { id: "rgs", name: "Catch Together", cls: CatchTogether, disabled: true, trains: "Both arms together" },
+  { id: "sling", name: "Cloud Slingshot", disabled: true, cls: CloudSlingshot, trains: "Pull, hold and release" },
   { id: "crane", name: "Crane Keeper", cls: CraneKeeper, disabled: true, trains: "Hold high + squeeze" },
   { id: "feather", name: "Feather Lantern", cls: FeatherLantern, disabled: true, trains: "Slow lowering" },
   { id: "buoys", name: "Two Lights", cls: TwoLights, disabled: true, trains: "Speed and accuracy" },

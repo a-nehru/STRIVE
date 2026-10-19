@@ -284,16 +284,117 @@ class GameAudio {
     this._ensure();
     this._tone(392, this.ctx.currentTime, 0.08, "sine", 0.05, 0.005);
   }
-  paddle() {   // woody "pock" of a paddle return — physical, distinct from the melody
+  paddle(mine = true, rally = 0) {   // the "pock" of a paddle return: a click of contact and a
+    this._ensure();       // woody tone, a fifth brighter for the patient's own returns, and
+    const t = this.ctx.currentTime;   // rising a semitone a hit through a rally (an octave at most)
+    const k = Math.pow(2, Math.min(12, Math.max(0, rally | 0)) / 12);
+    this._noise(t, 0.03, 2400, 1.2, 0.09, this.fxBus);
+    this._tone((mine ? 659.25 : 523.25) * k, t, 0.09, "triangle", 0.2, 0.003);
+    this._tone((mine ? 329.63 : 261.63) * k, t, 0.14, "sine", 0.14, 0.003);
+  }
+  smash() {    // the smash: a rising whoosh into a low thump and a bright ring
     this._ensure();
     const t = this.ctx.currentTime;
-    this._tone(523.25, t, 0.07, "triangle", 0.14, 0.004);
-    this._tone(261.63, t, 0.11, "sine", 0.1, 0.004);
+    this._noise(t, 0.35, 900, 0.8, 0.16, this.fxBus);
+    const o = this.ctx.createOscillator(), g = this.ctx.createGain();
+    o.type = "sawtooth";
+    o.frequency.setValueAtTime(220, t);
+    o.frequency.exponentialRampToValueAtTime(880, t + 0.25);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.12, t + 0.05);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.35);
+    o.connect(g).connect(this.fxBus);
+    o.start(t); o.stop(t + 0.4);
+    this._tone(110, t + 0.02, 0.3, "sine", 0.2, 0.005);
+    [7, 9].forEach((p, i) => this._tone(PENTA[p % PENTA.length] * 2, t + 0.12 + i * 0.07, 0.5, "sine", 0.12, 0.01, true));
   }
-  point() {    // scored a point vs the AI
+  // THE TRICK SHOTS (Sep 2026): each has its own short voice, so the ear
+  // knows which one just fired. The smash keeps its whoosh and thump.
+  trick(kind = "smash") {
+    if (kind === "smash") return this.smash();
+    this._ensure();
+    const t = this.ctx.currentTime;
+    if (kind === "curve") {          // a tone that bends up and away
+      const o = this.ctx.createOscillator(), g = this.ctx.createGain();
+      o.type = "sine";
+      o.frequency.setValueAtTime(330, t);
+      o.frequency.exponentialRampToValueAtTime(660, t + 0.2);
+      o.frequency.exponentialRampToValueAtTime(495, t + 0.5);
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.14, t + 0.04);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.55);
+      o.connect(g).connect(this.fxBus);
+      o.start(t); o.stop(t + 0.6);
+    } else if (kind === "ghost") {   // an airy hush that thins away
+      this._noise(t, 0.6, 1600, 0.7, 0.07, this.fxBus);
+      this._tone(PENTA[4] * 2, t + 0.05, 0.7, "sine", 0.05, 0.2, true);
+    } else if (kind === "zigzag") {  // four quick bright ticks, climbing
+      [0, 1, 2, 3].forEach(i => this._tone(PENTA[(i + 3) % PENTA.length] * 2, t + i * 0.06, 0.12, "triangle", 0.1, 0.003));
+      this._noise(t, 0.12, 5000, 1.5, 0.05, this.fxBus);
+    } else if (kind === "feather") { // a soft settling note, then a lift
+      this._tone(PENTA[2], t, 0.5, "sine", 0.09, 0.08, true);
+      this._tone(PENTA[5 % PENTA.length] * 2, t + 0.3, 0.4, "sine", 0.07, 0.02, true);
+    }
+  }
+  point() {    // the patient's point: a rising three-note ring
     this._ensure();
     const t = this.ctx.currentTime;
     [4, 6, 7].forEach((p, i) => this._tone(PENTA[p % PENTA.length], t + i * 0.09, 0.4, "sine", 0.13, 0.012, true));
+  }
+  pointLost() {   // the star's point: two soft falling notes, in key, never a buzzer
+    this._ensure();
+    const t = this.ctx.currentTime;
+    this._tone(PENTA[3], t, 0.35, "sine", 0.09, 0.015, true);
+    this._tone(PENTA[1], t + 0.18, 0.5, "sine", 0.08, 0.015, true);
+  }
+  // Lantern (the Lamplighter of Lumen, Oct 2026): the mockup's synthesized
+  // sounds rebuilt on the fx bus. kind: pickup | light (a = combo, b =
+  // golden) | wrong | puff | moth | hold (a = 0..1) | hoot | constellation |
+  // target | slip | levelEnd (a = went up)
+  lumen(kind, a = 0, b = false) {
+    this._ensure();
+    const t = this.ctx.currentTime;
+    const semi = (f, s) => f * Math.pow(2, s / 12);
+    switch (kind) {
+      case "pickup":
+        this._tone(660, t, 0.12, "triangle", 0.1, 0.01);
+        this._tone(990, t + 0.06, 0.16, "triangle", 0.08, 0.01);
+        this._noise(t, 0.18, 3500, 0.8, 0.03, this.fxBus);
+        break;
+      case "light": {   // a bell whose pitch climbs with the combo
+        const base = semi(523.25, Math.min(a, 8) * 2);
+        [1, 2, 3].forEach((m, i) => this._tone(base * m, t + i * 0.01, 0.7 - i * 0.15, "sine", 0.14 / (i + 1), 0.01, true));
+        if (b) [0, 4, 7, 12].forEach((s, i) => this._tone(semi(base * 2, s), t + 0.1 + i * 0.07, 0.3, "triangle", 0.06, 0.01));
+        break;
+      }
+      case "wrong":
+        this._tone(196, t, 0.22, "square", 0.04, 0.01);
+        this._tone(155, t + 0.08, 0.3, "square", 0.035, 0.01);
+        break;
+      case "puff": this._noise(t, 0.45, 500, 0.6, 0.18, this.fxBus); break;
+      case "moth":
+        this._noise(t, 0.25, 220, 2, 0.1, this.fxBus);
+        this._noise(t + 0.08, 0.25, 260, 2, 0.1, this.fxBus);
+        this._noise(t + 0.15, 0.4, 500, 0.8, 0.16, this.fxBus);
+        break;
+      case "hold": this._tone(440 + a * 660, t, 0.07, "sine", 0.04, 0.005); break;
+      case "hoot":
+        this._tone(440, t, 0.16, "sine", 0.06, 0.03);
+        this._tone(392, t + 0.2, 0.28, "sine", 0.06, 0.03);
+        break;
+      case "constellation":
+        [0, 4, 7, 12, 16, 19].forEach((s, i) => this._tone(semi(523.25, s), t + i * 0.08, 0.6, "sine", 0.1, 0.01, true));
+        break;
+      case "target":
+        [0, 4, 7].forEach((s, i) => this._tone(semi(392, s), t + i * 0.12, 0.18, "triangle", 0.12, 0.01));
+        [0, 4, 7, 12].forEach(s => this._tone(semi(523.25, s), t + 0.4, 0.9, "triangle", 0.08, 0.01, true));
+        break;
+      case "slip": this._tone(520, t, 0.16, "triangle", 0.04, 0.01); break;
+      case "levelEnd":
+        if (a) [0, 4, 7, 12].forEach((s, i) => this._tone(semi(523.25, s), t + i * 0.1, 0.35, "triangle", 0.1, 0.01, true));
+        else [0, 7].forEach((s, i) => this._tone(semi(440, s), t + i * 0.15, 0.4, "sine", 0.07, 0.01));
+        break;
+    }
   }
   serveTick(final = false) {
     this._ensure();

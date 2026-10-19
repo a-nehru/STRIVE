@@ -4,3 +4,20 @@ desktop.ini
 __pycache__/
 # SMTP credentials for tools/mail_bridge.py - never commit these
 tools/mail_config.json
+# session reminders set from the game: participant email addresses
+tools/reminders.json
+# progress snapshots pushed by the game for update-by-email: patient data
+tools/snapshots/
+# downloaded on first use by tools/zed_track.py (MediaPipe hand model)
+tools/models/
+# raw recordings, logs and scratch: not part of the site (two are over GitHub's 100 MB limit)
+assets/*.mp4
+assets/*.zip
+assets/music/WIN_*.mp4
+assets/music/assessment_instructions.mp4
+assets/music/rom_assessment.mp4
+assets/music/*.docx
+tools/*.log
+pong_score.png
+assess_test.html
+mockups/*.zip

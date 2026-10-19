@@ -1,31 +1,43 @@
 import { Tracker } from "./tracker.js";
 import { Assessment } from "./assessment.js";
-import { GAMES } from "./games.js";
+import { GAMES, STAR_RANKS, CANDLE_MAX, LUMEN_STAGES } from "./games.js";
+import { Warmup } from "./warmup.js";
 import { SONGS } from "./songs.js";
-import { initialParams, adjust } from "./dda.js";
-import { drawBody } from "./engine.js";
+import { initialParams, adjust, LIMITS } from "./dda.js";
+import { drawBody, drawVideoMirror } from "./engine.js";
 import { store } from "./storage.js";
+import { drawVillage, villageLine, villageCounts } from "./village.js";
 import { audio } from "./audio.js";
 import { A11Y, applySettings, speakLine } from "./a11y.js";
-import { probeMail, sendMail, mailTarget, mailReady, diagnostics, progressReport } from "./mail.js";
+import { probeMail, sendMail, mailTarget, mailReady, diagnostics, progressReport, setReminder, pushSnapshot } from "./mail.js";
+
+// "12 min" / "1 h 05 min"
+const fmtDur = ms => { const m = Math.round(ms / 60000); return m >= 60 ? `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, "0")} min` : `${m} min`; };
+const dayKey = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
 const $ = id => document.getElementById(id);
+
+// Menu pre-selection is OFF (Sep 2026, by request): no card is highlighted
+// in advance and Enter/Space select nothing, so a menu only ever advances on
+// a click. Flip this back on to restore the "default-first" flow (one
+// recommended card pre-focused, arrow keys to move, Enter to go).
+const MENU_KEYS = false;
+const focusHint = el => { if (MENU_KEYS && el) el.classList.add("kbd-focus"); };
 const SCREENS = ["screen-login", "screen-welcome", "screen-select", "stage", "screen-between", "screen-romcompare", "screen-collections", "screen-profile"];
 
 const state = {
   tracker: null,
   side: "right",
-  sideChosen: false,   // true once the patient (welcome lift) or staff (drawer) picked a hand — asked once, never re-asked
+  sideChosen: false,   // true once the arm was chosen at login (or by the staff drawer) — asked once, never re-asked
   patient: "guest",
   coachSens: "gentle",
   pongMode: "solo",
-  // "auto" follows the level unlock (1 rally -> 2 +grip -> 3 +spin). It used
-  // to default to "both", which handed a brand-new patient the Grip Shot in
-  // round 1: squeezing as the ball arrives CATCHES it and pins it to the
-  // paddle until the hand opens, which without warning just reads as the ball
-  // sticking to your hand. Staff can still force any combination.
-  pongSkills: "auto",
+  pongAxis: "fe",      // "fe" Pong FE (up and down) | "abd" Pong Abd-Add (side to side), picked on the select screen
   oarsMode: "together",
+  candlesMode: "solo",   // Lantern: "solo" | "together" (other hand keeps the candle) | "hold" (trained arm keeps it)
+  candlesLevelPick: null, // Lantern: a level chosen on the level map or in the drawer for the NEXT round only (testing); else the ladder
+  pongSpeed: "normal",   // Pong ball-speed dial: chill | normal | frantic (both the single and the two-player game)
+  pongPowerups: true,    // Pong: the orbs and their power-ups
   ferryMode: "solo",
   song: "mary",
   tilesMode: "one",
@@ -39,6 +51,10 @@ function show(id) {
   for (const s of SCREENS) $(s).classList.add("hidden");
   $(id).classList.remove("hidden");
   state.screen = id;
+  if (id === "screen-welcome") state.warmedUp = false;   // a fresh session may stretch again
+  // the floating Help follows the stage and the result screens; the welcome
+  // and the menu carry their own inline buttons instead
+  $("btn-help").classList.toggle("hidden", ["screen-login", "screen-welcome", "screen-select"].includes(id));
 }
 
 function resize() { const c = $("canvas"); c.width = innerWidth; c.height = innerHeight; }
@@ -88,7 +104,7 @@ async function boot() {
 // stored under rehabsuite-v1 immediately, so stars, profiles and history come
 // back next visit. The camera keeps warming up in the background meanwhile.
 function loginStep(step) {
-  for (const s of ["login-choice", "login-list", "login-create"])
+  for (const s of ["login-choice", "login-list", "login-create", "login-arm"])
     $(s).classList.toggle("hidden", s !== step);
   if (step === "login-create") setTimeout(() => $("login-name").focus(), 50);
 }
@@ -110,17 +126,68 @@ function renderLoginPeople() {
   return people.length;
 }
 
+// The trained arm is chosen ONCE, at setup, and everything downstream — the
+// assessment, every game, the profile — is for that arm alone. A record
+// without one (brand new, or saved before this existed) is asked before
+// going any further; after that it is never re-asked. The staff drawer's arm
+// select is the therapist's override and writes the same field.
+let pendingLogin = null;
 function loginAs(name, isNew) {
+  const p = store.login(name);
+  if (!p.arm) {
+    pendingLogin = { name, isNew };
+    $("login-arm-who").textContent = name === "guest"
+      ? "Which arm are we training?" : `Which arm are we training, ${name}?`;
+    loginStep("login-arm");
+    return;
+  }
+  finishLogin(name, isNew, p.arm);
+}
+for (const arm of ["left", "right"]) {
+  $(`btn-login-arm-${arm}`).addEventListener("click", () => {
+    if (!pendingLogin) return;
+    const { name, isNew } = pendingLogin; pendingLogin = null;
+    store.setArm(name, arm);
+    finishLogin(name, isNew, arm);
+  });
+}
+$("btn-login-back3").addEventListener("click", () => { pendingLogin = null; loginStep("login-choice"); });
+
+function finishLogin(name, isNew, arm) {
   state.patient = name;
-  store.login(name);
+  state.side = arm;
+  state.sideChosen = true;
+  $("in-arm").value = arm;                 // keep the staff drawer in sync
   // a new person at the camera: forget whoever the tracker was following, so
   // the body lock re-acquires instead of holding on to the last participant
   state.tracker?.relock();
   loadSettings(name);                      // this patient's comfort settings take effect
   $("in-patient").value = name;            // keep the staff drawer in sync
   $("in-shoulder").value = store.getPatient(name).shoulderCm ?? "";
+  // the staff drawer shows this participant's contact and reminder
+  const c = store.getPatient(name).contact || {};
+  $("in-email").value = c.email || "";
+  $("in-remind-time").value = c.remindAt || "";
+  $("in-remind-days").value = c.remindDays || "off";
   show("screen-welcome");
   if (name !== "guest") speak(isNew ? `Nice to meet you, ${name}.` : `Welcome back, ${name}.`);
+  notifyLogin(name, arm);
+  syncReminder(name);
+  snapshot(name);
+}
+
+// A login notice to the therapist's address (Sep 2026, by request). Only
+// through the local relay: with no relay there is no pop-up mail window on
+// a patient's login, just nothing.
+async function notifyLogin(name, arm) {
+  if (name === "guest") return;
+  if (!mailReady()) await probeMail();
+  if (!mailReady()) return;
+  const p = store.getPatient(name);
+  const r = await sendMail("login", `Login — participant ${name}`,
+    `Participant ${name} logged in at ${new Date().toLocaleString()}.\nTraining arm: ${arm}\n` +
+    `Rounds on record: ${p.sessions.length}\n\n${diagnostics(state, state.tracker)}\n`);
+  mailState(r.ok ? `Mail: login notice sent to ${mailTarget()}` : `Mail: login notice failed — ${r.error}`, r.ok ? "ok" : "bad");
 }
 
 $("btn-login-existing").addEventListener("click", () => {
@@ -138,7 +205,30 @@ $("login-people").addEventListener("click", e => {
 function createLogin() {
   const name = $("login-name").value.trim();
   if (!name) { $("login-name").focus(); return; }
+  // optional contact and reminder, asked once here; the staff drawer can change it
+  const email = $("login-email").value.trim();
+  const remindAt = $("login-remind-time").value, remindDays = $("login-remind-days").value;
+  if (email || remindDays !== "off") store.setContact(name, { email, remindAt, remindDays });
   loginAs(name, !store.hasPatient(name));   // existing name just logs in
+}
+
+// the progress snapshot the relay answers update-by-email from: pushed at
+// login, after every round and after an assessment, so an emailed request
+// is answered from the last time this participant used STRIVE
+function snapshot(name) {
+  if (!name || name === "guest") return;
+  const p = store.getPatient(name);
+  pushSnapshot(name, progressReport(name, p, p.arm || state.side), store.exportPatient(name));
+}
+
+// push this participant's reminder to the relay (which sends it when due)
+async function syncReminder(name) {
+  const p = store.getPatient(name);
+  const c = p.contact;
+  if (!c) return;
+  const r = await setReminder({ name, email: c.email, time: c.remindAt, days: c.email && c.remindAt ? c.remindDays : "off", arm: p.arm });
+  if (r.ok) mailState(c.email && c.remindDays !== "off"
+    ? `Mail: reminder set for ${name} at ${c.remindAt} (${c.remindDays})` : `Mail: no reminder for ${name}`, "ok");
 }
 $("btn-login-create").addEventListener("click", createLogin);
 $("login-name").addEventListener("keydown", e => { if (e.key === "Enter") createLogin(); });
@@ -147,14 +237,55 @@ $("login-name").addEventListener("keydown", e => { if (e.key === "Enter") create
 // Setup gate: guide the patient until their whole upper body is in frame,
 // centered and at a good distance, settled for a moment. Only then offer
 // the raise-hand start. A click anywhere is the staff override.
+// Lenient on distance on purpose: patients are in an inpatient ward, in a
+// bed or chair anywhere from 5 to 15 ft from the camera, and cannot simply
+// scoot up to it. Everything downstream is in shoulder-width units, so far
+// away only costs pixels, not correctness. The one thing that matters is
+// that the tracker can see them at all: only a shoulder width too small for
+// any landmark to be trusted (about 0.03 of the frame, roughly 5 m on the
+// ZED's wide lens) asks them to come closer, and gently.
 function framingMessage(t) {
   if (!t.trackingOk) return "Take a seat facing the camera";
   if (t.shoulderWFast > 0.42) return "Sit back a little, so we can see your whole upper body";
-  if (t.shoulderWFast < 0.09) return "Come a little closer to the camera";
+  if (t.shoulderWFast < 0.03) return "If you can, come a little closer to the camera";
   if (!t.rawVis?.hips) return "Sit back a little, we want to see down to your hips";
-  if (t.anchorFast.x < 0.28 || t.anchorFast.x > 0.72) return "Scoot toward the middle of the picture";
-  if (t.anchorFast.y < 0.15 || t.anchorFast.y > 0.65) return "Adjust the camera so your shoulders sit near the middle";
+  if (t.anchorFast.x < 0.15 || t.anchorFast.x > 0.85) return "Scoot toward the middle of the picture";
+  if (t.anchorFast.y < 0.08 || t.anchorFast.y > 0.75) return "Adjust the camera so your shoulders sit near the middle";
   return null;
+}
+
+// ZED path with more than one person in view: a ring on each person's
+// shoulders, sage on the one being followed, amber on the rest, so staff can
+// click the patient once and the bridge follows them from then on. Returns
+// the hit boxes for the click handler. Mirrored like everything else drawn
+// over the camera picture.
+function drawPeopleMarkers(ctx, c, t) {
+  const people = t.people || [];
+  if (t.source !== "zed" || people.length < 2) return [];
+  const boxes = [];
+  for (const p of people) {
+    const px = t._videoToPx(1 - p.x, p.y, c);
+    const r = Math.max(36, Math.min(160, p.sw * c.width * 0.8));
+    const followed = p.seat === 0;
+    ctx.save();
+    ctx.beginPath(); ctx.arc(px.x, px.y, r, 0, Math.PI * 2);
+    ctx.strokeStyle = followed ? "rgba(159,192,138,0.95)" : "rgba(232,168,106,0.9)";
+    ctx.lineWidth = followed ? 5 : 3;
+    if (!followed) ctx.setLineDash([10, 8]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.font = "600 18px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    const label = followed ? "Following" : "Click to follow";
+    const tw = ctx.measureText(label).width + 22;
+    ctx.fillStyle = "rgba(16,16,40,0.75)";
+    ctx.beginPath(); ctx.roundRect(px.x - tw / 2, px.y - r - 34, tw, 28, 8); ctx.fill();
+    ctx.fillStyle = followed ? "#9fc08a" : "#e8a86a";
+    ctx.fillText(label, px.x, px.y - r - 14);
+    ctx.restore();
+    boxes.push({ id: p.id, x: px.x, y: px.y, r });
+  }
+  return boxes;
 }
 
 const TAU2 = Math.PI * 2;
@@ -162,10 +293,8 @@ const TAU2 = Math.PI * 2;
 // assessment's camera view)
 
 function watchWelcome() {
-  const raisedSince = { left: null, right: null }, closedSince = { left: null, right: null };
   let framedSince = null, squeezeSeen = false;
   let lastSpoken = "", lastSpokenAt = 0, inviteSaid = false;
-  const resetGesture = () => { raisedSince.left = raisedSince.right = null; closedSince.left = closedSince.right = null; };
   // spoken framing guidance, throttled so it never nags
   const guide = (text, now) => {
     if (text === lastSpoken || now - lastSpokenAt < 7000) return;
@@ -176,6 +305,17 @@ function watchWelcome() {
   const sub = document.querySelector("#screen-welcome .subline");
   const trackEl = $("welcome-track");
   const setText = (el, s) => { if (el.textContent !== s) el.textContent = s; };
+  // person markers drawn this frame (ZED, 2+ people): a click on one tells
+  // the bridge to follow that person. The canvas itself takes no pointer
+  // events (buttons sit above it), so the screen listens and hit-tests.
+  let personBoxes = [], pickedAt = 0;
+  $("screen-welcome").addEventListener("click", e => {
+    if (e.target.closest("button, a, select, input")) return;
+    const hit = personBoxes.find(b => Math.hypot(e.clientX - b.x, e.clientY - b.y) <= b.r + 12);
+    if (!hit) return;
+    pickedAt = performance.now();
+    state.tracker?.selectPerson(hit.id);
+  });
 
   // Fixed-size mini mirror: the skeleton is drawn into a small frame in the
   // lower-right corner at a constant scale (shoulders span a fixed fraction
@@ -225,79 +365,75 @@ function watchWelcome() {
     // tracking + feature status (so staff can see the whole chain is alive)
     if (t.handClosed("left") || t.handClosed("right")) squeezeSeen = true;
     const handFresh = t._handPts("left") != null || t._handPts("right") != null;
-    setText(trackEl, t.trackingOk
-      ? `Tracking: body ✓ · hand ${handFresh ? "✓" : "…"} · squeeze ${squeezeSeen ? "✓" : "… try closing your fist"}`
-      : "Tracking: looking for you …");
+    const crowd = t.source === "zed" && (t.people?.length ?? 0) > 1;
+    setText(trackEl, crowd && now - pickedAt < 4000
+      ? "Following the person you clicked"
+      : crowd
+        ? `${t.people.length} people in view. Staff: click the patient to follow them`
+      : t.trackingOk
+        ? `Tracking: body ✓ · hand ${handFresh ? "✓" : "…"} · squeeze ${squeezeSeen ? "✓" : "… try closing your fist"}`
+        : "Tracking: looking for you …");
 
     const msg = framingMessage(t);
     const framed = !msg;
-    const box = mirrorBox(c);
-    frameMirror(ctx, box, framed);
-    let mm = null;
-    if (t.trackingOk) {
-      mm = mirrorMap(t, c, box);
-      ctx.save();
-      clipMirror(ctx, box);
-      drawBody(ctx, c, t, { framed, map: mm.map, scale: mm.k });
-      ctx.restore();
-    }
+    // the real mirror, full screen: the camera picture with the tracked
+    // skeleton over the patient's own body (amber until framed, then sage),
+    // so "sit a little to the left" can be checked against the picture
+    // rather than against a small abstract figure in a corner
+    drawVideoMirror(ctx, c, t, 0.30);
+    if (t.trackingOk) drawBody(ctx, c, t, { framed });
+    personBoxes = drawPeopleMarkers(ctx, c, t);
 
     if (msg) {
-      framedSince = null; resetGesture();
+      framedSince = null;
       setText(head, "Let's get you settled");
       setText(sub, msg);
       guide(msg, now);
       return;
     }
     framedSince ??= now;
-    if (now - framedSince < 1400) {
+    // an unhurried moment of "that's it" before the invitation — this used
+    // to flip to "press Start" after 1.4 s, which read as being rushed
+    if (now - framedSince < 4500) {
       setText(head, "That's it");
       setText(sub, "Sit comfortably, just like that");
       return;
     }
     setText(head, "Ready when you are");
-    setText(sub, "Lift the hand you want to train, and squeeze to begin");
+    setText(sub, "Press Start when you're settled");
     if (!inviteSaid) {
       inviteSaid = true;
-      speak("Ready when you are. Lift the hand you want to train, and give it a squeeze.");
+      speak("Ready when you are. Press Start when you're settled.");
     }
 
-    // start gesture doubles as the LEFT/RIGHT choice: whichever hand is
-    // lifted + squeezed (fast) or just held up (fallback) becomes the
-    // session side — its label shows by the progress ring
-    for (const s of ["left", "right"]) {
-      const rel = t.handRel(s);
-      if (rel && rel.y > 0.15) {
-        raisedSince[s] ??= now;
-        if (t.handClosed(s)) closedSince[s] ??= now; else closedSince[s] = null;
-        const prog = Math.max((now - raisedSince[s]) / 3500, closedSince[s] ? (now - closedSince[s]) / 700 : 0);
-        let hp = t.palmPx(s, c);
-        if (hp && mm) hp = mm.map(hp);
-        if (hp) {
-          ctx.save();
-          clipMirror(ctx, box);
-          ctx.strokeStyle = "#fff2c2"; ctx.lineWidth = 4;
-          ctx.beginPath(); ctx.arc(hp.x, hp.y, 20, -Math.PI / 2, -Math.PI / 2 + TAU2 * Math.min(1, prog)); ctx.stroke();
-          ctx.fillStyle = "rgba(244,236,221,0.9)";
-          ctx.font = "800 15px Nunito, sans-serif";
-          ctx.textAlign = "center";
-          ctx.fillText(s === "left" ? "Left hand" : "Right hand", hp.x, hp.y - 30);
-          ctx.restore();
-        }
-        if (prog >= 1) {
-          resetGesture();
-          state.side = s;                 // the lifted hand is the trained hand
-          state.sideChosen = true;        // asked once — the assessment won't re-ask
-          $("in-arm").value = s;          // keep the staff drawer in sync
-          enterSelect();
-          return;
-        }
-      } else { raisedSince[s] = null; closedSince[s] = null; }
-    }
+    // No gesture entry. The welcome screen's job is to get the patient framed
+    // and settled; it says so and then waits. Entering is the Start button
+    // (or Enter), never a hand that happened to rise into view — that used to
+    // fire before the patient had finished sitting down.
   }
   loop();
-  $("screen-welcome").addEventListener("click", enterSelect);
-  $("btn-welcome-start").addEventListener("click", e => { e.stopPropagation(); enterSelect(); });
+  $("btn-welcome-start").addEventListener("click", enterSelect);
+  $("btn-welcome-warmup").addEventListener("click", () => startWarmup());
+}
+
+// The opening stretch (Oct 2026, by request): optional, brief, led by the
+// short range-of-motion demonstration video (warmup.js). Nothing is
+// measured; the play time is logged as "warmup" and the hub follows.
+// `then` is what follows the stretch: the hub by default, or the
+// assessment when the stretch opens it (the ✕ skips straight to it).
+function startWarmup(then = null) {
+  if (!state.tracker) return;
+  const next = then || (() => { renderSelect(); show("screen-select"); speak("What shall we play today?"); });
+  show("stage");
+  const w = new Warmup(state.tracker, $("canvas"), { endLine: then ? "Lovely. Nice and loose. Now let's measure your reach." : null });
+  state.current = w;
+  state.warmedUp = true;
+  state.warmupThen = next;
+  w.start(res => {
+    state.current = null; state.warmupThen = null;
+    if (res?.seconds) store.logPlaytime(state.patient, res.seconds * 1000, "warmup");
+    next();
+  });
 }
 
 function enterSelect() {
@@ -406,6 +542,19 @@ const CARD_ART = {
       <text x="150" y="368" text-anchor="middle" font-family="Nunito" font-size="26" font-weight="800"
         fill="rgba(244,236,221,.55)">both hands</text>
     </svg></div>`,
+  pairs: `<div class="art" style="background:radial-gradient(circle at 50% 45%,#2c3556,#141830)">
+    <svg viewBox="0 0 300 400" style="position:absolute;inset:0;width:100%;height:100%">
+      <g fill="#2f3358" stroke="rgba(244,236,221,.35)" stroke-width="3">
+        <rect x="52" y="96" width="88" height="104" rx="12"/>
+        <rect x="160" y="216" width="88" height="104" rx="12"/>
+        <rect x="52" y="216" width="88" height="104" rx="12"/>
+      </g>
+      <circle cx="96" cy="148" r="7" fill="rgba(232,168,106,.55)"/>
+      <circle cx="204" cy="268" r="7" fill="rgba(232,168,106,.55)"/>
+      <circle cx="96" cy="268" r="7" fill="rgba(232,168,106,.55)"/>
+      <rect x="160" y="96" width="88" height="104" rx="12" fill="#fdf6e3"/>
+      <path d="M204 118 L213 140 L237 142 L218 157 L224 181 L204 168 L184 181 L190 157 L171 142 L195 140 Z" fill="#c77f4a"/>
+    </svg></div>`,
   dots: `<div class="art" style="background:radial-gradient(circle at 50% 45%,#2f2c58,#15152f)">
     <svg viewBox="0 0 300 400" style="position:absolute;inset:0;width:100%;height:100%">
       <path d="M150 96 L196 226 L86 146 L214 146 L104 226 Z" fill="none" stroke="#e8a86a" stroke-width="5"
@@ -417,6 +566,17 @@ const CARD_ART = {
       <circle cx="104" cy="226" r="8" fill="rgba(244,236,221,.45)"/>
       <text x="150" y="316" text-anchor="middle" font-family="Nunito" font-size="30" font-weight="800"
         fill="rgba(244,236,221,.55)">1 . 2 . 3</text>
+    </svg></div>`,
+  candles: `<div class="art" style="background:linear-gradient(180deg,#12122c,#1e1c42 70%,#2a2448)">
+    <svg viewBox="0 0 300 400" style="position:absolute;inset:0;width:100%;height:100%">
+      <path d="M70 330 L110 150 L200 210 L240 90" fill="none" stroke="#ffd98a" stroke-width="5" stroke-linecap="round" stroke-dasharray="14 12" opacity=".85"/>
+      <ellipse cx="110" cy="150" rx="18" ry="23" fill="#ffd98a"/><ellipse cx="110" cy="146" rx="8" ry="10" fill="#fff6d8"/>
+      <ellipse cx="200" cy="210" rx="18" ry="23" fill="#ffd98a"/><ellipse cx="200" cy="206" rx="8" ry="10" fill="#fff6d8"/>
+      <ellipse cx="240" cy="90" rx="18" ry="23" fill="rgba(45,42,80,.95)" stroke="rgba(232,168,106,.7)" stroke-width="2"/>
+      <rect x="40" y="320" width="60" height="38" rx="6" fill="#3b2a2a" stroke="rgba(244,236,221,.35)" stroke-width="2"/>
+      <rect x="52" y="298" width="7" height="24" rx="2" fill="#f4ecdd"/><rect x="66" y="298" width="7" height="24" rx="2" fill="#f4ecdd"/><rect x="80" y="298" width="7" height="24" rx="2" fill="#f4ecdd"/>
+      <path d="M69 286 Q76 276 69 266 Q62 276 69 286 Z" fill="#ffd98a"/>
+      <rect x="200" y="320" width="60" height="38" rx="6" fill="#3b2a2a" stroke="rgba(244,236,221,.2)" stroke-width="2"/>
     </svg></div>`,
   lens: `<div class="art" style="background:radial-gradient(circle at 50% 45%,#3d3a68,#171736)">
     <svg viewBox="0 0 300 400" style="position:absolute;inset:0;width:100%;height:100%">
@@ -563,42 +723,82 @@ const CARD_ART = {
     </svg></div>`,
 };
 
+// The lantern street at the top of the hub (village.js): drawn from the
+// patient's counts, with one line saying what has happened since they were
+// last here. The "seen" snapshot is taken after the line is built, so the
+// next visit compares against this one.
+let villageAnim = 0;
+function renderVillage() {
+  const v = store.getVillage(state.patient);
+  const today = dayKey(new Date());
+  $("village-line").textContent = villageLine(v, v.seen, today);
+  const c = villageCounts(v);
+  store.markVillageSeen(state.patient, { villagers: c.villagers, clouds: c.clouds, days: Object.keys(v.days || {}) });
+  const cv = $("village-canvas");
+  cancelAnimationFrame(villageAnim);
+  const frame = () => {
+    if ($("screen-select").classList.contains("hidden")) return;
+    drawVillage(cv, v);
+    if (!A11Y.calm) villageAnim = requestAnimationFrame(frame);
+  };
+  frame();
+}
+
 function renderSelect() {
   const wrap = $("cards");
   wrap.innerHTML = "";
+  renderVillage();
   document.querySelector("#screen-select h1").textContent = "What shall we play today?";
   const prof = store.getProfile(state.patient, state.side);
 
-  const mk = (id, name, locked, onClick, trains) => {
+  const mk = (id, name, locked, onClick, trains, lockText = "Measure your reach first") => {
     const b = document.createElement("button");
     b.className = "gcard";
     b.dataset.dwell = "1";
     b.innerHTML = CARD_ART[id] + `<div class="dwell-fill"></div>` +
       (trains ? `<div class="trains">${trains}</div>` : "") +
       `<div class="title">${name}</div>` +
-      (locked ? `<div class="lock">🔒<span>Measure your reach first</span></div>` : "");
+      (locked ? `<div class="lock">🔒<span>${lockText}</span></div>` : "");
     if (!locked) b.addEventListener("click", onClick);
     wrap.appendChild(b);
     return b;
   };
 
-  // a saved ROM stands: this card only measures what is missing, and says
-  // "Re-measure" when the press would deliberately replace stored values
-  const measured = store.getProfile(state.patient, "left") && store.getProfile(state.patient, "right");
-  const assessBtn = mk("assess", measured ? "Re-measure" : "Measure your reach", false,
-    () => startAssessment({ force: !!measured }));
+  // ONE ASSESSMENT A DAY (Sep 2026, by request): the day's session opens
+  // with the measurement and the games wait for it; once it is done the
+  // card locks until tomorrow. The staff drawer and the profile screen can
+  // still re-measure (an override, for the therapist).
+  const today = measuredToday(prof);
+  const assessBtn = mk("assess", today ? "Measured today" : prof ? "Today's measurement" : "Measure your reach", today,
+    () => startAssessment({ force: !!prof }), null, "Done for today");
   const gameBtns = {};
+  const gameLock = !prof ? "Measure your reach first" : !today ? "Today's measurement first" : null;
   for (const g of GAMES) {
     if (g.disabled) continue;
-    gameBtns[g.id] = mk(g.id, g.name, !prof, g.id === "pong" ? renderPongModes : () => startGame(g.id, true), g.trains);
+    if (g.id === "pong") {
+      // two Pongs, one card each (Sep 2026, by request): FE, the arm up and
+      // down; Abd-Add, the hand out to the side and across, on the lane the
+      // assessment measured
+      const go = axis => () => { state.pongMode = "solo"; state.pongAxis = axis; $("in-pong").value = "solo"; startGame("pong", true); };
+      gameBtns.pong = mk("pong", "Pong FE", !!gameLock, go("fe"), "Up and down", gameLock);
+      gameBtns["pong-abd"] = mk("pong", "Pong Abd-Add", !!gameLock, go("abd"), "Side to side", gameLock);
+      // and the same game for two (Oct 2026, by request): a tile of its own
+      gameBtns["pong-duo"] = mk("pong", "Pong: two players", !!gameLock,
+        () => { state.pongMode = "duo"; state.pongAxis = "fe"; $("in-pong").value = "duo"; renderDuoSetup(); }, "Play together", gameLock);
+      continue;
+    }
+    // the Lantern opens on its level map (Oct 2026, by request: any level
+    // can be tried), with the Guild board beside it
+    if (g.id === "candles") { gameBtns.candles = mk(g.id, g.name, !!gameLock, renderLanternLevels, g.trains, gameLock); continue; }
+    gameBtns[g.id] = mk(g.id, g.name, !!gameLock, () => startGame(g.id, true), g.trains, gameLock);
   }
   // default-first: one clearly recommended card, pre-focused so a single
-  // Enter continues the flow (no assessment yet → assess; else last played
-  // game; else the first game)
-  const suggested = !prof ? assessBtn : (gameBtns[state.lastGameId] || Object.values(gameBtns)[0]);
+  // Enter continues the flow (no measurement today → assess; else last
+  // played game; else the first game)
+  const suggested = gameLock ? assessBtn : (gameBtns[state.lastGameId] || Object.values(gameBtns)[0]);
   if (suggested) {
-    suggested.classList.add("kbd-focus");
-    suggested.insertAdjacentHTML("beforeend", `<div class="suggest">Start here</div>`);
+    focusHint(suggested);
+    if (MENU_KEYS) suggested.insertAdjacentHTML("beforeend", `<div class="suggest">Start here</div>`);
   }
 }
 
@@ -613,11 +813,19 @@ const PONG_MODES = [
   ["duo", "Two players", "Both of you tracked by the camera"],
 ];
 
-// Two-player Pong needs a ZED bridge streaming two seats: one webcam pose
-// model only ever reports a single body, so the mode is offered but explains
-// itself rather than failing silently mid-round.
+// Two-player Pong runs on either camera (Oct 2026): the ZED bridge streams
+// two seats, and on the webcam the tracker follows a second body itself
+// (`tracker.setSecond`). It only needs a tracker at all.
 function duoAvailable() {
-  return state.tracker?.source === "zed";
+  return !!state.tracker;
+}
+// a Pong-art card for the setup screens
+function pongCard(label, sub, onClick, art = CARD_ART.pong) {
+  const b = document.createElement("button");
+  b.className = "gcard"; b.dataset.dwell = "1";
+  b.innerHTML = art + `<div class="dwell-fill"></div><div class="title">${label}<small>${sub}</small></div>`;
+  b.addEventListener("click", onClick);
+  return b;
 }
 function renderPongModes() {
   const wrap = $("cards");
@@ -644,140 +852,277 @@ function renderPongModes() {
     if (id === state.pongMode || (!focusBtn && id === "solo")) focusBtn = b;
   }
   mk("↩ Back", "All games", renderSelect);
-  focusBtn?.classList.add("kbd-focus");   // current mode pre-focused: Enter just plays
+  focusHint(focusBtn);   // current mode pre-focused: Enter just plays
 }
 
-// Two-player setup: who is player 2, and the arm each of them plays with.
-// Both sides are chosen here and fixed for the round — the paddle follows the
-// seat, never "whichever arm is currently up", so nothing swaps mid-rally.
+// TWO-PLAYER SETUP (Oct 2026, by request: a tile of its own, the webcam
+// tracking both people, the partner measured briefly here). Player 1 is the
+// patient on their assessed arm. Player 2 is a PARTNER (a caregiver, a
+// friend): not a patient and never on the login screen. Their arm gets a
+// QUICK MEASURE (renderPartnerMeasure: three raises, about twenty seconds)
+// that sets their paddle's lane, kept under this patient
+// (store.savePartner); a patient already in the system can also be picked
+// by name, on their own assessed arm. Both arms are chosen here and fixed
+// for the game: the paddle follows the seat, never "whichever arm is up".
+// The head-to-head record lives here too, with its reset.
 function renderDuoSetup() {
   const wrap = $("cards");
   wrap.innerHTML = "";
   const h1 = document.querySelector("#screen-select h1");
   h1.textContent = "Who is playing together?";
-
-  if (!duoAvailable()) {
-    wrap.innerHTML = `<p class="hint">Two-player Pong needs the ZED camera running
-      with two seats: start it with <code>python tools/zed_bridge.py --bodies 2</code>,
-      then reload. A single webcam can only see one person at a time.</p>`;
-    const back = document.createElement("button");
-    back.className = "gcard"; back.dataset.dwell = "1";
-    back.innerHTML = CARD_ART.pong + `<div class="dwell-fill"></div><div class="title">↩ Back<small>Pong modes</small></div>`;
-    back.addEventListener("click", renderPongModes);
-    wrap.appendChild(back);
-    back.classList.add("kbd-focus");
-    return;
-  }
-
-  const others = store.listPatients()
-    .map(p => p.name).filter(n => n !== state.patient && n !== "guest");
-  state.duo = state.duo || { p2: others[0] || null, p1Side: state.side, p2Side: state.side };
-  state.duo.p1Side = state.side;
+  const partners = store.getPartners(state.patient);
+  const patients = store.listPatients().map(p => p.name).filter(n => n !== state.patient && n !== "guest" && !partners[n]);
+  const names = [...Object.keys(partners), ...patients];
+  state.duo = state.duo || { p2: names[0] || null, p2New: "", p1Side: state.side, p2Side: "right" };
+  const d = state.duo;
+  d.p1Side = state.side;
+  if (d.p2 && !names.includes(d.p2)) d.p2 = null;
+  const meas = d.p2 ? (partners[d.p2]?.[d.p2Side] || store.getProfile(d.p2, d.p2Side)) : null;
+  const riv = d.p2 ? store.getRivalry(state.patient, d.p2) : null;
 
   const row = (label, html) => `<div class="duo-row"><span>${label}</span>${html}</div>`;
   const sideSel = (id, val) => `<select id="${id}" data-dwell="1">
       <option value="left"${val === "left" ? " selected" : ""}>Left arm</option>
       <option value="right"${val === "right" ? " selected" : ""}>Right arm</option>
     </select>`;
+  const opt = (v, label, cur) => `<option value="${v}"${v === cur ? " selected" : ""}>${label}</option>`;
   wrap.innerHTML = `<div class="duo-setup">
-    ${row(`${state.patient} plays with`, sideSel("duo-p1side", state.duo.p1Side))}
-    ${row("Player 2", `<select id="duo-p2" data-dwell="1">
-        ${others.map(n => `<option value="${n}"${n === state.duo.p2 ? " selected" : ""}>${n}</option>`).join("")}
-        <option value="">Guest (full range)</option>
-      </select>`)}
-    ${row("Player 2 plays with", sideSel("duo-p2side", state.duo.p2Side))}
-    <p class="hint">Stand side by side, facing the camera. The camera keeps each
-      of you on your own paddle for the whole round. If someone steps out, their
-      paddle waits for them.</p>
+    ${row(`${state.patient} plays with`, sideSel("duo-p1side", d.p1Side))}
+    ${row("Player 2", `<span class="duo-ctl"><select id="duo-p2" data-dwell="1">
+        ${names.map(n => opt(n, n, d.p2)).join("")}
+        <option value="__new"${!d.p2 ? " selected" : ""}>New partner…</option>
+      </select><input id="duo-p2name" class="${d.p2 ? "hidden" : ""}" placeholder="Their name" maxlength="24" value="${(d.p2New || "").replace(/"/g, "")}"></span>`)}
+    ${row("Player 2 plays with", sideSel("duo-p2side", d.p2Side))}
+    ${row("Player 2's arm", meas
+      ? `<span class="duo-meas">Measured: <b>${Math.round(meas.arcMinDeg)}°–${Math.round(meas.arcMaxDeg)}°</b> <button class="btn ghost-light" id="duo-measure" data-dwell="1">Measure again</button></span>`
+      : `<span class="duo-meas">Not measured yet <button class="btn" id="duo-measure" data-dwell="1">Quick measure (20 s)</button></span>`)}
+    ${row("Ball speed", `<select id="duo-speed" data-dwell="1">${opt("chill", "Chill", state.pongSpeed)}${opt("normal", "Normal", state.pongSpeed)}${opt("frantic", "Frantic", state.pongSpeed)}</select>`)}
+    ${row("Power-ups", `<select id="duo-power" data-dwell="1">${opt("on", "On: orbs and power-ups", state.pongPowerups ? "on" : "off")}${opt("off", "Off", state.pongPowerups ? "on" : "off")}</select>`)}
+    ${riv && riv.games ? row("Head to head", `<span class="duo-meas">You <b>${riv.wins}</b> – <b>${riv.losses}</b> ${d.p2}${riv.draws ? ` · ${riv.draws} drawn` : ""} · best rally ever <b>${riv.bestRally}</b>
+        <button class="btn ghost-light" id="duo-reset" data-dwell="1">Reset record</button>
+        <span id="duo-reset-confirm" class="hidden">Really reset it? <button class="btn" id="duo-reset-yes">Yes, reset</button> <button class="btn ghost-light" id="duo-reset-no">Keep</button></span></span>`) : ""}
+    <p class="hint">Stand side by side, facing the camera, with ${state.patient} in view first. The camera keeps each
+      of you on your own paddle for the whole game; if someone steps out, their paddle waits for them.
+      Without a measure, player 2 gets a full-range lane.</p>
   </div>`;
 
-  const play = document.createElement("button");
-  play.className = "gcard"; play.dataset.dwell = "1";
-  play.innerHTML = CARD_ART.pong + `<div class="dwell-fill"></div><div class="title">Play<small>Start the rally</small></div>`;
-  play.addEventListener("click", () => {
-    state.side = $("duo-p1side").value;
-    $("in-arm").value = state.side;
-    state.duo.p1Side = state.side;
-    state.duo.p2 = $("duo-p2").value || null;
-    state.duo.p2Side = $("duo-p2side").value;
-    startGame("pong", true);
-  });
+  const p2Sel = $("duo-p2"), nameIn = $("duo-p2name");
+  const readP2 = () => p2Sel.value === "__new" ? (nameIn.value || "").trim() : p2Sel.value;
+  const sync = () => { d.p1Side = $("duo-p1side").value; d.p2Side = $("duo-p2side").value; if (p2Sel.value === "__new") { d.p2 = null; d.p2New = nameIn.value; } else d.p2 = p2Sel.value; };
+  p2Sel.addEventListener("change", () => { sync(); renderDuoSetup(); });
+  $("duo-p2side").addEventListener("change", () => { sync(); renderDuoSetup(); });
+  nameIn.addEventListener("input", () => { d.p2New = nameIn.value; });
+  $("duo-speed").addEventListener("change", e => { state.pongSpeed = e.target.value; $("in-pong-speed").value = state.pongSpeed; });
+  $("duo-power").addEventListener("change", e => { state.pongPowerups = e.target.value === "on"; $("in-pong-power").value = e.target.value; });
+  // the partner must have a name before anything is kept about them
+  const commitP2 = () => {
+    sync();
+    const n = readP2();
+    if (!n) { nameIn.classList.remove("hidden"); nameIn.placeholder = "Type their name first"; nameIn.focus(); return null; }
+    if (!partners[n] && !store.hasPatient(n)) store.savePartner(state.patient, n, {});
+    d.p2 = n; d.p2New = "";
+    state.side = d.p1Side; $("in-arm").value = state.side;
+    return n;
+  };
+  $("duo-measure").addEventListener("click", () => { if (commitP2()) renderPartnerMeasure(); });
+  if ($("duo-reset")) {
+    $("duo-reset").addEventListener("click", () => { $("duo-reset").classList.add("hidden"); $("duo-reset-confirm").classList.remove("hidden"); });
+    $("duo-reset-yes").addEventListener("click", () => { store.resetRivalry(state.patient, d.p2); renderDuoSetup(); });
+    $("duo-reset-no").addEventListener("click", () => { $("duo-reset").classList.remove("hidden"); $("duo-reset-confirm").classList.add("hidden"); });
+  }
+
+  const play = pongCard("Play", "Start the game", () => { if (commitP2()) startGame("pong", true); });
   wrap.appendChild(play);
+  wrap.appendChild(pongCard("↩ Back", "All games", renderSelect));
+  focusHint(play);
+}
 
-  const back = document.createElement("button");
-  back.className = "gcard"; back.dataset.dwell = "1";
-  back.innerHTML = CARD_ART.pong + `<div class="dwell-fill"></div><div class="title">↩ Back<small>Pong modes</small></div>`;
-  back.addEventListener("click", renderPongModes);
-  wrap.appendChild(back);
+// THE PARTNER'S QUICK MEASURE: about twenty seconds, three raises of the arm
+// they will play with, while the patient stays in view. The lowest and
+// highest arm elevation seen (tracker.armAngle2, the same convention as the
+// patient's assessment) become their paddle's lane. Brief on purpose: the
+// partner is not the one being treated.
+function renderPartnerMeasure() {
+  const wrap = $("cards");
+  wrap.innerHTML = "";
+  const d = state.duo, side = d.p2Side;
+  document.querySelector("#screen-select h1").textContent = `${d.p2}, let's measure your arm`;
+  wrap.innerHTML = `<div class="duo-setup">
+    <p class="duo-big">Stand beside ${state.patient}, facing the camera. Raise your <b>${side}</b> arm out and up as high as is
+      comfortable, then lower it again. <b>Three times.</b></p>
+    <div class="meas-bar"><div class="meas-fill" id="meas-fill"></div><div class="meas-mark" id="meas-now"></div></div>
+    <div class="duo-row"><span id="meas-state">Looking for you…</span><span id="meas-dots">○ ○ ○</span><span id="meas-time">25 s</span></div>
+  </div>`;
+  const t = state.tracker;
+  t.setSecond?.(true); t.relockSecond?.();
+  let lo = null, hi = null, cycles = 0, up = false, seen = false, t0 = performance.now(), timer = null, done = false;
+  const stop = () => { if (timer) clearInterval(timer); timer = null; };
+  const finish = () => {
+    if (done) return; done = true; stop();
+    if (lo != null && hi != null && hi - lo >= 15) {
+      store.savePartner(state.patient, d.p2, { [side]: { arcMinDeg: Math.round(lo), arcMaxDeg: Math.round(hi) } });
+      speakLine(`Lovely, ${d.p2}. Your range is measured.`);
+    } else speakLine("I could not see the arm clearly. We can try again, or play with a full-range lane.");
+    renderDuoSetup();
+  };
+  wrap.appendChild(pongCard("↩ Back", "Without measuring", () => { stop(); done = true; renderDuoSetup(); }));
+  speakLine(`${d.p2}, raise your ${side} arm as high as is comfortable, then lower it. Three times.`);
+  timer = setInterval(() => {
+    if (state.screen !== "screen-select") { stop(); return; }
+    const a = t.armAngle2?.(side);
+    const left = Math.max(0, 25 - (performance.now() - t0) / 1000);
+    $("meas-time").textContent = `${Math.ceil(left)} s`;
+    if (a == null) {
+      $("meas-state").textContent = seen ? "Lost you for a moment…" : `Looking for you… stand beside ${state.patient}`;
+      if (seen && left <= 0) finish();
+      else if (!seen && performance.now() - t0 > 40000) finish();
+      return;
+    }
+    if (!seen) { seen = true; t0 = performance.now(); }   // the clock starts once they are seen
+    lo = lo == null ? a : Math.min(lo, a); hi = hi == null ? a : Math.max(hi, a);
+    const span = hi - lo;
+    if (span > 30) {
+      if (!up && a > lo + span * 0.7) up = true;
+      else if (up && a < lo + span * 0.3) { up = false; cycles++; audio.note(Math.min(7, cycles * 2)); }
+    }
+    $("meas-fill").style.left = `${Math.max(0, lo) / 180 * 100}%`;
+    $("meas-fill").style.width = `${Math.max(0, span) / 180 * 100}%`;
+    $("meas-now").style.left = `${Math.max(0, Math.min(180, a)) / 180 * 100}%`;
+    $("meas-state").textContent = up ? "Lovely, now lower it" : "Raise your arm";
+    $("meas-dots").textContent = [0, 1, 2].map(i => i < cycles ? "●" : "○").join(" ");
+    if (cycles >= 3 || left <= 0) finish();
+  }, 50);
+}
 
-  play.classList.add("kbd-focus");
+// THE LANTERN'S LEVEL MAP (Oct 2026, by request: keep the level choice and
+// the leaderboard, so every stage can be tried). Six stages, every level a
+// button, the ladder's own level marked; the Guild board beside it.
+function renderLanternLevels() {
+  const wrap = $("cards");
+  wrap.innerHTML = "";
+  document.querySelector("#screen-select h1").textContent = "The Lantern: where shall we start?";
+  const cur = store.getLevel(state.patient, "candlesLevel");
+  const prog = store.getProgress(state.patient, "candlesLumen") || {};
+  const stars = prog.stars || {}, best = prog.best || {};
+  let html = `<div class="duo-setup lvl-map">`;
+  LUMEN_STAGES.forEach((st, k) => {
+    html += `<div class="lvl-stage"><div class="lvl-name">Stage ${k + 1} · ${st.name}</div><div class="lvl-row">`;
+    for (let L = st.from; L <= st.to; L++)
+      html += `<button class="lvl-btn${L === cur ? " cur" : ""}${best[L] ? " played" : ""}" data-level="${L}" data-dwell="1" title="${best[L] ? `best ${best[L]}` : "not played"}">${L}<small>${"★".repeat(stars[L] || 0)}</small></button>`;
+    html += `</div></div>`;
+  });
+  html += `<p class="hint">The ladder stands at level <b>${cur}</b>. Any level can be played (to try a stage out); the ladder carries on from the level played.</p>`;
+  html += lanternBoardHTML(prog);
+  html += `</div>`;
+  wrap.innerHTML = html;
+  wrap.querySelectorAll(".lvl-btn").forEach(b => b.addEventListener("click", () => {
+    state.candlesLevelPick = +b.dataset.level;
+    startGame("candles", true);
+  }));
+  const stName = LUMEN_STAGES.find(st => cur >= st.from && cur <= st.to)?.name || "";
+  const play = pongCard(`Continue · Level ${cur}`, stName, () => { state.candlesLevelPick = null; startGame("candles", true); }, CARD_ART.candles);
+  wrap.appendChild(play);
+  wrap.appendChild(pongCard("↩ Back", "All games", renderSelect, CARD_ART.candles));
+  focusHint(play);
+}
+
+// THE LAMPLIGHTERS' GUILD (from the Lantern mockup, by request): a board of
+// villagers whose scores are anchored to the patient's very first level,
+// against the patient's best single level today, so improving over the days
+// moves them up the board. The villagers are fictional and fixed; nothing
+// here compares one patient with another.
+const GUILD = [["Grandma Sela", 2.6], ["Captain Ravi", 2.2], ["Ferryman Jo", 1.9], ["Nila the Baker", 1.65], ["Kofi the Smith", 1.45],
+  ["Elder Moss", 1.28], ["Ada of the Mill", 1.12], ["Little Wren", 0.95], ["Bram the Shepherd", 0.8], ["Pip the Owl", 0.62]];
+function dayKey(d = new Date()) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
+function lanternBoardHTML(prog) {
+  const days = prog.days || [];
+  const first = days.find(x => x.scores?.length)?.scores?.[0] || 0;
+  if (!first) return `<div class="board"><h3>🏆 Lamplighters' Guild</h3><p class="hint">Light your first level and the Guild's board opens.</p></div>`;
+  const today = days.find(x => x.date === dayKey());
+  const mine = today?.scores?.length ? Math.max(...today.scores) : 0;
+  const ref = Math.max(400, first);
+  const seed = i => (Math.sin(i * 12.9898) * 43758.5453) % 1;
+  const rows = GUILD.map(([name, f], i) => ({ name, score: Math.round(ref * f * (0.96 + 0.08 * Math.abs(seed(i + 7))) / 10) * 10 }));
+  rows.push({ name: `${state.patient} (today's best)`, score: mine, me: true });
+  rows.sort((a, b) => b.score - a.score);
+  rows.forEach((r, i) => { r.rank = i + 1; });
+  const me = rows.find(r => r.me), rank = me.rank;
+  const keep = rows.filter(r => r.rank <= 5 || Math.abs(r.rank - rank) <= 1);
+  let html = "", last = 0;
+  for (const r of keep) {
+    if (r.rank - last > 1) html += `<tr><td colspan="3" class="dots">⋯</td></tr>`;
+    last = r.rank;
+    html += `<tr class="${r.me ? "me" : ""}"><td>${r.rank === 1 ? "👑" : r.rank}</td><td class="nm">${r.me ? "⭐ " : ""}${r.name}</td><td>${r.score.toLocaleString()}</td></tr>`;
+  }
+  const next = rows[rank - 2];
+  const chase = !mine ? "Light a level today to take your place."
+    : next ? `${(next.score - me.score + 10).toLocaleString()} more points to pass ${next.name}.` : "Top of the Guild!";
+  const dayN = days.filter(x => x.scores?.length).length;
+  return `<div class="board"><h3>🏆 Lamplighters' Guild · best single level</h3>
+    <p>You are <b>#${rank}</b> of ${rows.length}${dayN > 1 ? ` · day ${dayN}` : ""}. ${chase}</p>
+    <table><tr><th>#</th><th class="nm">Lamplighter</th><th>Score</th></tr>${html}</table></div>`;
 }
 
 /* ================= assessment ================= */
-// BOTH arms, left then right, with nothing to choose. Asking a patient which
-// arm to measure is a decision they should not have to make and a value the
-// suite needs for both sides anyway — the unaffected arm is the comparison
-// the therapist reads the affected one against.
+// ONE arm: the one chosen at setup. Two steps (two circles and a lift, then
+// five targets), about four minutes.
 //
-// A stored ROM is REUSED, never redone: an arm that already has a profile is
-// skipped and its saved measurements stand, so nobody re-measures at the
-// start of every session. "Re-measure" (staff drawer / profile screen) is the
-// deliberate way to replace them, and it is the only thing that discards a
-// stored ROM — the old one is kept in history either way.
-const ASSESS_ORDER = ["left", "right"];
-
-// opts.arms  — which arms to consider (defaults to both, in order)
-// opts.force — redo them even when a profile is already on file
-//
-// Redoing ONE arm is the common case, not both: range changes on the affected
-// side while the other stays put, and making a therapist sit a patient
-// through six minutes to refresh three of them is how a re-measure stops
-// happening at all. Each arm is stored separately, so redoing one leaves the
-// other exactly as it was (and the replaced one still goes to history).
+// ONE A DAY (Sep 2026, by request): the day's first visit measures, and
+// that measurement stands for the day. Within the day a stored ROM is
+// reused, never redone; "Re-measure" from the staff drawer or the profile
+// screen is the therapist's override, and the replaced profile goes to
+// history so the compare screen has a "before".
+// was this arm measured today (local day)? The once-a-day rule reads this.
+function measuredToday(prof) {
+  return !!prof?.date && new Date(prof.date).toDateString() === new Date().toDateString();
+}
 function startAssessment(opts = {}) {
   if (!state.tracker) return;
-  const force = !!opts.force;
-  const arms = opts.arms?.length ? opts.arms : ASSESS_ORDER;
-  const todo = arms.filter(arm => force || !store.getProfile(state.patient, arm));
-  if (!todo.length) {
-    // everything asked for is already on file: say so plainly rather than
-    // silently doing nothing, and go where the patient wanted to go
-    speak("Those measurements are already saved. Nothing to redo.");
+  const arm = state.side;
+  const prof = store.getProfile(state.patient, arm);
+  if (prof && measuredToday(prof) && !opts.override) {
+    speak("Your reach is already measured today. Once a day is plenty.");
     renderSelect();
     show("screen-select");
     return;
   }
+  if (!opts.force && prof) {
+    // already on file: say so plainly rather than silently doing nothing
+    speak("That measurement is already saved. Nothing to redo.");
+    renderSelect();
+    show("screen-select");
+    return;
+  }
+  // warm up first (Oct 2026, by request): the day's measurement opens with
+  // the short stretch, once a session, skippable with the ✕; a staff
+  // re-measure (override) goes straight in
+  if (!opts.override && !state.warmedUp) {
+    startWarmup(() => startAssessment(opts));
+    return;
+  }
   show("stage");
   audio.startBgm("assessment");
-  runAssessmentArm(todo, 0);
-}
-
-function runAssessmentArm(todo, i) {
-  const arm = todo[i];
   const a = new Assessment(state.tracker, $("canvas"), arm, state.coachSens, {
-    chooseHand: false,                     // never asked: the order is fixed
-    label: `${arm === "left" ? "Left" : "Right"} arm — ${i + 1} of ${todo.length}`,
+    label: `${arm === "left" ? "Left" : "Right"} arm`,
+    // device-level A/B switch (staff drawer): the drawn figure with two
+    // circles and a lift, or the instruction video
+    style: localStorage.getItem("strive-assess-style") || "video",
   });
   state.current = a;
+  const t0 = performance.now();
   a.start(profile => {
     profile.params = initialParams(profile);
     store.saveProfile(state.patient, profile.arm, profile);
-    if (i + 1 < todo.length) {
-      audio.note(5);
-      runAssessmentArm(todo, i + 1);
-      return;
-    }
+    store.logPlaytime(state.patient, performance.now() - t0, "assessment");
+    snapshot(state.patient);
     audio.stopBgm();
-    // the trained side is the one the staff drawer says; measuring both no
-    // longer picks it, so an existing choice is left exactly as it was
-    state.sideChosen = true;
-    $("in-arm").value = state.side;
     audio.fanfare();
     // what actually changed, before anyone goes back to playing: a
     // re-measure that never shows you the difference is just a delay
-    renderRomCompare(todo);
+    renderRomCompare([arm]);
     show("screen-romcompare");
-    $("btn-rom-done").classList.add("kbd-focus");
+    romLiveLoop();
+    focusHint($("btn-rom-done"));
   });
 }
 
@@ -802,89 +1147,219 @@ function envPath(env, scale, cx, cy) {
 
 // one comparison line. `better` says which direction is good — for most of
 // these it is "up", and nothing is coloured when there is no previous value.
-function romRow(label, prev, now, fmt, better = "up") {
-  const has = prev != null && Number.isFinite(prev);
-  const d = has ? now - prev : 0;
-  const same = !has || Math.abs(d) < 1e-9;
-  const good = better === "up" ? d > 0 : d < 0;
-  const cls = same ? "sm" : good ? "up" : "dn";
-  const sign = d > 0 ? "+" : "";
-  return `<div class="rom-row"><span class="lab">${label}</span>
-    <span>${has ? `<span class="was">${fmt(prev)}</span> → ` : ""}<span class="now">${fmt(now)}</span>
-    ${has && !same ? `<span class="dlt ${cls}">${sign}${fmt(d)}</span>`
-                   : `<span class="dlt sm">${has ? "same" : "baseline"}</span>`}</span></div>`;
+// The outcome drawn on the person: the live mirror with the skeleton, the
+// measured shape anchored to the body exactly as the assessment drew it
+// (same envelope, same body centre, same relToPx), last time's shape dashed
+// under it, and a dotted circle of the arm's own length around the assessed
+// shoulder as the "what would full reach look like" reference.
+function romLiveLoop() {
+  if (state.screen !== "screen-romcompare") return;
+  requestAnimationFrame(romLiveLoop);
+  const c = $("rom-live"), t = state.tracker;
+  if (!c || !t) return;
+  const box = c.getBoundingClientRect();
+  const W = Math.max(2, Math.round(box.width)), H = Math.max(2, Math.round(box.height));
+  if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
+  const ctx = c.getContext("2d");
+  // No camera picture here (Sep 2026, by request): the room behind the
+  // patient said nothing about their reach. A plain dark stage, and a
+  // schematic figure at the body centre so it is clear WHERE the shape is
+  // measured from: the middle of the shoulders, the assessed arm's own
+  // shoulder marked.
+  ctx.fillStyle = "#161636"; ctx.fillRect(0, 0, W, H);
+  const arm = state.side;
+  const prof = store.getProfile(state.patient, arm);
+  if (!prof?.envelope) return;
+  if (!t.frame) t.setBaseline?.();
+  if (!t.frame) return;
+  romFigure(ctx, c, t, arm, prof);
+  const prev = (store.getPatient(state.patient).history[arm] || []).slice(-1)[0] || null;
+  const TAU = Math.PI * 2;
+  const cen = prof.center || { x: 0, y: 0 };
+  // through the real corner points when the profile has them (Sep 2026 on),
+  // else through the wedge radii at their centres (older profiles)
+  const shape = (env, pts, style) => {
+    const n = env.length;
+    ctx.beginPath();
+    for (let i = 0; i <= n; i++) {
+      const k = i % n, p = pts?.[k];
+      const th = (k + 0.5) / n * TAU, r = env[k];
+      const rel = p ? { x: cen.x + p.x, y: cen.y + p.y } : { x: cen.x + Math.cos(th) * r, y: cen.y + Math.sin(th) * r };
+      const q = t.relToPx(rel, c);
+      i === 0 ? ctx.moveTo(q.x, q.y) : ctx.lineTo(q.x, q.y);
+    }
+    ctx.closePath(); style();
+  };
+  ctx.save();
+  // full arm length around the assessed shoulder: the reference, the
+  // "ideal" the big number is a percentage of. Drawn from the schematic
+  // shoulder (half a shoulder width from the centre), not the live one, so
+  // it stays put whether or not anyone is in front of the camera.
+  if (prof.armLenSW) {
+    const sr = { x: cen.x + (arm === "right" ? 0.5 : -0.5), y: cen.y };
+    ctx.beginPath();
+    for (let i = 0; i <= 48; i++) {
+      const th = i / 48 * TAU;
+      const q = t.relToPx({ x: sr.x + Math.cos(th) * prof.armLenSW, y: sr.y + Math.sin(th) * prof.armLenSW }, c);
+      i === 0 ? ctx.moveTo(q.x, q.y) : ctx.lineTo(q.x, q.y);
+    }
+    ctx.strokeStyle = "rgba(244,236,221,0.6)"; ctx.lineWidth = 2.5; ctx.setLineDash([3, 8]); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  if (prev?.envelope) shape(prev.envelope, prev.envPts, () => {
+    ctx.strokeStyle = "rgba(244,236,221,0.5)"; ctx.lineWidth = 2.5; ctx.setLineDash([8, 8]); ctx.stroke(); ctx.setLineDash([]);
+  });
+  shape(prof.envelope, prof.envPts, () => {
+    ctx.fillStyle = "rgba(232,168,106,0.16)"; ctx.fill();
+    ctx.strokeStyle = "rgba(232,168,106,0.85)"; ctx.lineWidth = 4;
+    ctx.shadowColor = "rgba(232,168,106,0.35)"; ctx.shadowBlur = 10; ctx.stroke();
+  });
+  // the body centre everything is measured from
+  const o = t.relToPx(cen, c);
+  ctx.shadowBlur = 0; ctx.fillStyle = "rgba(244,236,221,0.7)";
+  ctx.beginPath(); ctx.arc(o.x, o.y, 5, 0, TAU); ctx.fill();
+  ctx.restore();
 }
 
+// The schematic figure under the workspace shape: head, shoulders, trunk
+// and hips in shoulder-width units about the body centre, the assessed
+// arm's shoulder marked. It is a drawing, not the patient; its job is to
+// say where the shape is measured from.
+function romFigure(ctx, c, t, arm, prof) {
+  const TAU = Math.PI * 2;
+  const cen = prof.center || { x: 0, y: 0 };
+  const P = (x, y) => t.relToPx({ x: cen.x + x, y: cen.y + y }, c);
+  const torso = prof.torsoSW || 1.05;
+  ctx.save();
+  ctx.strokeStyle = "rgba(244,236,221,0.28)"; ctx.lineWidth = 3; ctx.lineCap = "round"; ctx.lineJoin = "round";
+  const shL = P(-0.5, 0), shR = P(0.5, 0), hipL = P(-0.32, -torso), hipR = P(0.32, -torso);
+  ctx.beginPath(); ctx.moveTo(shL.x, shL.y); ctx.lineTo(shR.x, shR.y); ctx.lineTo(hipR.x, hipR.y); ctx.lineTo(hipL.x, hipL.y); ctx.closePath(); ctx.stroke();
+  const neck = P(0, 0.12), head = P(0, 0.42);
+  ctx.beginPath(); ctx.moveTo(P(0, 0).x, P(0, 0).y); ctx.lineTo(neck.x, neck.y); ctx.stroke();
+  const hr = Math.abs(P(0.22, 0).x - P(0, 0).x);
+  ctx.beginPath(); ctx.arc(head.x, head.y, hr, 0, TAU); ctx.stroke();
+  // the other arm, resting; the assessed shoulder gets a marker and a label
+  const other = arm === "right" ? shL : shR, ox = arm === "right" ? -1 : 1;
+  const el = P(ox * 0.62, -0.55), wr = P(ox * 0.6, -1.05);
+  ctx.beginPath(); ctx.moveTo(other.x, other.y); ctx.lineTo(el.x, el.y); ctx.lineTo(wr.x, wr.y); ctx.stroke();
+  const mine = arm === "right" ? shR : shL;
+  ctx.fillStyle = "#e8a86a";
+  ctx.beginPath(); ctx.arc(mine.x, mine.y, 7, 0, TAU); ctx.fill();
+  ctx.fillStyle = "rgba(244,236,221,0.75)"; ctx.font = "700 14px Nunito, sans-serif";
+  ctx.textAlign = arm === "right" ? "left" : "right";
+  ctx.fillText(`${arm} shoulder`, mine.x + (arm === "right" ? 12 : -12), mine.y - 12);
+  ctx.restore();
+}
+
+// After the assessment (Sep 2026 rework, by request): no table. One big
+// number — how much of the full circle the wrist covered — with a plain
+// sentence and a "vs last time" chip, three tiles (lift, targets, longest
+// reach) each with one sentence, and a plot of that percentage over the
+// assessment days. The full circle is the ideal: every point the arm could
+// reach if it swung all the way round its own length, which is exactly what
+// `coverage` is measured against (area / π·armLen²).
+const fmtDay = d => new Date(d).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 function renderRomCompare(arms) {
+  const arm = arms[0];
   const p = store.getPatient(state.patient);
   const cm = p.shoulderCm;
-  $("rom-sub").textContent = arms.length > 1
-    ? "Both arms measured. Here is what changed."
-    : `${arms[0] === "left" ? "Left" : "Right"} arm measured. Here is what changed.`;
+  const cur = p.profiles[arm];
+  const hist = p.history[arm] || [];
+  const prev = hist.slice(-1)[0] || null;
+  $("rom-sub").textContent = `${arm === "left" ? "Left" : "Right"} arm${
+    cur?.style === "video" ? ", measured with the video" : ""}${prev ? `. Last time was ${fmtDay(prev.date)}.` : ". This is your first measurement, the one we compare to from now on."}`;
+  if (!cur) { $("rom-big").innerHTML = ""; $("rom-tiles").innerHTML = ""; $("rom-plot").innerHTML = ""; return; }
 
-  $("rom-cards").innerHTML = arms.map(arm => {
-    const cur = p.profiles[arm];
-    if (!cur) return "";
-    const prev = (p.history[arm] || []).slice(-1)[0] || null;
+  const pct = v => v == null ? null : Math.round(v * 100);
+  const nowPct = pct(cur.coverage) ?? 0, wasPct = pct(prev?.coverage);
+  const dPct = wasPct == null ? null : nowPct - wasPct;
+  const chip = dPct == null ? `<span class="chip sm">first measurement</span>`
+    : Math.abs(dPct) < 3 ? `<span class="chip sm">about the same as last time</span>`
+    : dPct > 0 ? `<span class="chip up">▲ ${dPct} points more than last time</span>`
+    : `<span class="chip dn">▼ ${-dPct} points less than last time</span>`;
+  const word = nowPct >= 80 ? "Nearly the whole circle. Wonderful."
+    : nowPct >= 55 ? "More than half of the circle. Good going."
+    : nowPct >= 30 ? "About a third of the circle. Every session can grow it."
+    : "A small part of the circle for now. We will build it up together.";
+  $("rom-big").innerHTML = `
+    <div class="pct">${nowPct}%</div>
+    <div class="of">of the full circle your arm could reach</div>
+    ${chip}
+    <div class="say">${word}</div>`;
 
-    // one scale for both shapes, so "bigger" reads as bigger
-    const maxR = Math.max(...(cur.envelope || [1]), ...((prev?.envelope) || [0]), 0.6);
-    const S = 74 / maxR, CX = 100, CY = 92;
-    const shape = `<svg class="rom-shape" viewBox="0 0 200 184">
-      <circle cx="${CX}" cy="${CY}" r="3" fill="rgba(244,236,221,.5)"/>
-      ${prev ? `<path d="${envPath(prev.envelope, S, CX, CY)}" fill="rgba(244,236,221,.07)"
-        stroke="rgba(244,236,221,.45)" stroke-width="2.5" stroke-dasharray="6 6"/>` : ""}
-      <path d="${envPath(cur.envelope, S, CX, CY)}" fill="rgba(232,168,106,.16)"
-        stroke="#e8a86a" stroke-width="3.5" stroke-linejoin="round"/>
-    </svg>`;
+  // three tiles, one sentence each
+  const tile = (lab, val, unit, was, now, fmt, say) => {
+    let d = "";
+    if (was != null && now != null) {
+      const diff = now - was;
+      d = Math.abs(diff) < 1e-9 ? `<span class="dlt sm">same as last time</span>`
+        : `<span class="dlt ${diff > 0 ? "up" : "dn"}">${diff > 0 ? "▲" : "▼"} ${fmt(Math.abs(diff))} vs last time</span>`;
+    } else d = `<span class="dlt sm">baseline</span>`;
+    return `<div class="rom-tile"><div class="lab">${lab}</div>
+      <div class="val">${now == null ? "–" : fmt(now)}${unit ? ` <small>${unit}</small>` : ""}</div>
+      ${d}<div class="say">${say}</div></div>`;
+  };
+  const tiles = [];
+  const liftNow = cur.lift?.peakDeg ?? cur.arcMaxDeg, liftWas = prev?.lift?.peakDeg ?? prev?.arcMaxDeg;
+  if (liftNow != null) tiles.push(tile("How high the arm lifted", null, "of 180°", liftWas, liftNow,
+    v => `${Math.round(v)}°`, "Straight up is 180 degrees. Out to the side is 90."));
+  if (cur.extremes?.length) {
+    const n = cur.extremes.filter(e => e.reached).length, w = prev?.extremes ? prev.extremes.filter(e => e.reached).length : null;
+    tiles.push(tile("Targets reached", null, `of ${cur.extremes.length}`, w, n, v => `${Math.round(v)}`,
+      "Five spots inside your own shape, each held for a moment."));
+  }
+  if (cur.envelope?.length) {
+    const n = Math.max(...cur.envelope), w = prev?.envelope ? Math.max(...prev.envelope) : null;
+    const fmt = v => cm ? `${Math.round(v * cm)} cm` : `${v.toFixed(2)} SW`;
+    tiles.push(tile("Longest reach", null, "", w, n, fmt,
+      cm ? "Measured from the middle of your shoulders." : "In shoulder widths, from the middle of your shoulders."));
+  }
+  $("rom-tiles").innerHTML = tiles.join("");
 
-    const area = v => cm ? `${Math.round(v * cm * cm)} cm²` : `${v.toFixed(2)} SW²`;
-    const reach = v => cm ? `${Math.round(v * cm)} cm` : `${v.toFixed(2)} SW`;
-    const deg = v => `${Math.round(v)}°`;
-    const pctf = v => `${Math.round(v * 100)}%`;
-    const cnt = v => `${Math.round(v)}`;
+  // the plot: coverage per assessment day, 0..100%, one series, amber
+  const pts = [...hist.map(h => ({ d: h.date, v: pct(h.coverage) })), { d: cur.date, v: nowPct }]
+    .filter(q => q.d && q.v != null);
+  $("rom-plot").innerHTML = romPlot(pts);
+}
 
-    const curArc = (cur.arcMaxDeg ?? 0) - (cur.arcMinDeg ?? 0);
-    const prevArc = prev ? (prev.arcMaxDeg ?? 0) - (prev.arcMinDeg ?? 0) : null;
-    const curEdges = (cur.extremes || []).filter(e => e.reached).length;
-    const prevEdges = prev?.extremes ? prev.extremes.filter(e => e.reached).length : null;
-    const curGrasp = (cur.extremes || []).filter(e => e.graspOk).length;
-    const prevGrasp = prev?.extremes ? prev.extremes.filter(e => e.graspOk).length : null;
-
-    let rows = romRow("Arm elevation arc", prevArc, curArc, deg);
-    if (cur.areaSW2 != null) rows += romRow("Workspace area", prev?.areaSW2, cur.areaSW2, area);
-    if (cur.coverage != null) rows += romRow("Reach coverage", prev?.coverage, cur.coverage, pctf);
-    if (cur.volumeM3 != null) rows += romRow("Workspace volume", prev?.volumeM3,
-      cur.volumeM3, v => `${(v * 1000).toFixed(1)} L`);
-    if (cur.envelope?.length) rows += romRow("Longest reach",
-      prev?.envelope ? Math.max(...prev.envelope) : null, Math.max(...cur.envelope), reach);
-    if (cur.extremes?.length) rows += romRow("Edges reached", prevEdges, curEdges, cnt);
-    if (cur.extremes?.length) rows += romRow("Grasped there", prevGrasp, curGrasp, cnt);
-
-    const when = prev
-      ? `Compared with ${new Date(prev.date).toLocaleDateString(undefined, { month: "short", day: "numeric" })}`
-      : "First measurement — this is the baseline";
-    return `<div class="rom-card">
-      <h3>${arm === "left" ? "Left" : "Right"} arm</h3>
-      <div class="when">${when}</div>
-      ${shape}
-      ${prev ? `<div class="rom-legend">Dashed = last time · Amber = now</div>` : ""}
-      ${rows}
-    </div>`;
-  }).join("");
+// A single-series line: days across, percent up, 0/50/100 guides only, the
+// latest point bigger and labelled, the first labelled too, dates under the
+// points (thinned when they crowd). One point: a lone dot and a sentence.
+function romPlot(pts) {
+  const W = 900, H = 260, L = 56, R = 28, T = 26, B = 46;
+  if (!pts.length) return "";
+  const t0 = new Date(pts[0].d).getTime(), t1 = new Date(pts[pts.length - 1].d).getTime();
+  const span = Math.max(1, t1 - t0);
+  const x = q => pts.length === 1 ? (L + W - R) / 2 : L + (new Date(q.d).getTime() - t0) / span * (W - L - R);
+  const y = v => T + (1 - v / 100) * (H - T - B);
+  let out = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Reach over time">`;
+  for (const g of [0, 50, 100]) {
+    out += `<line class="ax" x1="${L}" x2="${W - R}" y1="${y(g)}" y2="${y(g)}"/>`;
+    out += `<text class="lbl" x="${L - 10}" y="${y(g) + 4}" text-anchor="end">${g}%</text>`;
+  }
+  if (pts.length > 1) {
+    out += `<polyline class="ln" points="${pts.map(q => `${x(q).toFixed(1)},${y(q.v).toFixed(1)}`).join(" ")}"/>`;
+  }
+  const every = Math.max(1, Math.ceil(pts.length / 7));
+  pts.forEach((q, i) => {
+    const last = i === pts.length - 1;
+    out += `<circle class="dot${last ? " now" : ""}" cx="${x(q)}" cy="${y(q.v)}" r="${last ? 8 : 6}"><title>${fmtDay(q.d)}: ${q.v}%</title></circle>`;
+    if (last || i === 0) out += `<text class="val" x="${x(q)}" y="${y(q.v) - 14}" text-anchor="middle">${q.v}%</text>`;
+    if (last || i % every === 0) out += `<text class="lbl" x="${x(q)}" y="${H - B + 24}" text-anchor="middle">${fmtDay(q.d)}</text>`;
+  });
+  if (pts.length === 1) out += `<text class="one" x="${(L + W - R) / 2}" y="${H - B + 24 + 18}" text-anchor="middle">Your first point. The line starts next time.</text>`;
+  return out + `</svg>`;
 }
 
 /* ================= game rounds ================= */
-// Pong skills: therapist choice, or "auto" = level-based unlock (1 rally →
-// 2 +grip → 3 +spin), levelling up on strong rounds (Zhang's choice element)
-function pongSkills() {
-  if (state.pongSkills === "none") return { grip: false, spin: false };
-  if (state.pongSkills === "grip") return { grip: true, spin: false };
-  if (state.pongSkills === "spin") return { grip: false, spin: true };
-  if (state.pongSkills === "both") return { grip: true, spin: true };
-  const lvl = store.getPongLevel(state.patient);
-  return { grip: lvl >= 2, spin: lvl >= 3 };
-}
+// (The Pong grip and spin skill shots, and the staff select that switched
+// them, were removed Sep 2026 by request: Pong asks nothing of the hand or
+// the wrist. The trick shots that replaced them come on the point's clock,
+// see TRICKS in games.js.)
+// the two Pongs keep their own difficulty: a sideways paddle is a different
+// pace from an up-and-down one, so the tutorial's speed measurement and the
+// DDA are stored under their own key
+function paramKey(id, axis) { return id === "pong" && axis === "abd" ? "pong-abd" : id; }
 
 function startGame(id, fresh) {
   const prof = store.getProfile(state.patient, state.side);
@@ -898,7 +1373,8 @@ function startGame(id, fresh) {
   // this game's OWN difficulty, remembered per patient and per arm. A game
   // never played inherits the assessment-seeded params — the assessment is
   // the seed for all of them, it is just no longer the only memory.
-  const base = store.getGameParams(state.patient, state.side, id) || prof.params;
+  const stored = store.getGameParams(state.patient, state.side, paramKey(id, state.pongAxis));
+  const base = stored || prof.params;
   state.roundParams = { rangeScale: base.rangeScale, radius: base.radius, lifetime: base.lifetime };
   // capture-radius accessibility boost applies to play only — DDA keeps
   // adjusting the stored, unscaled radius
@@ -911,27 +1387,44 @@ function startGame(id, fresh) {
     // Scratch Cards resumes its own ladder: the level a patient reached last
     // session is where the next one starts, or the ladder means nothing
     level: id === "lens" ? store.getLevel(state.patient, "scratchLevel")
-      : id === "dots" ? store.getLevel(state.patient, "dotsLevel") : undefined,
+      : id === "dots" ? store.getLevel(state.patient, "dotsLevel")
+      : id === "pairs" ? store.getLevel(state.patient, "pairsLevel")
+      : id === "candles" ? (state.candlesLevelPick || store.getLevel(state.patient, "candlesLevel")) : undefined,
     mode: id === "pong" ? state.pongMode
+      : id === "candles" ? state.candlesMode
       : id === "oars" ? state.oarsMode
       : id === "ferry" ? state.ferryMode
       : undefined,
-    skills: id === "pong" ? pongSkills() : undefined,
+    axis: id === "pong" ? state.pongAxis : undefined,
+    // the Lantern's per-level bests and Star Atlas (Pip's flag is set from them)
+    lumen: id === "candles" ? store.getProgress(state.patient, "candlesLumen") : undefined,
+    starRank: id === "pong" ? store.getLevel(state.patient, "starRank") : undefined,
+    // Pong's round-1 tutorial SETS the ball's pace only on the first game
+    // ever on this arm (no stored Pong difficulty yet); after that it is a
+    // warm-up and the pace is the level the patient has reached
+    calibrate: id === "pong" && !stored,
+    // the Pong dials, the same for the single and the two-player game
+    pongSpeed: id === "pong" ? state.pongSpeed : undefined,
+    powerups: id === "pong" ? state.pongPowerups : undefined,
     song: id === "rhythm" ? state.song : undefined,
     tilesMode: id === "rhythm" ? state.tilesMode : undefined,
     bothArms: (id === "pong" && ["bimanual", "coupled", "team-arms"].includes(state.pongMode))
       || (id === "rhythm" && state.tilesMode === "bimanual")
-      || id === "rgs",     // the RGS catch needs both hands by definition
+      || id === "rgs"      // the RGS catch needs both hands by definition
+      || (id === "candles" && state.candlesMode !== "solo"),   // one hand keeps the candle, the other lights
     profiles: { left: store.getProfile(state.patient, "left"), right: store.getProfile(state.patient, "right") },
     // two-player Pong: player 2's own assessed arc drives their paddle, so a
     // limited range still covers the lane (a guest gets the default arc)
     ...(id === "pong" && state.pongMode === "duo" ? {
       p2Side: state.duo?.p2Side || "right",
       p2Name: state.duo?.p2 || null,
-      p2Profile: state.duo?.p2 ? store.getProfile(state.duo.p2, state.duo.p2Side) : null,
+      p2Profile: duoProfile(),
     } : {}),
   });
   state.current = game;
+  state.candlesLevelPick = null; $("in-candles-level").value = "";   // a picked level is for one round
+  // the webcam follows a second body only while two are playing
+  state.tracker.setSecond?.(id === "pong" && state.pongMode === "duo");
   show("stage");
   // Melody Tiles owns its song clock (audio.startSong inside the game);
   // everything else gets the per-game lo-fi mood (or assets/music/<id>.mp3)
@@ -939,15 +1432,43 @@ function startGame(id, fresh) {
   game.start(onRoundEnd);
 }
 
+// player 2's lane: the partner's quick measure for the arm they play with,
+// else a patient's own assessed profile, else a full-range lane
+function duoProfile() {
+  const d = state.duo;
+  if (!d?.p2) return { arcMinDeg: 30, arcMaxDeg: 150 };
+  const m = store.getPartners(state.patient)[d.p2]?.[d.p2Side];
+  if (m) return { arcMinDeg: m.arcMinDeg, arcMaxDeg: m.arcMaxDeg };
+  return store.getProfile(d.p2, d.p2Side) || { arcMinDeg: 30, arcMaxDeg: 150 };
+}
+
 function onRoundEnd(round) {
   audio.stopBgm();
   round.round = state.roundNumber;
+  store.logPlaytime(state.patient, (round.seconds || 0) * 1000, "round");
   // Scratch Cards: bank the level the round ended on
   if (round.game === "lens" && round.scratchLevel) {
     store.setLevel(state.patient, "scratchLevel", round.scratchLevel, 6);
   }
+  if (round.game === "pairs" && round.pairsLevel) {
+    store.setLevel(state.patient, "pairsLevel", round.pairsLevel, 6);
+  }
   if (round.game === "dots" && round.dotsLevel) {
     store.setLevel(state.patient, "dotsLevel", round.dotsLevel, 6);
+  }
+  if (round.game === "candles") {
+    if (round.candlesLevel) store.setLevel(state.patient, "candlesLevel", round.candlesLevel, CANDLE_MAX);
+    if (round.candlesProgress) {
+      // the day history behind the Guild board: every level's score, per day
+      const pr = round.candlesProgress;
+      pr.days = [...(store.getProgress(state.patient, "candlesLumen")?.days || [])];
+      const key = dayKey();
+      let d = pr.days.find(x => x.date === key);
+      if (!d) pr.days.push(d = { date: key, scores: [] });
+      d.scores.push(round.score || 0);
+      pr.days = pr.days.slice(-90);
+      store.setProgress(state.patient, "candlesLumen", pr);
+    }
   }
 
   // practice mode: free play — nothing logged, difficulty untouched
@@ -955,12 +1476,16 @@ function onRoundEnd(round) {
     renderBetween(round, "Practice round. Nothing counts, just enjoy the movement.");
     show("screen-between");
     document.querySelectorAll("#screen-between .kbd-focus").forEach(el => el.classList.remove("kbd-focus"));
-    $("btn-next-round").classList.add("kbd-focus");
+    focusHint($("btn-next-round"));
     return;
   }
 
   store.logRound(state.patient, round);
+  if (round.game === "pong" && round.pongMode === "duo") store.logRivalry(state.patient, round.p2Name || "guest", round.matchWon, round.bestRally);
   state.sessionStars += round.stars;
+  // the lantern street only ever gains (village.js)
+  if (round.game === "candles") store.addLanterns(state.patient, round.lanternsLit);
+  snapshot(state.patient);
 
   const prof = store.getProfile(state.patient, state.side);
   // adjust from what this round actually ran at, not from the profile: with
@@ -973,10 +1498,38 @@ function onRoundEnd(round) {
   if (round.compEvents.length >= 3 && result.params.rangeScale > used.rangeScale) {
     result = { params: used, note: "Let's keep it steady while we work on posture." };
   }
-  // Pong tutorial warm-up: the measured paddle speed becomes the ball's
-  // crossing time going forward (the DDA adjusts from this calibrated start)
-  if (round.game === "pong" && round.pongCrossTime) result.params.lifetime = round.pongCrossTime;
-  store.saveGameParams(state.patient, state.side, round.game, result.params);
+  // Pong tutorial warm-up: on the FIRST game ever on this arm the measured
+  // paddle speed becomes the ball's crossing time (the level starts from
+  // what was measured). Later tutorials are warm-ups only (Oct 2026, by
+  // request): re-seeding every session threw away the level the patient
+  // had played their way to.
+  if (round.game === "pong" && round.pongCrossTime && round.calibrated) result.params.lifetime = round.pongCrossTime;
+  // Pong: the ball's pace follows the GAME, not the hit rate (Sep 2026, by
+  // request). A won game (more points than the star over the 90 s) makes
+  // the next game's ball quicker (a shorter crossing time), a lost game
+  // makes it slower, both within the DDA's limits; and the star climbs or
+  // drops a rank with it (STAR_RANKS in games.js: colours, glow, sparkle
+  // and sharper reactions), stored per patient as "starRank". A draw, or a
+  // game with no points, changes nothing.
+  if (round.game === "pong" && round.matchWon != null) {
+    const [lo, hi] = LIMITS.lifetime;
+    result.params.lifetime = Math.max(lo, Math.min(hi, result.params.lifetime * (round.matchWon ? 0.88 : 1.15)));
+    if (round.pongMode === "duo") {
+      // two players: the ball follows the result, the star's rank is not in it
+      result.note = round.matchWon ? "You won! A quicker ball next game." : "A slower ball next game.";
+    } else {
+      const rank = store.getLevel(state.patient, "starRank");
+      const next = Math.max(1, Math.min(STAR_RANKS.length, rank + (round.matchWon ? 1 : -1)));
+      store.setLevel(state.patient, "starRank", next, STAR_RANKS.length);
+      const name = STAR_RANKS[next - 1].name;
+      result.note = round.matchWon
+        ? `You won! A quicker ball next game${next > rank ? `, against a ${name}` : ""}.`
+        : `A slower ball next game${next < rank ? `, against a ${name}` : ""}.`;
+    }
+  } else if (round.game === "pong" && round.pointsPlayed > 0) {
+    result.note = "A draw! The same ball next game.";
+  }
+  store.saveGameParams(state.patient, state.side, paramKey(round.game, round.axis), result.params);
   // profile.params is deliberately NOT written here: it stays the
   // assessment-seeded starting difficulty, so a game played for the first
   // time starts from what the patient was measured at rather than inheriting
@@ -987,17 +1540,6 @@ function onRoundEnd(round) {
   if (state.roundNumber % 4 === 0 || round.compEvents.length >= 4) {
     result.note += " This is a lovely moment for a short rest.";
     setTimeout(() => speak("This is a lovely moment for a short rest. Continue whenever you are ready."), 1200);
-  }
-
-  // Pong level progression (auto mode): a strong round unlocks the next skill
-  if (round.game === "pong" && state.pongSkills === "auto") {
-    const lvl = store.getPongLevel(state.patient);
-    if (lvl < 3 && round.hitRate > 0.7 && (round.bestRally ?? 0) >= 4) {
-      store.setPongLevel(state.patient, lvl + 1);
-      result.note += lvl === 1
-        ? " ⭐ New skill unlocked: the Grip Shot! Squeeze to catch the star, open your hand to fire it back!"
-        : " ⭐ New skill unlocked: the Spin Shot! Turn your palm as you hit for topspin or backspin!";
-    }
   }
 
   // Catch Together stages (the RGS conditions, graded): catch → carry → sort
@@ -1028,7 +1570,7 @@ function onRoundEnd(round) {
   show("screen-between");
   // default-first: Enter continues the session without hunting for a button
   document.querySelectorAll("#screen-between .kbd-focus").forEach(el => el.classList.remove("kbd-focus"));
-  $("btn-next-round").classList.add("kbd-focus");
+  focusHint($("btn-next-round"));
 }
 
 /* ================= P5 between rounds ================= */
@@ -1052,12 +1594,27 @@ function renderBetween(round, note) {
 
   const gname = GAMES.find(g => g.id === round.game)?.name ?? "";
   const lines = [];
+  const balls = round.hits + round.misses;
+  // the board under the card: the Lantern's Guild, or the two-player record
+  $("rc-board").innerHTML = round.game === "candles" ? lanternBoardHTML(store.getProgress(state.patient, "candlesLumen") || {})
+    : round.game === "pong" && round.pongMode === "duo" ? (() => {
+        const r = store.getRivalry(state.patient, round.p2Name || "guest");
+        return `<div class="board"><p>Head to head: <b>${r.wins}</b> – <b>${r.losses}</b> ${round.p2Name || "player two"}${r.draws ? ` · ${r.draws} drawn` : ""} · best rally ever <b>${r.bestRally}</b></p></div>`;
+      })()
+    : "";
   if (round.game === "pong") {
-    lines.push(`Longest rally: <b>${round.bestRally ?? round.hits} returns</b>.`);
+    // three short lines at most: the score, the rally and style, the titles
+    const duo = round.pongMode === "duo", p2 = duo ? (round.p2Name || "player two") : "star";
     if (round.points != null && (round.points > 0 || round.aiPoints > 0))
-      lines.push(`Score: <b>you ${round.points} : ${round.aiPoints} AI</b>${round.points > round.aiPoints ? ", you won! 🌟" : round.points === round.aiPoints ? ", a draw!" : ""}`);
-    if (round.gripShots || round.spinShots)
-      lines.push(`Trick shots: <b>${round.gripShots ? `${round.gripShots} grip ✊` : ""}${round.gripShots && round.spinShots ? " · " : ""}${round.spinShots ? `${round.spinShots} spin ↻` : ""}</b>`);
+      lines.push(`<b>You ${round.points} : ${round.aiPoints} ${p2}</b>${round.matchWon === true ? " 🌟 You won!" : round.matchWon === null ? " · a draw" : ""}`
+        + (round.smashEnded ? " · finished with the smash 🔥" : ""));
+    lines.push(`Longest rally: <b>${round.bestRally ?? round.hits}</b> · style <b>${round.style ?? 0}</b>${duo ? ` : <b>${round.styleThem ?? 0}</b>` : ""}`
+      + (round.orbs ? ` · ${round.orbs} orb${round.orbs === 1 ? "" : "s"}` : ""));
+    const tl = [];
+    if (round.titles?.us?.length) tl.push(`🏅 You: ${round.titles.us.join(", ")}`);
+    if (duo && round.titles?.them?.length) tl.push(`🏅 ${p2}: ${round.titles.them.join(", ")}`);
+    if (round.challenge) tl.push(round.challengeWon ? `challenge done ✓` : `challenge: ${round.challenge.toLowerCase()}`);
+    if (tl.length) lines.push(tl.join(" · "));
   }
   else if (round.game === "boxes") lines.push(`You carried <b>${round.boxes} crates</b> across, a fine ferry load!`);
   else if (round.game === "rainbow") {
@@ -1066,7 +1623,14 @@ function renderBetween(round, note) {
   }
   else if (round.game === "rhythm") lines.push(`You played <b>${round.notesHitPct}%</b> of "${round.song}", best streak <b>${round.bestCombo} notes</b>.`);
   else if (round.game === "compass") lines.push(`You lit <b>${round.hits} compass points</b> and always found your way home.`);
+  else if (round.game === "pairs") lines.push(`You found <b>${round.pairsFound} pair${round.pairsFound === 1 ? "" : "s"}</b> in <b>${round.turns} turns</b>${round.boardsCleared ? `, and cleared <b>${round.boardsCleared} board${round.boardsCleared === 1 ? "" : "s"}</b>` : ""}.`);
   else if (round.game === "echo") lines.push(`You found <b>${round.hits} echoes</b>${round.meanEchoErrSW != null ? `, on average <b>${round.meanEchoErrSW}</b> shoulder-widths from the star` : ""}.`);
+  else if (round.game === "candles") {
+    lines.push(`You lit <b>${round.lanternsLit} lantern${round.lanternsLit === 1 ? "" : "s"}</b>${round.candles ? ` from <b>${round.candles} candle${round.candles === 1 ? "" : "s"}</b>` : ""}${round.endReason === "target" ? ", and Pip reached the flag!" : "."}`);
+    if (round.verdict === "up" && round.candlesLevel > round.levelPlayed) lines.push(`Level <b>${round.candlesLevel}</b> next time, a little more to reach for.`);
+    else if (round.verdict === "down") lines.push(`Back to level <b>${round.candlesLevel}</b> for a bit of practice.`);
+    else if (round.holdFrac != null) lines.push(`The candle stayed on its stand <b>${Math.round(round.holdFrac * 100)}%</b> of the time.`);
+  }
   else if (round.game === "lens") lines.push(`You cleared <b>${Math.round((round.coverage ?? 0) * 100)}%</b> of the fog${round.panes > 1 ? ` across <b>${round.panes} panes</b>` : ""}.`);
   else if (round.game === "crane") lines.push(`You delivered <b>${round.delivered} crates</b>, holding the crane up <b>${Math.round((round.holdFrac ?? 0) * 100)}%</b> of the time.`);
   else if (round.game === "feather") lines.push(`<b>${round.cycles} gentle landings</b>, smooth for <b>${Math.round((round.descentSmooth ?? 0) * 100)}%</b> of the way down.`);
@@ -1085,6 +1649,12 @@ function renderBetween(round, note) {
   else lines.push(`You caught <b>${round.hits} of ${round.hits + round.misses}</b> in ${gname}.`);
   lines.push(`⭐ <b>${round.stars}</b> this round · <b>${state.sessionStars}</b> today`);
   $("rc-text").innerHTML = lines.join("<br>");
+  // one short sentence on what the ring is; the rest of the explanation
+  // came off in Sep 2026 (by request: too much text after a round)
+  $("rc-how").textContent = round.game === "pong"
+    ? `The ring is balls returned: ${round.hits} of ${balls}.`
+    : round.game === "candles" ? `The ring is lanterns lit: ${round.hits} of ${balls} candles.`
+    : `The ring is catches: ${round.hits} of ${balls}.`;
 
   const rest = state.roundNumber % 4 === 0
     ? " You've earned a longer break. Have some water."
@@ -1191,7 +1761,11 @@ function renderProfile() {
 
   $("prof-who").textContent = "Patient " + state.patient;
   const days = Math.max(1, Math.round((Date.now() - new Date(p.created)) / 86400000));
-  $("prof-sub").textContent = `Training arm: ${state.side} · Day ${days}`;
+  const pt = store.playtime(state.patient);
+  const today = pt[dayKey(new Date())]?.ms || 0;
+  const cutoff = Date.now() - 7 * 86400000;
+  const week = Object.keys(pt).filter(d => new Date(d).getTime() >= cutoff).reduce((a, d) => a + pt[d].ms, 0);
+  $("prof-sub").textContent = `Training arm: ${state.side} · Day ${days} · Played today ${fmtDur(today)} · last 7 days ${fmtDur(week)}`;
   $("prof-armchips").innerHTML = arms.map(a =>
     `<span class="chip ${a === state.side ? "amber" : "faint"}" style="margin-right:8px">${a[0].toUpperCase()}${p.profiles[a] ? " ✓" : " —"}</span>`).join("");
 
@@ -1254,10 +1828,35 @@ function renderProfile() {
     if (prof.extremes?.length) {
       const got = prof.extremes.filter(e => e.reached).length;
       const short = prof.extremes.filter(e => !e.reached)
-        .sort((a, b) => a.frac - b.frac).slice(0, 2).map(e => e.key).join(", ");
-      s += `<div class="lg"><span class="dot" style="background:${got === prof.extremes.length ? "#9fc08a" : "#b5503a"}"></span>Edges reached
+        .sort((a, b) => (a.fracAnat ?? a.frac) - (b.fracAnat ?? b.frac)).slice(0, 2).map(e => e.key).join(", ");
+      s += `<div class="lg"><span class="dot" style="background:${got === prof.extremes.length ? "#9fc08a" : "#b5503a"}"></span>Targets reached
          <span class="val" style="margin-left:6px">${got}/${prof.extremes.length}${
            short ? ` <small style='font-weight:600;opacity:.75'>(short: ${short})</small>` : ""}</span></div>`;
+    }
+    // the lift: shoulder flexion asked for directly, peak elevation vs trunk
+    if (prof.lift?.peakDeg != null) {
+      s += `<div class="lg"><span class="dot" style="background:#7d6fb0"></span>Arm lift
+         <span class="val" style="color:#5b4f8a;margin-left:6px">${prof.lift.peakDeg}°${
+           prof.lift.rangeDeg != null ? ` <small style='font-weight:600;opacity:.75'>(${prof.lift.rangeDeg}° up from rest${
+             prof.lift.returned ? "" : ", did not come back down"})</small>` : ""}</span></div>`;
+    }
+    // the two circles: one each way, and whether each closed
+    if (prof.laps?.length) {
+      const done = prof.laps.filter(l => l.complete).length;
+      s += `<div class="lg"><span class="dot" style="background:${done === prof.laps.length ? "#9fc08a" : "#e8a86a"}"></span>Circles
+         <span class="val" style="margin-left:6px">${done}/${prof.laps.length} complete <small style='font-weight:600;opacity:.75'>(${
+           prof.laps.map(l => `${l.dir} ${l.seconds}s`).join(", ")})</small></span></div>`;
+    }
+    // RSA on the Kinetigram device's scale, so this workspace can be read
+    // beside a report from a device the clinic already uses. Q5 (behind the
+    // trunk) is absent by construction: one camera in front of a patient
+    // cannot see backward reach, and zero would read as "none".
+    if (prof.rsa) {
+      const r = prof.rsa, f2 = v => (v ?? 0).toFixed(2);
+      s += `<div class="lg"><span class="dot" style="background:#b0a0d0"></span>RSA (planar Q1-Q4)
+         <span class="val" style="color:#5b4f8a;margin-left:6px">${f2(r.total14)} of 1.00</span>
+         <small style='font-weight:600;opacity:.75;margin-left:6px'>Q1 ${f2(r.q1)} · Q2 ${f2(r.q2)} · Q3 ${f2(r.q3)} · Q4 ${f2(r.q4)}${
+           prof.rsaElbow ? ` · elbow ${f2(prof.rsaElbow.total14)}` : ""} · frontal projection</small></div>`;
     }
     return s;
   })();
@@ -1267,7 +1866,7 @@ function renderProfile() {
      <div class="lg"><span class="dot" style="background:rgba(27,27,58,.35)"></span>Other (${other[0].toUpperCase()})
        <span class="val" style="color:rgba(27,27,58,.6);margin-left:6px">${oProf ? oProf.arcMinDeg + "°–" + oProf.arcMaxDeg + "°" : "—"}</span></div>` + reachLg + wsLg;
 
-  // --- reach & grasp map: the six held positions ---
+  // --- reach & grasp map: the five targets ---
   // Laid out where they actually are relative to the patient (0deg = out to
   // the assessed side, mirrored for a left arm), not on a half protractor:
   // the down-and-out position lives below the shoulder line and a map that
@@ -1278,18 +1877,28 @@ function renderProfile() {
   const held = prof?.extremes || [];
   if (!held.length) {
     gsvg += `<text x="${GX}" y="${GY + 5}" text-anchor="middle" font-size="13" font-weight="700"
-      fill="rgba(27,27,58,.45)" font-family="Nunito">No held positions recorded yet</text>`;
+      fill="rgba(27,27,58,.45)" font-family="Nunito">No targets recorded yet</text>`;
   }
   for (const e of held) {
     // arm-relative degrees -> screen: a left arm mirrors, exactly as the
     // assessment did when it asked for the movement
     const scr = (state.side === "right" ? e.deg : 180 - e.deg) * Math.PI / 180;
     const x = GX + Math.cos(scr) * GR, y = GY - Math.sin(scr) * GR;
-    const frac = Math.max(0, Math.min(1, e.frac ?? 0));
+    // The ring is the arm's own anatomical boundary, so the spoke has to be a
+    // fraction of THAT — e.frac is a fraction of the target as asked, and the
+    // assessment brings that target in when the boundary is out of reach, so
+    // drawing it here would make a scaled-down ask look like a full reach.
+    const frac = Math.max(0, Math.min(1, e.fracAnat ?? e.frac ?? 0));
+    const ask = e.askFrac != null ? Math.max(0, Math.min(1, e.askFrac)) : null;
     // spoke length = how far along that direction they actually got
     gsvg += `<line x1="${GX}" y1="${GY}" x2="${(GX + Math.cos(scr) * GR * frac).toFixed(1)}"
       y2="${(GY - Math.sin(scr) * GR * frac).toFixed(1)}" stroke="${e.reached ? "#9fc08a" : "#e8a86a"}"
       stroke-width="5" stroke-linecap="round"/>`;
+    // a tick where the target actually sat, when it was brought in
+    if (ask != null && ask < 0.97) {
+      gsvg += `<circle cx="${(GX + Math.cos(scr) * GR * ask).toFixed(1)}" cy="${(GY - Math.sin(scr) * GR * ask).toFixed(1)}"
+        r="3.5" fill="none" stroke="rgba(27,27,58,.45)" stroke-width="2"/>`;
+    }
     if (e.reached) {
       gsvg += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="15" fill="rgba(159,192,138,.25)" stroke="#9fc08a" stroke-width="3"/>
         <path d="M${(x - 6).toFixed(1)} ${y.toFixed(1)} l4.5 5 l9 -10.5" stroke="#4a7a3a" stroke-width="3" fill="none" stroke-linecap="round"/>`;
@@ -1304,7 +1913,7 @@ function renderProfile() {
     gsvg += `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" text-anchor="middle" font-size="10.5" font-weight="700"
       fill="rgba(27,27,58,.6)" font-family="Nunito">${e.key}</text>`;
     if (e.reached) gsvg += `<text x="${lx.toFixed(1)}" y="${(ly + 12).toFixed(1)}" text-anchor="middle" font-size="10" font-weight="700"
-      fill="${e.graspOk ? "#4a7a3a" : "#b8892a"}" font-family="Nunito">${e.graspOk ? "✊ grasp" : "hold only"} · ${Math.round((e.stability ?? 0) * 100)}%</text>`;
+      fill="${e.graspOk ? "#4a7a3a" : "#b8892a"}" font-family="Nunito">${e.graspOk ? "✊ grasp" : "no squeeze"} · ${Math.round((e.stability ?? 0) * 100)}%</text>`;
   }
   $("prof-grasp").innerHTML = gsvg;
 
@@ -1347,6 +1956,7 @@ function renderProfile() {
      <td style="color:${s.hitRate >= 0.5 && s.hitRate <= 0.78 ? "#4a7a3a" : "#b8892a"}">${Math.round(s.hitRate * 100)}%</td>
      <td>${Math.round(s.meanReachFrac * 100)}%</td></tr>`).join("");
   $("prof-log").innerHTML = `<thead><tr><th>Date</th><th>Game</th><th>Round</th><th>Success</th><th>Arc cov.</th></tr></thead><tbody>${rows || "<tr><td colspan=5>No rounds yet</td></tr>"}</tbody>`;
+
 }
 
 $("btn-prof-back").addEventListener("click", () => { renderSelect(); show("screen-select"); });
@@ -1355,19 +1965,20 @@ $("btn-prof-back").addEventListener("click", () => { renderSelect(); show("scree
   // Each game keeps its own DDA params (they make different demands), and the
   // ladder games keep a level. A therapist looking at "why is Pong harder
   // than it was" needs to see the number that actually drove the round.
-  const LEVELS = { lens: ["scratchLevel", 6], dots: ["dotsLevel", 6] };
+  const LEVELS = { lens: ["scratchLevel", 6], dots: ["dotsLevel", 6], pairs: ["pairsLevel", 6], candles: ["candlesLevel", CANDLE_MAX] };
   const rows = store.listGameParams(state.patient, state.side);
   $("prof-diff").innerHTML = rows.length
     ? rows.map(r => {
         const g = GAMES.find(x => x.id === r.game);
         const lv = LEVELS[r.game] ? store.getLevel(state.patient, LEVELS[r.game][0]) : null;
-        return `<div class="comp-row"><span>${g?.name || r.game}${
+        const gname = r.game === "pong" ? "Pong FE" : r.game === "pong-abd" ? "Pong Abd-Add" : g?.name || r.game;
+        return `<div class="comp-row"><span>${gname}${
           lv ? ` <span class="chip amber" style="margin-left:6px">Level ${lv}/${LEVELS[r.game][1]}</span>` : ""}</span>
           <span class="cv">range ${Math.round(r.rangeScale * 100)}% · target ${r.radius.toFixed(2)} SW · ${r.lifetime.toFixed(1)}s</span></div>`;
       }).join("")
     : `<div class="comp-row"><span style="opacity:.6">Not played yet on this arm — every game starts from the assessment</span></div>`;
 $("btn-prof-session").addEventListener("click", () => { renderSelect(); show("screen-select"); });
-$("btn-prof-assess").addEventListener("click", () => startAssessment({ force: true, arms: [state.side] }));
+$("btn-prof-assess").addEventListener("click", () => startAssessment({ force: true, override: true }));
 $("btn-prof-export").addEventListener("click", () => {
   const blob = new Blob([store.exportPatient(state.patient)], { type: "application/json" });
   const a = document.createElement("a");
@@ -1406,7 +2017,34 @@ setInterval(() => {
   $("camstate").textContent = `Camera: tracking · ${state.side} hand ${t.handClosed(state.side) ? "CLOSED ✊" : "open ✋"}`
     + (g != null ? ` · ${g.toFixed(2)} (${src})` : " · fingers not visible");
   $("camstate").className = "ok";
+  renderPeople(t);
 }, 250);
+
+// ZED path: everyone the bridge can see, one button each, the followed
+// person marked. Clicking pins the bridge's seat to that person. Left and
+// right are the patient's own, as in the mirror.
+function renderPeople(t) {
+  const el = $("campeople");
+  const people = t.source === "zed" ? (t.people || []) : [];
+  if (!people.length) { if (el.innerHTML) el.innerHTML = ""; return; }
+  const sorted = [...people].sort((a, b) => b.x - a.x);   // mirrored: image right = viewer's left
+  const key = sorted.map(p => `${p.id}:${p.seat ?? "-"}:${p.play ? 1 : 0}`).join(",");
+  if (el.dataset.key === key) return;
+  el.dataset.key = key;
+  el.innerHTML = "";
+  const lab = document.createElement("div");
+  lab.textContent = people.length > 1 ? "People in view (click the patient to follow):" : "People in view:";
+  el.appendChild(lab);
+  sorted.forEach((p, i) => {
+    const b = document.createElement("button");
+    b.className = "btn ghost-light" + (p.seat === 0 ? " people-followed" : "");
+    const where = sorted.length === 1 ? "" : i === 0 ? "left, " : i === sorted.length - 1 ? "right, " : "middle, ";
+    const dist = p.z != null ? `${p.z.toFixed(1)} m` : "";
+    b.textContent = `Person ${p.id} (${where}${dist})${p.seat === 0 ? " · following" : p.play ? "" : " · outside play area"}`;
+    b.addEventListener("click", () => t.selectPerson(p.id));
+    el.appendChild(b);
+  });
+}
 $("btn-rom-done").addEventListener("click", () => {
   $("btn-rom-done").classList.remove("kbd-focus");
   renderSelect();
@@ -1449,6 +2087,30 @@ $("btn-mail-help").addEventListener("click", () => {
     "problem report");
 });
 
+// Patient-facing HELP: one press tells the therapist, with the diagnostics.
+// Spoken and captioned so the patient knows it went, and rate-limited so a
+// second press in a minute does not send a second mail.
+let helpAt = 0;
+function requestHelp() {
+  const now = Date.now();
+  if (now - helpAt < 60000) { speak("Help is already on the way."); return; }
+  helpAt = now;
+  speak("Help is on the way. Your therapist has been told.");
+  doMail("help", `Help requested — participant ${state.patient}`,
+    `Participant ${state.patient} pressed Help at ${new Date().toLocaleString()}.\nScreen: ${state.screen}\n\n` +
+    `${diagnostics(state, state.tracker)}\n`, "help request");
+}
+for (const id of ["btn-help", "btn-welcome-help", "btn-select-help"]) $(id).addEventListener("click", requestHelp);
+// the patient's own "email my progress": the same report the staff button
+// sends, with a spoken confirmation so they know it went
+$("btn-select-mail").addEventListener("click", async () => {
+  const p = store.getPatient(state.patient);
+  speak("Sending your progress to your therapist.");
+  await doMail("progress", `Progress — participant ${state.patient} (${state.side})`,
+    progressReport(state.patient, p, state.side), "progress summary");
+  speak(mailReady() ? "Sent." : "Your mail app has opened. Press Send there.");
+});
+
 $("btn-mail-progress").addEventListener("click", () => {
   const p = store.getPatient(state.patient);
   doMail("progress", `Progress — participant ${state.patient} (${state.side})`,
@@ -1461,6 +2123,12 @@ $("in-patient").addEventListener("input", e => {
   loadSettings(state.patient);
 });
 $("in-shoulder").addEventListener("change", e => store.setShoulderCm(state.patient, parseFloat(e.target.value)));
+for (const id of ["in-email", "in-remind-time", "in-remind-days"]) {
+  $(id).addEventListener("change", () => {
+    store.setContact(state.patient, { email: $("in-email").value, remindAt: $("in-remind-time").value, remindDays: $("in-remind-days").value });
+    syncReminder(state.patient);
+  });
+}
 // ZED real-world scale: the bridge measures true shoulder width in meters
 // from depth, so the SW→cm conversion fills itself in for the logged-in
 // patient — no tape measure needed. A therapist-typed value always wins
@@ -1475,9 +2143,14 @@ setInterval(() => {
   if ($("drawer").classList.contains("hidden")) return;
   $("in-shoulder").value = cm;   // live-update the drawer if staff are looking
 }, 5000);
-$("in-arm").addEventListener("change", e => { state.side = e.target.value; state.sideChosen = true; });
+$("in-arm").addEventListener("change", e => {
+  state.side = e.target.value; state.sideChosen = true;
+  if (state.patient) store.setArm(state.patient, state.side);   // the therapist's override is remembered
+});
 // camera source is picked once at boot (webcam + MediaPipe vs ZED bridge),
 // so changing it reloads the app
+$("in-assess-style").value = localStorage.getItem("strive-assess-style") || "video";
+$("in-assess-style").addEventListener("change", e => localStorage.setItem("strive-assess-style", e.target.value));
 $("in-camera").value = localStorage.getItem("strive-cam-source") || "auto";
 $("in-camera").addEventListener("change", e => {
   localStorage.setItem("strive-cam-source", e.target.value);
@@ -1519,7 +2192,15 @@ $("in-coach").addEventListener("change", e => { state.coachSens = e.target.value
 $("in-pong").addEventListener("change", e => { state.pongMode = e.target.value; });
 $("in-oars").addEventListener("change", e => { state.oarsMode = e.target.value; });
 $("in-ferry").addEventListener("change", e => { state.ferryMode = e.target.value; });
-$("in-pongskills").addEventListener("change", e => { state.pongSkills = e.target.value; });
+$("in-candles").addEventListener("change", e => { state.candlesMode = e.target.value; });
+// the Lantern's level for the NEXT round (testing: any stage, at once); the ladder otherwise
+for (let L = 1; L <= CANDLE_MAX; L++) {
+  const st = LUMEN_STAGES.find(x => L >= x.from && L <= x.to);
+  $("in-candles-level").add(new Option(`Level ${L} · ${st?.name || ""}`, String(L)));
+}
+$("in-candles-level").addEventListener("change", e => { state.candlesLevelPick = +e.target.value || null; });
+$("in-pong-speed").addEventListener("change", e => { state.pongSpeed = e.target.value; });
+$("in-pong-power").addEventListener("change", e => { state.pongPowerups = e.target.value === "on"; });
 $("in-song").addEventListener("change", e => { state.song = e.target.value; });
 $("in-tiles").addEventListener("change", e => { state.tilesMode = e.target.value; });
 
@@ -1528,19 +2209,19 @@ $("in-song").innerHTML = [...SONGS]
   .sort((a, b) => a.difficulty - b.difficulty)
   .map(s => `<option value="${s.id}">${"★".repeat(s.difficulty)} ${s.name}</option>`)
   .join("");
-$("btn-drawer-assess").addEventListener("click", () => { $("drawer").classList.add("hidden"); startAssessment({ force: true }); });
-$("btn-drawer-assess-one").addEventListener("click", () => {
-  $("drawer").classList.add("hidden");
-  startAssessment({ force: true, arms: [state.side] });
-});
+$("btn-drawer-assess").addEventListener("click", () => { $("drawer").classList.add("hidden"); startAssessment({ force: true, override: true }); });
 $("btn-drawer-profile").addEventListener("click", () => { $("drawer").classList.add("hidden"); renderProfile(); show("screen-profile"); });
 $("btn-drawer-collections").addEventListener("click", () => { $("drawer").classList.add("hidden"); renderCollections(); show("screen-collections"); });
 
 $("btn-quit").addEventListener("click", () => {
+  const skipTo = state.warmupThen;   // a warm-up on the way to the assessment: ✕ skips the stretch, not the measurement
+  state.warmupThen = null;
   state.current?.stop();
+  state.current = null;
   audio.stopBgm();
   document.getElementById("cue").classList.add("hidden");
   document.getElementById("paused").classList.add("hidden");
+  if (skipTo) { skipTo(); return; }
   renderSelect();
   show("screen-select");
 });
@@ -1555,6 +2236,7 @@ function kbdTargets() {
     .filter(el => el.offsetParent !== null);   // visible only
 }
 addEventListener("keydown", e => {
+  if (!MENU_KEYS) return;
   if (!["screen-select", "screen-between", "screen-collections"].includes(state.screen)) return;
   const els = kbdTargets();
   if (!els.length) return;
@@ -1573,4 +2255,45 @@ addEventListener("keydown", e => {
 /* ================= boot ================= */
 show("screen-login");
 loadSettings(state.patient);
-boot().then(() => { state.tracker?.setSqueezeEase?.(A11Y.squeezeEase); watchWelcome(); });
+// ?preview=pongscore renders the between-rounds card with a sample Pong
+// round and skips the camera: for screenshots and design review of that
+// screen without playing a game (Sep 2026). Nothing is stored.
+const previewOf = new URLSearchParams(location.search).get("preview");
+if (previewOf === "pongscore") {
+  state.patient = "guest"; state.side = "right"; state.roundNumber = 2; state.sessionStars = 420;
+  const sample = { game: "pong", hits: 19, misses: 3, hitRate: 19 / 22, stars: 200, bestRally: 9,
+    points: 3, aiPoints: 1, matchWon: true, trickPoints: 1, trickShots: { curve: 1 }, compEvents: [] };
+  renderBetween(sample, "You won, so the ball comes a little quicker next game, and the star grows into a Bright star.");
+  show("screen-between");
+} else if (previewOf === "reach") {
+  // ?preview=reach: the after-assessment screen with four sample
+  // measurements three weeks apart. A stub tracker supplies only the stable
+  // frame and the SW→pixel mapping the screen needs; the sample patient is
+  // removed from storage again right after rendering.
+  state.patient = "preview"; state.side = "right";
+  state.tracker = {
+    frame: { x: 0.5, y: 0.36, sw: 0.17 }, srcW: 1280, srcH: 720, trackingOk: true,
+    relToPx(rel, canvas) {
+      const vx = this.frame.x + rel.x * this.frame.sw, vy = this.frame.y - rel.y * this.frame.sw;
+      const scale = Math.max(canvas.width / this.srcW, canvas.height / this.srcH);
+      const dw = this.srcW * scale, dh = this.srcH * scale;
+      return { x: (canvas.width - dw) / 2 + vx * dw, y: (canvas.height - dh) / 2 + vy * dh };
+    },
+  };
+  const env = n => Array.from({ length: 32 }, (_, i) => n * (1 + 0.35 * Math.cos((i + 0.5) / 32 * Math.PI * 2 - 0.6)));
+  const mk = (date, k, cov, peak, reached) => ({
+    date, envelope: env(k), envPts: null, armLenSW: 1.45, coverage: cov, arcMinDeg: 12, arcMaxDeg: peak,
+    lift: { peakDeg: peak }, center: { x: 0, y: 0 }, areaSW2: 2,
+    extremes: Array.from({ length: 5 }, (_, i) => ({ reached: i < reached, graspOk: i < 2 })),
+  });
+  const days = d => new Date(Date.now() - d * 864e5).toISOString();
+  for (const [d, k, cov, peak, r] of [[21, 0.55, 0.22, 95, 2], [14, 0.7, 0.31, 108, 3], [7, 0.8, 0.38, 121, 3], [0, 0.95, 0.47, 132, 4]])
+    store.saveProfile("preview", "right", mk(days(d), k, cov, peak, r));
+  renderRomCompare(["right"]); show("screen-romcompare"); romLiveLoop();
+  try {
+    const raw = JSON.parse(localStorage.getItem("rehabsuite-v1"));
+    if (raw?.patients?.preview) { delete raw.patients.preview; localStorage.setItem("rehabsuite-v1", JSON.stringify(raw)); }
+  } catch {}
+} else {
+  boot().then(() => { state.tracker?.setSqueezeEase?.(A11Y.squeezeEase); watchWelcome(); });
+}

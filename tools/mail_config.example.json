@@ -5,5 +5,9 @@
   "user": "the.sending.account@gmail.com",
   "password": "abcd efgh ijkl mnop",
   "from": "the.sending.account@gmail.com",
-  "to": "nehru.aravind@gmail.com"
+  "to": "nehru.aravind@gmail.com",
+  "askers": [
+    "therapist@example.org"
+  ],
+  "_askers": "Addresses allowed to request a participant update by emailing this account with the subject \"STRIVE update <name>\". Anyone else is ignored."
 }

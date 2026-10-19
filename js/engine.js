@@ -200,11 +200,28 @@ export class GameBase {
     this.particles = [];
     // therapist-voice feedback state
     this.fb = { missStreak: 0, hitStreak: 0, lastSpeak: 0, saidReach: false };
+    // pause on Space or P (Oct 2026, by request): the clock stops with the
+    // game, and the same key resumes it
+    this.userPaused = false;
+    this._pauseKey = e => {
+      if (!this.active || e.repeat) return;
+      if (e.code === "Space" || e.key === "p" || e.key === "P") { e.preventDefault(); this.togglePause(); }
+    };
+    addEventListener("keydown", this._pauseKey);
     this.setup?.();
     this._loop();
   }
+  togglePause() {
+    const now = performance.now();
+    if (!this.userPaused) { this.userPaused = true; this._userPauseAt = now; }
+    else { this.userPaused = false; this.pausedMs += now - this._userPauseAt; this._lastT = null; }
+  }
 
-  stop() { this.active = false; this._prompt(""); try { speechSynthesis.cancel(); } catch {} }
+  stop() {
+    this.active = false; this._prompt("");
+    if (this._pauseKey) { removeEventListener("keydown", this._pauseKey); this._pauseKey = null; }
+    try { speechSynthesis.cancel(); } catch {}
+  }
 
   elapsed(now) { return (now - this.startT - this.pausedMs) / 1000; }
 
@@ -234,6 +251,19 @@ export class GameBase {
     const c = this.canvas;
 
     this.drawBg(ctx, c, now);
+
+    if (this.userPaused) {
+      ctx.save();
+      ctx.fillStyle = "rgba(20,16,40,0.55)"; ctx.fillRect(0, 0, c.width, c.height);
+      ctx.fillStyle = "#f4ecdd"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.font = `800 ${Math.round(c.height * 0.07)}px Nunito, sans-serif`;
+      ctx.fillText("Paused", c.width / 2, c.height * 0.45);
+      ctx.font = `700 ${Math.round(c.height * 0.026)}px Nunito, sans-serif`;
+      ctx.fillStyle = "rgba(244,236,221,0.8)";
+      ctx.fillText("press Space or P to carry on", c.width / 2, c.height * 0.53);
+      ctx.restore();
+      return;
+    }
 
     // graceful pause — only after the problem persists >1.2 s
     const bad = !this.t.trackingOk || this.t.relocated();
@@ -272,7 +302,10 @@ export class GameBase {
       ctx.fillStyle = `rgba(18,12,28,${this.coach.dimming})`;
       ctx.fillRect(0, 0, c.width, c.height);
     }
-    this.coach.draw(ctx, c.width * 0.06, c.height * 0.96, c.height * 0.18, now);
+    // the posture coach's dock: bottom-left by default, or wherever the game
+    // puts it (Pong sets it beside the paddle the patient drives)
+    const dock = this.coachDock?.(c) || { x: c.width * 0.06, y: c.height * 0.96, h: c.height * 0.18 };
+    this.coach.draw(ctx, dock.x, dock.y, dock.h, now);
   }
 
   _end() {
@@ -286,6 +319,7 @@ export class GameBase {
       date: new Date().toISOString(),
       game: this.id,
       arm: this.side,
+      seconds: Math.round(this.elapsed(performance.now()) * 10) / 10,   // play time, pauses excluded
       params: { ...this.params },
       hits: this.stats.hits, misses: this.stats.misses, missFar: this.stats.missFar,
       hitRate: total ? this.stats.hits / total : 0,
@@ -301,8 +335,9 @@ export class GameBase {
   // ---- envelope + ON-SCREEN sampling --------------------------------
   envAt(theta) {
     const e = this.profile.envelope;
-    const f = (((theta % TAU) + TAU) % TAU) / TAU * BINS;
-    const i = Math.floor(f) % BINS, j = (i + 1) % BINS;
+    const n = e.length;   // 16 in older profiles, 32 from Sep 2026 — never assume
+    const f = (((theta % TAU) + TAU) % TAU) / TAU * n;
+    const i = Math.floor(f) % n, j = (i + 1) % n;
     const w = f - Math.floor(f);
     // armScale keeps the envelope tied to the arm rather than to the
     // projected shoulder width it was recorded against (see start())

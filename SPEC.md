@@ -153,7 +153,7 @@ curl, smoothed over ~300 ms. Recorded per event with position along the arc.
 > 5. **Six held positions** — `out`, `up-out`, `overhead`, `up-across`,
 >    `across`, `down-out`, mirrored per arm so both arms are asked for the same
 >    *movements* rather than the same screen spots. Each is a reach to 95% of
->    the true arm-length boundary, **held 5 s**, with an **open-and-close of
+>    the true arm-length boundary, **held 5 s**, with a **squeeze and then an open of
 >    the hand** cued partway into the hold. Progress is scored on the
 >    *projection* onto the direction, so drifting off-axis can never look like
 >    a longer reach. The sweep records where the patient *went*; only this
