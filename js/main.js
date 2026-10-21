@@ -1,6 +1,6 @@
-import { Tracker } from "./tracker.js?v=67";
+import { Tracker } from "./tracker.js?v=68";
 import { Assessment } from "./assessment.js";
-import { GAMES, STAR_RANKS, CANDLE_MAX, LUMEN_STAGES } from "./games.js";
+import { GAMES, STAR_RANKS, CANDLE_MAX, LUMEN_STAGES, WINDY_MAX } from "./games.js";
 import { Warmup } from "./warmup.js";
 import { SONGS } from "./songs.js";
 import { initialParams, adjust, LIMITS } from "./dda.js";
@@ -38,6 +38,7 @@ const state = {
   oarsMode: "together",
   candlesMode: "solo",   // Lantern: "solo" | "together" (other hand keeps the candle) | "hold" (trained arm keeps it)
   candlesLevelPick: null, // Lantern: a level chosen on the level map or in the drawer for the NEXT round only (testing); else the ladder
+  windyLevelPick: null,   // Windy City Flap: the same, from the drawer
   pongSpeed: "normal",   // Pong ball-speed dial: chill | normal | frantic (both the single and the two-player game)
   pongPowerups: true,    // Pong: the orbs and their power-ups
   ferryMode: "solo",
@@ -732,6 +733,17 @@ const CARD_ART = {
       <path d="M104 300 q46 40 92 0" fill="none" stroke="#9fc08a" stroke-width="7" stroke-linecap="round"/>
       <text x="150" y="368" text-anchor="middle" font-family="Nunito" font-size="26" font-weight="800"
         fill="rgba(244,236,221,.55)">both hands</text>
+    </svg></div>`,
+  windy: `<div class="art" style="background:linear-gradient(180deg,#4f8ccc,#8fc1e6 55%,#f8ebcf)">
+    <svg viewBox="0 0 300 400" style="position:absolute;inset:0;width:100%;height:100%">
+      <ellipse cx="90" cy="110" rx="60" ry="22" fill="#fff" opacity=".85"/><ellipse cx="220" cy="170" rx="50" ry="18" fill="#fff" opacity=".7"/>
+      <rect x="20" y="300" width="50" height="100" fill="#ecd3b2"/><rect x="90" y="250" width="60" height="150" fill="#dcb59a"/><rect x="175" y="280" width="45" height="120" fill="#d4c6ae"/><rect x="240" y="320" width="55" height="80" fill="#e8dcc0"/>
+      <rect x="0" y="380" width="300" height="20" fill="#82b862"/>
+      <path d="M95 225 L205 225 Q222 228 222 236 Q222 244 205 246 L95 246 Z" fill="#2b3550"/>
+      <rect x="100" y="230" width="100" height="4" fill="#d9483b"/>
+      <circle cx="150" cy="208" r="13" fill="#2f3340"/><path d="M137 208 A13 13 0 0 1 163 208 Z" fill="#d9483b"/>
+      <circle cx="146" cy="211" r="2" fill="#fbf4e4"/><circle cx="154" cy="211" r="2" fill="#fbf4e4"/>
+      <path d="M85 236 L62 231 L62 241 Z" fill="#ff8a4c"/>
     </svg></div>`,
   pairs: `<div class="art" style="background:radial-gradient(circle at 50% 45%,#2c3556,#141830)">
     <svg viewBox="0 0 300 400" style="position:absolute;inset:0;width:100%;height:100%">
@@ -1763,7 +1775,8 @@ function startGame(id, fresh) {
     level: id === "lens" ? store.getLevel(state.patient, "scratchLevel")
       : id === "dots" ? store.getLevel(state.patient, "dotsLevel")
       : id === "pairs" ? store.getLevel(state.patient, "pairsLevel")
-      : id === "candles" ? (state.candlesLevelPick || store.getLevel(state.patient, "candlesLevel")) : undefined,
+      : id === "candles" ? (state.candlesLevelPick || store.getLevel(state.patient, "candlesLevel"))
+      : id === "windy" ? (state.windyLevelPick || store.getLevel(state.patient, "windyLevel")) : undefined,
     mode: id === "pong" ? state.pongMode
       : id === "candles" ? state.candlesMode
       : id === "oars" ? state.oarsMode
@@ -1785,6 +1798,7 @@ function startGame(id, fresh) {
     bothArms: (id === "pong" && ["bimanual", "coupled", "team-arms"].includes(state.pongMode))
       || (id === "rhythm" && state.tilesMode === "bimanual")
       || id === "rgs"      // the RGS catch needs both hands by definition
+      || id === "windy"    // two arms fly one jet: height from their mean, tilt from their difference
       || (id === "candles" && state.candlesMode !== "solo"),   // one hand keeps the candle, the other lights
     profiles: { left: store.getProfile(state.patient, "left"), right: store.getProfile(state.patient, "right") },
     // two-player Pong: player 2's own assessed arc drives their paddle, so a
@@ -1797,6 +1811,7 @@ function startGame(id, fresh) {
   });
   state.current = game;
   state.candlesLevelPick = null; $("in-candles-level").value = "";   // a picked level is for one round
+  state.windyLevelPick = null; $("in-windy-level").value = "";
   // the webcam follows a second body only while two are playing
   state.tracker.setSecond?.(id === "pong" && state.pongMode === "duo");
   show("stage");
@@ -1837,6 +1852,10 @@ function onRoundEnd(round) {
   }
   if (round.game === "pairs" && round.pairsLevel) {
     store.setLevel(state.patient, "pairsLevel", round.pairsLevel, 6);
+  }
+  // Windy City Flap: up a level on a finished flight, down one at most when the hearts ran out
+  if (round.game === "windy" && round.windyLevel) {
+    store.setLevel(state.patient, "windyLevel", round.windyLevel, WINDY_MAX);
   }
   if (round.game === "dots" && round.dotsLevel) {
     store.setLevel(state.patient, "dotsLevel", round.dotsLevel, 6);
@@ -2413,7 +2432,7 @@ $("btn-prof-back").addEventListener("click", () => { renderSelect(); show("scree
   // Each game keeps its own DDA params (they make different demands), and the
   // ladder games keep a level. A therapist looking at "why is Pong harder
   // than it was" needs to see the number that actually drove the round.
-  const LEVELS = { lens: ["scratchLevel", 6], dots: ["dotsLevel", 6], pairs: ["pairsLevel", 6], candles: ["candlesLevel", CANDLE_MAX] };
+  const LEVELS = { lens: ["scratchLevel", 6], dots: ["dotsLevel", 6], pairs: ["pairsLevel", 6], candles: ["candlesLevel", CANDLE_MAX], windy: ["windyLevel", WINDY_MAX] };
   const rows = store.listGameParams(state.patient, state.side);
   $("prof-diff").innerHTML = rows.length
     ? rows.map(r => {
@@ -2663,6 +2682,9 @@ for (let L = 1; L <= CANDLE_MAX; L++) {
   $("in-candles-level").add(new Option(`Level ${L} · ${st?.name || ""}`, String(L)));
 }
 $("in-candles-level").addEventListener("change", e => { state.candlesLevelPick = +e.target.value || null; });
+// Windy City Flap's level for the NEXT round (testing: any level at once); the ladder otherwise
+for (let L = 1; L <= WINDY_MAX; L++) $("in-windy-level").add(new Option(`Level ${L}${L > 12 ? " · endless" : ""}`, String(L)));
+$("in-windy-level").addEventListener("change", e => { state.windyLevelPick = +e.target.value || null; });
 $("in-pong-speed").addEventListener("change", e => { state.pongSpeed = e.target.value; });
 $("in-pong-power").addEventListener("change", e => { state.pongPowerups = e.target.value === "on"; });
 $("in-song").addEventListener("change", e => { state.song = e.target.value; });

@@ -33,6 +33,7 @@ const STORIES = {
   candles: { title: "The lamplighter of Lumen", text: "The Night Moth put out every flame in the valley. Take a candle from the basket and carry it to each lantern. Pip the owl will cheer you on." },
   dots: { title: "Connect the dots", text: "There is a picture hiding in these dots. Go from one to the next and it will draw itself." },
   pairs: { title: "Memory pairs", text: "The cards hide in pairs. Have a good look, then turn two at a time and find each match." },
+  windy: { title: "Windy City Flap", text: "Rook the cat pilot needs a co-pilot. Lift both arms to climb, lower them to dive, and keep them level to fly through the gaps." },
   lens: { title: "Scratch cards", text: "Under the silver there is a picture. Scrape it away with your hand and see what it is." },
   crane: { title: "The night crane", text: "Hold the crane high and steady. Squeeze to catch each crate as it passes." },
   feather: { title: "The feather lantern", text: "Lift the lantern to its hook. Then lower it, slow as a feather." },
@@ -8403,6 +8404,711 @@ export class MemoryPairs extends GameBase {
   }
 }
 
+/* ================= Windy City Flap (Oct 2026, by request) =================
+ * Rebuilt from mockups/windy-city-flap-share (1).zip: Rook the cat pilot
+ * flies a small jet through a painted city, and the player keeps the jet
+ * LEVEL. The mockup steered with one thumb from each hand; here the two ARMS
+ * are the thumbs. Height is the mean of the two wrists' heights, tilt is the
+ * difference between them, so both arms have to move together and stay
+ * even: symmetric, in-phase bimanual control with a steady correction
+ * against tilt and wind. The one bimanual game in STRIVE.
+ *
+ * What is the patient's: the lane. The jet's whole vertical range is the
+ * trained arm's measured reach straight up and down (rangeScale × envAt,
+ * grown live like Pong's lane), so a full lift flies to the top of the lane,
+ * arms down is the bottom, and every gap is inside the lane by construction:
+ * a tower never asks for more than the arm was measured to have. Flying
+ * speed follows params.lifetime (a slower patient flies a slower city) and
+ * the mockup's pixel constants are fractions of the lane and the screen.
+ *
+ * Kept from the mockup: Rook sliding toward the low end and falling off past
+ * the edge (from level 2), the 12-level ladder and its endless extension,
+ * 90-second levels, 3 hearts, feathers (a certain reward, counted, never a
+ * currency), the combo for staying under 5° of tilt, the painted skies, the
+ * generated sounds (audio.windy), the tilt gauge in degrees (the one number
+ * on screen, because it IS the task), the guided first flight at level 1.
+ * Dropped: the daily flight, streaks, scarves and shop, power-ups, sharing,
+ * vibration, paying feathers to continue, the level map.
+ */
+const WINDY_LEVELS = [
+  // speed: the mockup's px/frame at 640 px high; gap and mov: fractions of
+  // the lane; spacing: px between towers at 640 high; vary: how far the gap
+  // wanders from the middle of the lane (1 = anywhere)
+  { speed: 1.5, gap: 0.77, mov: 0, wind: 0, drones: 0, slide: 0, vary: 0.25, spacing: 430, note: "Learn to fly: slow, wide and steady" },
+  { speed: 1.8, gap: 0.69, mov: 0, wind: 0, drones: 0, slide: 0.4, vary: 0.6, spacing: 390, note: "Now Rook slides when the jet tilts. Keep it level!" },
+  { speed: 2.3, gap: 0.64, mov: 0, wind: 0, drones: 0, slide: 0.45, note: "Faster flying" },
+  { speed: 2.3, gap: 0.64, mov: 0, wind: 0, drones: 0.35, slide: 0.45, note: "Drones appear: fly around them" },
+  { speed: 2.3, gap: 0.64, mov: 0.043, wind: 0, drones: 0.35, slide: 0.48, note: "Bridges start to move" },
+  { speed: 2.3, gap: 0.61, mov: 0.043, wind: 0, drones: 0.35, slide: 0.48, note: "Narrower gaps" },
+  { speed: 2.6, gap: 0.61, mov: 0.043, wind: 0, drones: 0.35, slide: 0.5, note: "Faster flying" },
+  { speed: 2.6, gap: 0.61, mov: 0.043, wind: 0.10, drones: 0.35, slide: 0.5, note: "A crosswind tilts the jet" },
+  { speed: 2.6, gap: 0.61, mov: 0.043, wind: 0.10, drones: 0.6, slide: 0.52, note: "More drones to dodge" },
+  { speed: 2.6, gap: 0.61, mov: 0.075, wind: 0.10, drones: 0.6, slide: 0.52, note: "Bridges move further" },
+  { speed: 2.6, gap: 0.61, mov: 0.075, wind: 0.16, drones: 0.6, slide: 0.55, note: "Stronger crosswind" },
+  { speed: 3.0, gap: 0.58, mov: 0.086, wind: 0.16, drones: 0.6, slide: 0.6, note: "The finale: everything at once" },
+];
+export const WINDY_MAX = 24;              // 12 on the ladder, then endless levels, a little tighter each
+export function windyLevel(n) {
+  if (n <= WINDY_LEVELS.length) return WINDY_LEVELS[n - 1];
+  const k = n - WINDY_LEVELS.length;
+  return { speed: Math.min(4.6, 3.0 + k * 0.12), gap: Math.max(0.5, 0.58 - k * 0.008), mov: Math.min(0.124, 0.086 + k * 0.0054),
+    wind: Math.min(0.24, 0.16 + k * 0.008), drones: Math.min(0.8, 0.6 + k * 0.02), slide: Math.min(0.75, 0.6 + k * 0.01), note: "A little faster and tighter" };
+}
+const WINDY_LEVEL_S = 90;                 // one level is one round of flying
+const WINDY_HEARTS = 3;
+const WINDY_REF_H = 640;                  // the mockup's logical height: its px constants scale by H / this
+const WINDY_LIFETIME_REF = 2.2;           // params.lifetime at which the city flies at the mockup's pace: a typical
+                                          // patient (lifetime about 2.8) flies about a quarter slower than the mockup
+const WINDY_STEP_MAX = 0.55;              // consecutive gaps are never further apart than this share of the lane, so
+                                          // no tower asks for a full-range swing of the arms in one interval
+const WINDY_LANE_TOP = 0.12, WINDY_LANE_BOT = 0.82, WINDY_GROUND = 0.88;   // fractions of the screen height
+const WINDY_BOARD = 0.105;                // jet length, fraction of the screen height (the mockup's 66 of 640)
+const WINDY_SPAN_MIN = 0.6;               // SW: the hands' sideways distance never reads narrower than this (tilt = atan2(dy, dx))
+const WINDY_DEAD_DEG = 3;                 // degrees of tilt forgiven before the jet leans at all
+const WINDY_LANE_PAD = 0.9;               // the lane ends at 90% of the measured reach, so top and bottom are reachable without a strain
+const WINDY_STEADY_DEG = 5, WINDY_LOSE_DEG = 12;   // under 5° builds the combo, over 12° loses it
+const WINDY_HANDS_LOST_MS = 1500;         // both hands out of view this long pauses the jet
+const WINDY_SKIES = [
+  { g: ["#6c8fc9", "#b9c7e6", "#f2c9c4", "#fde3c8"], sun: [0.2, 0.66, "#ffe7c9", 30], cl: ["#f0d6d6", "#fbeaea", "#fff"], shade: 0 },
+  { g: ["#4f8ccc", "#8fc1e6", "#cfe7f3", "#f8ebcf"], sun: [0.8, 0.16, "#fffbe6", 26], cl: ["#c7d6ea", "#eef3fa", "#fff"], shade: 0 },
+  { g: ["#3a7fd0", "#6fb1ea", "#b8def4", "#e4f2f8"], sun: [0.5, 0.1, "#ffffff", 24], cl: ["#c3d6ee", "#eef4fb", "#fff"], shade: 0 },
+  { g: ["#4d86c9", "#88bde6", "#d7e9f0", "#f6e6c2"], sun: [0.75, 0.3, "#fff3d0", 28], cl: ["#c9d3e6", "#f2f0ee", "#fff"], shade: 0 },
+  { g: ["#5b7fc0", "#a9b8d8", "#f4cf9a", "#f6b26b"], sun: [0.7, 0.55, "#ffd27f", 34], cl: ["#d8b8a8", "#f6dcc0", "#fff3dc"], shade: 0.05 },
+  { g: ["#3d4f93", "#8a6fa8", "#e88a7a", "#f6b06a"], sun: [0.5, 0.72, "#ff9c55", 44], cl: ["#a77d98", "#e6a49a", "#ffd0a8"], shade: 0.15 },
+  { g: ["#6f85a3", "#9fb1c6", "#c9d3dc", "#dfe3e2"], sun: null, cl: ["#8f9db0", "#c2cbd6", "#e3e8ee"], shade: 0.1, clouds: 4 },
+  { g: ["#2b2f5e", "#5a4a85", "#b0708a", "#f0a07a"], sun: [0.3, 0.86, "#ff8a5c", 40], cl: ["#5e5486", "#8c6f9a", "#c48c9c"], shade: 0.3 },
+  { g: ["#0f1838", "#1f2b5a", "#34477a", "#4a5e8c"], moon: [0.75, 0.18, 22], cl: ["#2a3866", "#3a4a7a", "#56679a"], shade: 0.55, night: 1 },
+  { g: ["#142045", "#26386b", "#3f5a8f", "#6a7fae"], moon: [0.3, 0.22, 34], cl: ["#34467a", "#4c5f92", "#7486b4"], shade: 0.5, night: 1 },
+  { g: ["#2c3442", "#46536a", "#6b778c", "#8a93a3"], sun: null, cl: ["#3a4354", "#55607a", "#727d94"], shade: 0.45, night: 1, clouds: 4 },
+  { g: ["#0c1230", "#24215a", "#4a2f6e", "#7a3f73"], moon: [0.85, 0.12, 16], cl: ["#2a2758", "#3e3570", "#5a4580"], shade: 0.55, night: 1, fire: 1 },
+];
+const WINDY_TOWER_PAL = [["#f1dcc0", "#cdb499", "#8a6f5a"], ["#dfe6ee", "#b6c3d4", "#6b7f99"], ["#ecd1c6", "#c8a49a", "#9a6d63"]];
+const windyRnd = s => { const x = Math.sin(s * 127.1) * 43758.5; return x - Math.floor(x); };
+
+// the painted city, once per level, as an offscreen canvas (the mockup's
+// paintScene with its pixel sizes scaled to the screen height)
+function windyPaintScene(S, W, H, k) {
+  const c = document.createElement("canvas");
+  c.width = Math.max(1, W); c.height = Math.max(1, H);
+  const x = c.getContext("2d");
+  const GROUND = H * WINDY_GROUND;
+  const g = x.createLinearGradient(0, 0, 0, H);
+  [0, 0.42, 0.7, 0.88].forEach((p, i) => g.addColorStop(p, S.g[i]));
+  x.fillStyle = g; x.fillRect(0, 0, W, H);
+  if (S.night) { x.fillStyle = "#e9f0ff"; for (let i = 0; i < 90; i++) { x.globalAlpha = 0.3 + windyRnd(i + 0.3) * 0.6; x.fillRect(windyRnd(i) * W, windyRnd(i + 0.7) * H * 0.5, 1.6 * k, 1.6 * k); } x.globalAlpha = 1; }
+  if (S.sun) {
+    const [sx, sy, col, r0] = S.sun, r = r0 * k;
+    const gl = x.createRadialGradient(W * sx, H * sy, r * 0.6, W * sx, H * sy, r * 6);
+    gl.addColorStop(0, col); gl.addColorStop(1, "rgba(255,255,255,0)");
+    x.globalAlpha = 0.55; x.fillStyle = gl; x.fillRect(0, 0, W, H); x.globalAlpha = 1;
+    x.fillStyle = col; x.beginPath(); x.arc(W * sx, H * sy, r, 0, TAU); x.fill();
+  }
+  if (S.moon) {
+    const [mx, my, r0] = S.moon, r = r0 * k;
+    const gl = x.createRadialGradient(W * mx, H * my, r, W * mx, H * my, r * 5);
+    gl.addColorStop(0, "rgba(220,230,255,.35)"); gl.addColorStop(1, "rgba(220,230,255,0)");
+    x.fillStyle = gl; x.fillRect(0, 0, W, H);
+    x.fillStyle = "#f4f1dc"; x.beginPath(); x.arc(W * mx, H * my, r, 0, TAU); x.fill();
+    x.fillStyle = "rgba(200,195,170,.5)"; x.beginPath(); x.arc(W * mx - r * 0.3, H * my + r * 0.1, r * 0.22, 0, TAU); x.arc(W * mx + r * 0.25, H * my - r * 0.3, r * 0.15, 0, TAU); x.fill();
+  }
+  if (S.fire) {
+    for (let f = 0; f < 3; f++) {
+      const fx = W * (0.2 + f * 0.3), fy = H * (0.18 + windyRnd(f) * 0.15), cols = ["#f3b562", "#f19bb5", "#9fd8f0"];
+      x.strokeStyle = cols[f]; x.lineWidth = 2 * k; x.globalAlpha = 0.8;
+      for (let q = 0; q < 14; q++) { const a = q / 14 * TAU; x.beginPath(); x.moveTo(fx + Math.cos(a) * 8 * k, fy + Math.sin(a) * 8 * k); x.lineTo(fx + Math.cos(a) * 26 * k, fy + Math.sin(a) * 26 * k); x.stroke(); }
+      x.globalAlpha = 1;
+    }
+  }
+  const cloud = (cx, cy, w, seed) => {
+    const puffs = [];
+    for (let i = 0; i < 12; i++) {
+      const px = cx - w * 0.35 + windyRnd(seed + i) * w * 0.7, py = cy - windyRnd(seed + i + 0.5) * w * 0.25 * (1 - Math.abs((px - cx) / w) * 1.6), r = w * 0.09 + windyRnd(seed + i + 0.2) * w * 0.1;
+      puffs.push([px, py, r]);
+    }
+    x.fillStyle = S.cl[0]; for (const [p, q, r] of puffs) { x.beginPath(); x.arc(p, q + r * 0.2, r, 0, TAU); x.fill(); }
+    x.fillStyle = S.cl[1]; for (const [p, q, r] of puffs) { x.beginPath(); x.arc(p, q, r * 0.9, 0, TAU); x.fill(); }
+    x.fillStyle = S.cl[2]; for (const [p, q, r] of puffs) { x.beginPath(); x.arc(p + r * 0.15, q - r * 0.2, r * 0.6, 0, TAU); x.fill(); }
+  };
+  cloud(W * 0.22, H * 0.2, H * 0.5, 3); cloud(W * 0.75, H * 0.38, H * 0.45, 11);
+  if (S.clouds) { cloud(W * 0.55, H * 0.12, H * 0.55, 21); cloud(W * 0.05, H * 0.42, H * 0.4, 31); }
+  // the far skyline, then the near one with its windows
+  let px = 0, i = 0;
+  x.fillStyle = S.night ? "rgba(40,55,95,.8)" : "rgba(130,158,196,.45)";
+  while (px < W) { const w = (24 + windyRnd(i) * 32) * k, h = (50 + windyRnd(i + 0.5) * 130) * k; x.fillRect(px, GROUND - 60 * k - h, w, h); if (windyRnd(i + 0.7) > 0.75) x.fillRect(px + w / 2 - k, GROUND - 60 * k - h - 20 * k, 2 * k, 20 * k); px += w + 3 * k; i++; }
+  px = -10 * k; i = 40;
+  const pal = ["#ecd3b2", "#dcb59a", "#d4c6ae", "#e8dcc0"], wins = [];
+  while (px < W) {
+    const w = (40 + windyRnd(i) * 46) * k, h = (70 + windyRnd(i + 0.3) * 120) * k, y = GROUND - 40 * k - h;
+    x.fillStyle = pal[Math.floor(windyRnd(i + 0.1) * pal.length)]; x.fillRect(px, y, w, h);
+    x.fillStyle = "rgba(80,95,130,.12)"; x.fillRect(px + w * 0.72, y, w * 0.28, h);
+    x.fillStyle = "#7aad62"; x.beginPath(); x.arc(px + w * 0.3, y, 6 * k, 0, TAU); x.arc(px + w * 0.65, y, 5 * k, 0, TAU); x.fill();
+    for (let wy = y + 12 * k; wy < GROUND - 48 * k; wy += 16 * k) for (let wx = px + 7 * k; wx < px + w - 10 * k; wx += 11 * k) if (windyRnd(wx * 0.13 + wy * 0.07) > 0.55) wins.push([wx, wy]);
+    px += w + 6 * k; i++;
+  }
+  const lg = x.createLinearGradient(0, GROUND - 40 * k, 0, GROUND);
+  lg.addColorStop(0, "#6dbccc"); lg.addColorStop(1, "#4795b1");
+  x.fillStyle = lg; x.fillRect(0, GROUND - 40 * k, W, 40 * k);
+  for (let q = -10 * k; q < W; q += 30 * k) {
+    const r = (15 + windyRnd(q) * 10) * k, cx = q + windyRnd(q + 1) * 8 * k, cy = GROUND - 10 * k;
+    x.fillStyle = "#57894b"; x.beginPath(); x.arc(cx, cy, r, 0, TAU); x.fill();
+    x.fillStyle = "#78ad5f"; x.beginPath(); x.arc(cx - r * 0.2, cy - r * 0.25, r * 0.7, 0, TAU); x.fill();
+  }
+  const gg = x.createLinearGradient(0, GROUND, 0, H);
+  gg.addColorStop(0, "#82b862"); gg.addColorStop(1, "#5a8f4a");
+  x.fillStyle = gg; x.fillRect(0, GROUND, W, H - GROUND);
+  x.fillStyle = "#eadfc2"; x.fillRect(0, GROUND + 28 * k, W, 10 * k);
+  if (S.shade) { x.fillStyle = `rgba(18,24,60,${S.shade})`; x.fillRect(0, GROUND - 260 * k, W, H); }
+  if (S.night) {
+    x.fillStyle = "rgba(255,224,150,.85)"; for (const [wx, wy] of wins) x.fillRect(wx, wy, 4 * k, 6 * k);
+    x.fillStyle = "rgba(255,224,150,.5)"; for (let q = 0; q < W; q += 60 * k) x.fillRect(q, GROUND - 6 * k + ((q / (60 * k)) % 2) * 3 * k, 22 * k, 2 * k);
+  }
+  return c;
+}
+
+// One control channel: a running median over the last PADDLE_MEDIAN distinct
+// tracker samples, then an adaptive One-Euro filter, the way Pong's paddle is
+// smoothed (same constants, same reasons: a median discards an outlier where
+// a low-pass only spreads it; the cutoff opens with speed so holding still is
+// quiet and moving is not laggy). A missing sample HOLDS the last value.
+class WindyChannel {
+  constructor() { this.v = null; this.dv = 0; this.buf = []; this.seen = null; }
+  push(raw, seen, dt) {
+    if (raw == null) return this.v;
+    if (seen !== this.seen) { this.seen = seen; this.buf.push(raw); if (this.buf.length > PADDLE_MEDIAN) this.buf.shift(); }
+    const sorted = [...this.buf].sort((a, b) => a - b);
+    const target = sorted[sorted.length >> 1];
+    if (this.v == null) { this.v = target; return target; }
+    const dts = Math.max(1, dt) / 1000;
+    const lp = (cut) => { const r = TAU * cut * dts; return r / (r + 1); };
+    const rawD = (target - this.v) / dts;
+    this.dv += lp(PADDLE_D_CUT) * (rawD - this.dv);
+    this.v += lp(PADDLE_MIN_CUT + PADDLE_BETA * Math.abs(this.dv)) * (target - this.v);
+    return this.v;
+  }
+}
+
+export class WindyCity extends GameBase {
+  id = "windy";
+  setup() {
+    this.tips = { objective: "Lift both arms together to climb, lower them to dive, and keep them level to fly through the gaps." };
+    this.level = Math.max(1, Math.min(WINDY_MAX, this.opts.level || 1));
+    this.lvl = windyLevel(this.level);
+    const c = this.canvas;
+    this._layout(c);
+    // the city flies at the mockup's pace for a typical patient and slower
+    // for a slower one: lifetime is the DDA's own "how fast can they go"
+    this.paceK = Math.max(0.8, Math.min(2.2, (this.params.lifetime || 2.8) / WINDY_LIFETIME_REF));
+    this.scene = windyPaintScene(WINDY_SKIES[(this.level - 1) % WINDY_SKIES.length], c.width, c.height, this.k);
+    this.sceneSize = `${c.width}x${c.height}`;
+    this.board = { y: this.laneBot, ang: 0 };
+    this.rider = { off: 0, v: 0 };
+    this.obs = []; this.items = []; this.drones = []; this.toasts = [];
+    this.lives = WINDY_HEARTS; this.heartsLost = 0;
+    this.combo = 1; this.steadyT = 0;
+    this.invuln = 0; this.fallT = 0; this.shake = 0; this.frame = 0;
+    this.lvT = 0;                               // frames of play on the level clock (tutorial and pauses excluded)
+    this.lvFrames = WINDY_LEVEL_S * 60;
+    this.passed = 0; this.crashes = 0; this.falls = 0; this.crashBy = { tower: 0, bridge: 0, ground: 0, drone: 0 };
+    this.feathersGot = 0; this.feathersSpawned = 0;
+    this.tiltSum = 0; this.tiltN = 0; this.tiltMax = 0; this.steadyFrames = 0;
+    this.score = 0;
+    this.windNow = 0;
+    this.acc = 0;
+    this.fH = new WindyChannel(); this.fTilt = new WindyChannel();
+    this.fHeight = 0; this.tiltDeg = 0; this.hL = null; this.hR = null; this.handsAt = 0; this.handsLost = false;
+    this.laneLo = null; this.laneHi = null;
+    this.over = null;
+    // the level's own backstop on the engine clock: the flight, the guided
+    // first flight before it, the card after it
+    const tutorial = !!this.opts.tellStory && this.level === 1;
+    this.roundSeconds = WINDY_LEVEL_S + 25 + (tutorial ? 75 : 0);
+    this.tut = tutorial ? { step: 0, hold: 0, said: -1 } : null;
+    this.hadTutorial = tutorial;
+    if (this.tut) {
+      this._prompt("First flight", "We will show you how to steer");
+      this._speak("Rook needs a co-pilot. Let's learn to fly. Lift both arms together to fly up into the ring.");
+      this._tutKey = e => { if (e.key === "Enter" || e.key === "Escape") { e.preventDefault(); this._endTutorial(true); } };
+      addEventListener("keydown", this._tutKey);
+    } else {
+      const wait = this.opts.tellStory ? this.tellStory(STORIES.windy) : 0;
+      setTimeout(() => { if (!this.active) return; this._prompt(`Level ${this.level}`, this.lvl.note); if (!wait) this._speak(`Level ${this.level}. ${this.lvl.note}`); setTimeout(() => { if (this.active) this._prompt(""); }, 3600); }, wait);
+      this._takeOff();
+    }
+  }
+  stop() { super.stop(); if (this._tutKey) { removeEventListener("keydown", this._tutKey); this._tutKey = null; } }
+
+  _layout(c) {
+    const H = c.height;
+    this.k = H / WINDY_REF_H;                   // the mockup's pixel constants scale with the screen height
+    this.ground = H * WINDY_GROUND;
+    this.laneTop = H * WINDY_LANE_TOP; this.laneBot = H * WINDY_LANE_BOT;
+    this.laneH = this.laneBot - this.laneTop;
+    this.boardLen = H * WINDY_BOARD;
+    this.bx = Math.min(c.width * 0.32, 300 * this.k);
+  }
+  _takeOff() {
+    this.flying = true;
+    audio.windy("start");
+    const spc = this._spacing();
+    for (let i = 0; i < 4; i++) this._spawn(this.canvas.width + 170 * this.k + i * spc);
+  }
+  _endTutorial(skipped) {
+    if (!this.tut) return;
+    this.tut = null;
+    if (this._tutKey) { removeEventListener("keydown", this._tutKey); this._tutKey = null; }
+    this._prompt(skipped ? "Here they come" : "You've got it!", "Fly through the gaps");
+    this._speak(skipped ? "Here come the towers. Fly through the gaps." : "You've got it. Here come the towers. Fly through the gaps.");
+    setTimeout(() => { if (this.active) this._prompt(""); }, 3200);
+    this.fb.lastEvent = performance.now();
+    this._takeOff();
+  }
+  _spacing() { return (this.lvl.spacing || 340) * this.k; }
+  _speedPx() { return this.lvl.speed * this.k / this.paceK; }   // px per 60 Hz step
+
+  // ---- the two hands: height = mean, tilt = difference ------------------
+  _readHands(now, dt) {
+    const L = this.t.handRel("left"), R = this.t.handRel("right");
+    if (L) this.hL = L;
+    if (R) this.hR = R;
+    if (L || R) this.handsAt = now;
+    this.handsLost = !L && !R && now - this.handsAt > WINDY_HANDS_LOST_MS;
+    if (!this.hL || !this.hR) return;
+    const seen = this.t.lastSeen;
+    // the lane in shoulder widths: the trained arm's measured reach straight
+    // down to straight up (both arms move together, so the trained one is
+    // the limit), grown live if the hands go past it, like Pong's lane
+    if (this.laneLo == null) {
+      this.laneLo = -this.params.rangeScale * this.envAt(-Math.PI / 2) * WINDY_LANE_PAD;
+      this.laneHi = this.params.rangeScale * this.envAt(Math.PI / 2) * WINDY_LANE_PAD;
+    }
+    const mean = (this.hL.y + this.hR.y) / 2;
+    if (mean < this.laneLo) this.laneLo = mean;
+    if (mean > this.laneHi) this.laneHi = mean;
+    const f = (mean - this.laneLo) / Math.max(0.5, this.laneHi - this.laneLo);
+    this.fHeight = this.fH.push(Math.max(0, Math.min(1, f)), seen, dt) ?? 0;
+    // tilt: the line between the two hands, degrees, positive = right hand
+    // higher; a 0.5 SW difference across a shoulder width is about 25°
+    const dx = Math.max(WINDY_SPAN_MIN, Math.abs(this.hR.x - this.hL.x));
+    let a = Math.atan2(this.hR.y - this.hL.y, dx) * 180 / Math.PI;
+    a = Math.sign(a) * Math.max(0, Math.abs(a) - WINDY_DEAD_DEG);
+    this.tiltDeg = this.fTilt.push(a, seen, dt) ?? 0;
+  }
+
+  // ---- the world ---------------------------------------------------------
+  _spawn(x) {
+    const lvl = this.lvl, k = this.k, R = Math.random;
+    const gap = lvl.gap * this.laneH, vary = lvl.vary == null ? 1 : lvl.vary;
+    let top = this.laneTop + (0.5 + (R() - 0.5) * vary) * (this.laneH - gap);
+    // the gap wanders from tower to tower, but never by more than WINDY_STEP_MAX of the lane
+    if (this.lastGapCy != null) {
+      const cy = Math.max(this.lastGapCy - WINDY_STEP_MAX * this.laneH, Math.min(this.lastGapCy + WINDY_STEP_MAX * this.laneH, top + gap / 2));
+      top = Math.max(this.laneTop, Math.min(this.laneBot - gap, cy - gap / 2));
+    }
+    this.lastGapCy = top + gap / 2;
+    const mov = lvl.mov && R() < 0.6 ? lvl.mov * this.laneH : 0;
+    const o = { x, base: top, top, gap, w: 66 * k, passed: false, mov, ph: R() * 6, style: Math.floor(R() * 3), hue: Math.floor(R() * 3), seed: R() * 999 };
+    this.obs.push(o);
+    if (R() < 0.85) { this.items.push({ x: x + o.w / 2, y: top + gap / 2, ph: R() * 6, follow: o }); this.feathersSpawned++; }
+    const spc = this._spacing();
+    if (lvl.drones && R() < lvl.drones) this.drones.push({ x: x + spc / 2 + o.w / 2, base: this.laneTop + this.laneH * (0.15 + R() * 0.7), ph: R() * 6 });
+    else if (R() < 0.5) { this.items.push({ x: x + spc / 2 + o.w / 2, y: this.laneTop + this.laneH * (0.1 + R() * 0.8), ph: R() * 6 }); this.feathersSpawned++; }
+  }
+  _toast(text, col) { this.toasts.push({ text, t: 0, col }); }
+  _sparks(x, y, col, n = 10, sp = 1) {
+    const m = A11Y.calm ? Math.ceil(n / 3) : n;
+    for (let i = 0; i < m; i++) { const a = Math.random() * TAU, s = sp * (1 + Math.random() * 3) * this.k * 0.8; this.particles.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 1, color: col }); }
+  }
+  _riderPos() {
+    const c = Math.cos(this.board.ang), s = Math.sin(this.board.ang), k = this.k;
+    if (this.fallT > 0) { const q = 60 - this.fallT, dir = Math.sign(this.rider.off || 1); return { x: this.bx + c * this.rider.off + q * 1.2 * k * dir, y: this.board.y + s * this.rider.off - 16 * k + q * q * 0.12 * k }; }
+    return { x: this.bx + c * this.rider.off + s * 14 * k, y: this.board.y + s * this.rider.off - c * 14 * k };
+  }
+  _loseLife(kind, what = "tower") {
+    if (this.invuln > 0 || this.fallT > 0 || this.over) return;
+    this.fallT = 60; this.shake = A11Y.calm ? 0 : 10 * this.k;
+    this.lives--; this.heartsLost++; this.combo = 1; this.steadyT = 0;
+    if (kind === "fall") { this.falls++; audio.windy("fall"); this._toast("Rook slid off!", "#d97b6c"); }
+    else { this.crashes++; this.crashBy[what] = (this.crashBy[what] || 0) + 1; audio.windy("hit"); this._toast("Bonk!", "#d97b6c"); }
+    const o = this._gapAhead();
+    this.miss({ isFar: !!o && o.reach > 0.7 }, true);   // silent: the bonk or the fall is the sound
+    if (this.lives > 0) this.say(kind === "fall" ? "Rook slipped off. Keep the arms level and he stays on." : "A soft bump. The towers are tricky. On we go.");
+  }
+  _respawn() {
+    if (this.lives <= 0) { this._finish(false); return; }
+    this.rider.off = 0; this.rider.v = 0; this.invuln = 120;
+    const spc = this._spacing();
+    for (const o of this.obs) if (o.x < this.bx + 60 * this.k && o.x + o.w > this.bx - 60 * this.k) o.x += spc * 0.6;
+  }
+  // the next gap the jet has to fly through: its centre as a share of the
+  // lane from the bottom (1 = a full lift), for the DDA's reach fraction
+  _gapAhead() {
+    const o = this.obs.find(q => !q.passed && q.x + q.w > this.bx - 20 * this.k);
+    if (!o) return null;
+    const cy = o.top + o.gap / 2;
+    return { o, cy, reach: 1 - (cy - this.laneTop) / this.laneH };
+  }
+  _finish(completed) {
+    if (this.over) return;
+    const fr = this.feathersSpawned ? this.feathersGot / this.feathersSpawned : 1;
+    const stars = !completed ? 0 : this.heartsLost === 0 && fr >= 0.6 ? 3 : this.heartsLost <= 1 ? 2 : 1;
+    this.over = { completed, stars, at: performance.now() };
+    this.flying = false;
+    if (completed) {
+      audio.windy("win");
+      this.score += 50 * this.level + (this.heartsLost === 0 ? 25 * this.level : 0);
+      for (let i = 0; i < 5; i++) this._sparks(this.canvas.width * (0.2 + 0.15 * i), this.canvas.height * 0.3, ["#f3b562", "#d97b6c", "#6fa35a", "#5b9bd5", "#f19bb5"][i], 16, 1.6);
+      this._prompt(stars === 3 ? "Perfect flight!" : stars === 2 ? "Great flying!" : "Level done!", `Level ${this.level} flown`);
+      this.say(stars === 3 ? "A perfect flight. Rook is very impressed." : "Level done. Lovely flying.");
+    } else {
+      audio.windy("lose");
+      this._prompt("The wind won that one", "Let's try again");
+      this.say("The wind won that one. Let's try again.");
+    }
+  }
+
+  // ---- the 60 Hz step (the mockup's physics, in screen pixels) ------------
+  update(now, dt) {
+    const c = this.canvas;
+    if (this.sceneSize !== `${c.width}x${c.height}`) {
+      this._layout(c);
+      this.scene = windyPaintScene(WINDY_SKIES[(this.level - 1) % WINDY_SKIES.length], c.width, c.height, this.k);
+      this.sceneSize = `${c.width}x${c.height}`;
+    }
+    this._readHands(now, dt);
+    if (this.over) {
+      if (now - this.over.at > (this.over.completed ? 4500 : 3800)) this._end();
+      for (const q of this.toasts) q.t++;
+      return;
+    }
+    if (this.handsLost) { this._prompt("Show both hands", "Rook holds the jet steady while he waits"); this._lostPrompt = true; return; }
+    if (this._lostPrompt) { this._prompt(""); this._lostPrompt = false; }
+    this.acc += Math.min(50, dt);
+    while (this.acc >= 16.67) { this._step(); this.acc -= 16.67; }
+  }
+  _step() {
+    const k = this.k, lvl = this.lvl, c = this.canvas;
+    this.frame++;
+    for (const q of this.toasts) q.t++;
+    this.toasts = this.toasts.filter(q => q.t < 110).slice(-3);
+    this.windNow = this.flying && lvl.wind && !this.tut
+      ? Math.sin(this.frame * 0.011) * lvl.wind + Math.sin(this.frame * 0.027 + 1) * lvl.wind * 0.4
+      : this.windNow * 0.95;
+    // the jet follows the hands: height from the lane fraction, tilt from
+    // the hands' angle (screen y points down, so a higher right hand is a
+    // negative, anticlockwise angle) plus the crosswind
+    const ty = this.laneBot - this.fHeight * this.laneH;
+    const ta = Math.max(-0.9, Math.min(0.9, -this.tiltDeg * Math.PI / 180 + this.windNow));
+    this.board.y += Math.max(-8 * k, Math.min(8 * k, (ty - this.board.y) * 0.2));
+    this.board.ang += (ta - this.board.ang) * 0.25;
+    const tiltAbs = Math.abs(this.board.ang * 180 / Math.PI);
+    if (this.tut) { this._tutStep(tiltAbs); return; }
+    if (!this.flying) return;
+    this.tiltSum += tiltAbs; this.tiltN++; this.tiltMax = Math.max(this.tiltMax, tiltAbs);
+    if (tiltAbs < WINDY_STEADY_DEG) this.steadyFrames++;
+    if (this.fallT > 0) { this.fallT--; if (this.fallT === 0) this._respawn(); }
+    else {
+      if (lvl.slide) {
+        this.rider.v += Math.sin(this.board.ang) * lvl.slide * k; this.rider.v *= 0.9;
+        if (tiltAbs < 4) this.rider.off *= 0.96;
+        this.rider.off += this.rider.v;
+        if (Math.abs(this.rider.off) > this.boardLen / 2 - k) this._loseLife("fall");
+      } else { this.rider.v = 0; this.rider.off *= 0.85; }
+      if (tiltAbs < WINDY_STEADY_DEG) {
+        this.steadyT += 1 / 60;
+        const nc = this.steadyT > 12 ? 5 : this.steadyT > 7 ? 4 : this.steadyT > 4 ? 3 : this.steadyT > 2 ? 2 : 1;
+        if (nc > this.combo) { this._toast(["", "", "Steady!", "Lovely and level", "Smooth flying", "Rock steady"][nc], "#f3b562"); this._sparks(this.bx, this.board.y, "#f3b562", 8); audio.windy("combo"); if (nc >= 4) this.say("Rock steady. Rook is loving this."); }
+        this.combo = nc;
+      } else if (tiltAbs > WINDY_LOSE_DEG) { this.steadyT = 0; this.combo = 1; }
+      else this.steadyT = Math.max(0, this.steadyT - 1 / 60);
+    }
+    if (this.invuln > 0) this.invuln--;
+    const sp = this._speedPx(), p = this._riderPos();
+    for (const o of this.obs) {
+      o.x -= sp;
+      if (o.mov) o.top = Math.max(this.laneTop, Math.min(this.laneBot - o.gap, o.base + Math.sin(this.frame * 0.025 + o.ph) * o.mov));
+      if (!o.passed && o.x + o.w < this.bx - 20 * k) {
+        o.passed = true; this.passed++; this.score += 10 * this.combo;
+        const reach = 1 - (o.top + o.gap / 2 - this.laneTop) / this.laneH;
+        this.hit({ reachFrac: Math.max(0.25, Math.min(1, reach)) });
+      }
+    }
+    for (const it of this.items) { it.x -= sp; if (it.follow) it.y = it.follow.top + it.follow.gap / 2; }
+    for (const d of this.drones) { d.x -= sp + 0.5 * k; d.y = d.base + Math.sin(this.frame * 0.05 + d.ph) * 18 * k; }
+    this.drones = this.drones.filter(d => !d.dead && d.x > -30 * k);
+    if (this.obs.length && this.obs[0].x + this.obs[0].w < -20 * k) this.obs.shift();
+    const spc = this._spacing();
+    if (!this.obs.length || this.obs[this.obs.length - 1].x < c.width + 170 * k - spc) this._spawn((this.obs.length ? this.obs[this.obs.length - 1].x : c.width) + spc);
+    this.lvT++;
+    if (this.lvT >= this.lvFrames - 600 && this.lvT % 60 === 0) { audio.windy("tick"); if (this.lvT === this.lvFrames - 600) this._toast("Nearly there", "#f3b562"); }
+    if (this.lvT >= this.lvFrames && this.fallT === 0) { this._finish(true); return; }
+    // collisions: the cat's head and the jet's two ends against towers,
+    // bridges, the ground and the drones
+    const cs = Math.cos(this.board.ang), sn = Math.sin(this.board.ang), B = this.boardLen / 2;
+    const pts = [[p.x + sn * 5 * k, p.y - cs * 5 * k, 6 * k], [this.bx - cs * (B - 4 * k), this.board.y - sn * (B - 4 * k) + 2 * k, 3 * k], [this.bx + cs * (B + 2 * k), this.board.y + sn * (B + 2 * k) + 2 * k, 3 * k]];
+    if (this.fallT === 0 && this.invuln === 0) {
+      outer: for (const o of this.obs) for (const [x, y, r] of pts) if (x + r > o.x + 3 * k && x - r < o.x + o.w - 3 * k && (y - r < o.top || y + r > o.top + o.gap)) { this._loseLife("hit", y - r < o.top ? "bridge" : "tower"); break outer; }
+      if (this.board.y + 8 * k > this.ground - 2 * k) this._loseLife("hit", "ground");
+      outer2: for (const d of this.drones) for (const [x, y, r] of pts) if (Math.hypot(d.x - x, d.y - y) < r + 9 * k) { d.dead = true; this._sparks(d.x, d.y, "#ff8a4c", 14); this._loseLife("hit", "drone"); break outer2; }
+    }
+    for (const it of this.items) if (!it.got && this.fallT === 0 && Math.hypot(it.x - p.x, it.y - p.y) < 34 * k) {
+      it.got = true; this.feathersGot++; this.score += 5 * this.combo; this.stats.stars += 2;
+      this._sparks(it.x, it.y, "#f3c05e", 6); audio.windy("feather");
+    }
+    this.items = this.items.filter(i => i.x > -30 * k && !i.got);
+    if (this.shake > 0) { this.shake *= 0.85; if (this.shake < 0.5) this.shake = 0; }
+  }
+  // the guided first flight: up into a ring, down into a ring, tilt, level
+  _tutStep(tiltAbs) {
+    const tut = this.tut, H = this.canvas.height;
+    this.rider.v = 0; this.rider.off *= 0.85;
+    const goals = [this.laneTop + this.laneH * 0.25, this.laneTop + this.laneH * 0.78];
+    let done = false;
+    if (tut.step < 2) done = Math.abs(this.board.y - goals[tut.step]) < H * 0.05;
+    else if (tut.step === 2) done = tiltAbs > 8;
+    else if (tut.step === 3) done = tiltAbs < 5;
+    else done = true;
+    tut.hold = done ? tut.hold + 1 : Math.max(0, tut.hold - 1);
+    const need = [30, 30, 25, 90, 100][tut.step];
+    const lines = ["Lift both arms together to fly up into the ring", "Now lower both arms to fly down to the ring", "Lift one hand a little higher. See the jet tilt?", "Now make them level again and hold steady", "You've got it! Get ready"];
+    if (tut.said !== tut.step) {
+      tut.said = tut.step;
+      this._prompt("First flight", lines[tut.step]);
+      if (tut.step > 0) this._speak(lines[tut.step]);
+    }
+    if (tut.hold >= need) {
+      tut.step++; tut.hold = 0;
+      audio.windy("combo"); this._sparks(this.bx, this.board.y, "#6fa35a", 12);
+      if (tut.step > 4) this._endTutorial(false);
+    }
+  }
+
+  // ---- drawing --------------------------------------------------------
+  drawBg(ctx, c) {
+    if (this.scene) ctx.drawImage(this.scene, 0, 0, c.width, c.height);
+    else { ctx.fillStyle = "#6c8fc9"; ctx.fillRect(0, 0, c.width, c.height); }
+  }
+  _tower(ctx, o) {
+    const k = this.k, x = o.x, y = o.top + o.gap, w = o.w, h = this.ground - y + 6 * k, [c1, c2, c3] = WINDY_TOWER_PAL[o.hue];
+    ctx.fillStyle = c1;
+    if (o.style === 0) { ctx.fillRect(x, y + 34 * k, w, h - 34 * k); ctx.fillRect(x + 8 * k, y + 14 * k, w - 16 * k, 24 * k); ctx.fillRect(x + 18 * k, y, w - 36 * k, 18 * k); ctx.fillStyle = c3; ctx.fillRect(x + w / 2 - 1.5 * k, y - 24 * k, 3 * k, 24 * k); }
+    else if (o.style === 1) { ctx.beginPath(); ctx.roundRect(x, y, w, h, [w / 2, w / 2, 0, 0]); ctx.fill(); ctx.fillStyle = c2; for (let q = y + 22 * k; q < this.ground; q += 16 * k) ctx.fillRect(x + 4 * k, q, w - 8 * k, 4 * k); }
+    else { ctx.fillRect(x, y + 28 * k, w, h - 28 * k); ctx.beginPath(); ctx.moveTo(x + 4 * k, y + 30 * k); ctx.lineTo(x + w / 2, y - 12 * k); ctx.lineTo(x + w - 4 * k, y + 30 * k); ctx.fill(); ctx.fillStyle = "#f3b562"; ctx.beginPath(); ctx.arc(x + w / 2, y + 12 * k, 5 * k, 0, TAU); ctx.fill(); }
+    ctx.fillStyle = "rgba(70,90,130,.18)"; ctx.fillRect(x + w * 0.7, y + 34 * k, w * 0.3, h - 34 * k);
+    ctx.fillStyle = "rgba(255,252,240,.6)"; ctx.fillRect(x, y + 34 * k, 3 * k, h - 34 * k);
+    if (o.style !== 1) { ctx.fillStyle = this._sky().night ? "rgba(255,224,150,.8)" : "rgba(90,130,170,.4)"; for (let wy = y + 48 * k; wy < this.ground - 8 * k; wy += 20 * k) ctx.fillRect(x + 10 * k, wy, w - 26 * k, 6 * k); }
+    ctx.fillStyle = "#7aad62"; ctx.beginPath(); ctx.arc(x + w * 0.3, y + (o.style === 2 ? 26 : 32) * k, 7 * k, 0, TAU); ctx.arc(x + w * 0.68, y + (o.style === 2 ? 28 : 34) * k, 6 * k, 0, TAU); ctx.fill();
+  }
+  _bridge(ctx, o) {
+    const k = this.k, x = o.x, w = o.w, bot = o.top;
+    ctx.fillStyle = o.mov ? "#7f6b9a" : "#5e8b86"; ctx.fillRect(x + 4 * k, -10 * k, w - 8 * k, bot + 10 * k);
+    ctx.strokeStyle = o.mov ? "#a593c0" : "#7fb0a8"; ctx.lineWidth = 3 * k;
+    for (let yy = bot; yy > -40 * k; yy -= 40 * k) { ctx.beginPath(); ctx.moveTo(x + 5 * k, yy); ctx.lineTo(x + w - 5 * k, yy - 40 * k); ctx.moveTo(x + w - 5 * k, yy); ctx.lineTo(x + 5 * k, yy - 40 * k); ctx.stroke(); }
+    ctx.fillStyle = o.mov ? "#5f4f78" : "#46706c"; ctx.fillRect(x, bot - 14 * k, w, 14 * k);
+    if (o.mov) { ctx.fillStyle = "#f3b562"; ctx.beginPath(); ctx.arc(x + w / 2, bot - 7 * k, 4 * k, 0, TAU); ctx.fill(); }
+    ctx.strokeStyle = "#4e7f45"; ctx.lineWidth = 2 * k;
+    for (let q = 0; q < 3; q++) { const vx = x + (14 + q * 19) * k, len = (16 + windyRnd(o.seed + q) * 22) * k; ctx.beginPath(); ctx.moveTo(vx, bot); ctx.quadraticCurveTo(vx + 3 * k, bot + len / 2, vx, bot + len); ctx.stroke(); }
+  }
+  _feather(ctx, it) {
+    const k = this.k, bob = Math.sin(this.frame * 0.08 + it.ph) * 4 * k;
+    ctx.save(); ctx.translate(it.x, it.y + bob); ctx.rotate(-0.5);
+    ctx.fillStyle = "rgba(255,230,160,.35)"; ctx.beginPath(); ctx.arc(0, 0, 15 * k, 0, TAU); ctx.fill();
+    ctx.fillStyle = "#f3c05e"; ctx.beginPath(); ctx.ellipse(0, 0, 4.5 * k, 11 * k, 0, 0, TAU); ctx.fill();
+    ctx.strokeStyle = "#b98a3a"; ctx.lineWidth = 1.2 * k; ctx.beginPath(); ctx.moveTo(0, -11 * k); ctx.lineTo(0, 13 * k); ctx.stroke();
+    ctx.restore();
+  }
+  _drone(ctx, d) {
+    const k = this.k;
+    ctx.save(); ctx.translate(d.x, d.y);
+    ctx.strokeStyle = "#3b4a5a"; ctx.lineWidth = 2 * k; ctx.beginPath(); ctx.moveTo(-14 * k, -8 * k); ctx.lineTo(14 * k, -8 * k); ctx.stroke();
+    const sp = Math.abs(Math.sin(this.frame * 0.9)) * 12 * k; ctx.fillStyle = "rgba(59,74,90,.6)"; ctx.fillRect(-14 * k - sp / 2, -11 * k, sp, 2 * k); ctx.fillRect(14 * k - sp / 2, -11 * k, sp, 2 * k);
+    ctx.fillStyle = "#4a4f63"; ctx.beginPath(); ctx.roundRect(-11 * k, -6 * k, 22 * k, 14 * k, 6 * k); ctx.fill();
+    ctx.fillStyle = "#ff4b4b"; ctx.beginPath(); ctx.arc(-4 * k, k, 3.4 * k, 0, TAU); ctx.fill();
+    ctx.restore();
+  }
+  _catPos() {
+    const c = Math.cos(this.board.ang), s = Math.sin(this.board.ang), o = this.rider.off, k = this.k;
+    if (this.fallT > 0) { const q = 60 - this.fallT, dir = Math.sign(this.rider.off || 1); return { x: this.bx + c * o + q * 1.1 * k * dir, y: this.board.y + s * o - 10 * k + q * q * 0.12 * k, r: q * 0.2 * dir }; }
+    return { x: this.bx + c * o + s * 10 * k, y: this.board.y + s * o - c * 10 * k, r: this.board.ang };
+  }
+  _jet(ctx, front) {
+    const k = this.k, B = this.boardLen / 2, blink = this.invuln > 0 && Math.floor(this.frame / 5) % 2;
+    ctx.save(); ctx.translate(this.bx, this.board.y); ctx.rotate(this.board.ang); if (blink) ctx.globalAlpha = 0.45;
+    if (!front) {
+      const tilt = Math.abs(this.board.ang * 180 / Math.PI), glow = tilt < 5 ? "rgba(140,220,120,.55)" : tilt < 12 ? "rgba(243,181,98,.55)" : "rgba(217,123,108,.6)";
+      ctx.fillStyle = glow; ctx.beginPath(); ctx.ellipse(0, 14 * k, B, 4.5 * k, 0, 0, TAU); ctx.fill();
+      const fl = (9 + Math.sin(this.frame * 0.6) * 3 + Math.random() * 2) * k;
+      ctx.fillStyle = "rgba(243,150,80,.9)"; ctx.beginPath(); ctx.moveTo(-B, -3 * k); ctx.lineTo(-B - fl - 8 * k, k); ctx.lineTo(-B, 6 * k); ctx.fill();
+      ctx.fillStyle = "#fff3c4"; ctx.beginPath(); ctx.moveTo(-B, -k); ctx.lineTo(-B - fl, k); ctx.lineTo(-B, 4 * k); ctx.fill();
+      ctx.fillStyle = "#ff8a4c"; ctx.beginPath(); ctx.moveTo(-B + 2 * k, -3 * k); ctx.lineTo(-B - 3 * k, -19 * k); ctx.lineTo(-B + 12 * k, -19 * k); ctx.lineTo(-B + 20 * k, -3 * k); ctx.fill();
+    } else {
+      ctx.fillStyle = "#3b4766"; ctx.beginPath(); ctx.moveTo(-6 * k, 3 * k); ctx.lineTo(-20 * k, 13 * k); ctx.lineTo(6 * k, 13 * k); ctx.lineTo(11 * k, 3 * k); ctx.fill();
+      ctx.fillStyle = "#2b3550"; ctx.beginPath(); ctx.moveTo(-B, -4 * k); ctx.lineTo(B - 14 * k, -4 * k); ctx.quadraticCurveTo(B + 7 * k, -k, B + 7 * k, 2 * k); ctx.quadraticCurveTo(B + k, 8 * k, B - 14 * k, 8 * k); ctx.lineTo(-B, 8 * k); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = "rgba(0,0,0,.25)"; ctx.fillRect(-B, 4 * k, B * 2 - 12 * k, 4 * k);
+      ctx.fillStyle = "#d9483b"; ctx.fillRect(-B + 4 * k, 0, B * 2 - 22 * k, 3 * k);
+      ctx.fillStyle = "#ff8a4c"; ctx.beginPath(); ctx.arc(B + 3 * k, 2 * k, 3 * k, 0, TAU); ctx.fill();
+      ctx.fillStyle = "#8fa0c4"; ctx.fillRect(B - 6 * k, 7 * k, 16 * k, 3 * k);
+      ctx.beginPath(); ctx.arc(-B + 26 * k, -k, 2 * k, 0, TAU); ctx.arc(-B + 56 * k, -k, 2 * k, 0, TAU); ctx.fill();
+    }
+    ctx.restore();
+  }
+  _cat(ctx) {
+    const k = this.k, p = this._catPos(), tilt = Math.abs(this.board.ang * 180 / Math.PI), falling = this.fallT > 0, happy = !!this.over?.completed;
+    const blink = this.invuln > 0 && Math.floor(this.frame / 5) % 2;
+    ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.r); ctx.scale(k, k); if (blink) ctx.globalAlpha = 0.45;
+    const fur = "#2f3340", belly = "#f4f1ea";
+    ctx.strokeStyle = "#d9483b"; ctx.lineWidth = 4; ctx.lineCap = "round";
+    ctx.beginPath(); ctx.moveTo(2, -3); for (let q = 1; q <= 4; q++) ctx.lineTo(2 - q * 6, -3 + Math.sin(this.frame * 0.25 - q * 0.9) * (1.5 + q)); ctx.stroke();
+    ctx.strokeStyle = fur; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(-7, 4); ctx.quadraticCurveTo(-16, 0, -14, -10 + Math.sin(this.frame * 0.1) * 2); ctx.stroke();
+    ctx.fillStyle = fur; ctx.beginPath(); ctx.ellipse(0, 3, 9, 9, 0, 0, TAU); ctx.fill();
+    ctx.fillStyle = belly; ctx.beginPath(); ctx.ellipse(3, 6, 5, 5, 0, 0, TAU); ctx.fill();
+    const arm = happy ? 0.9 + Math.sin(this.frame * 0.3) * 0.3 : Math.min(0.9, tilt * 0.06);
+    ctx.strokeStyle = fur; ctx.lineWidth = 3.5; ctx.beginPath(); ctx.moveTo(4, 1); ctx.lineTo(12, -2 - arm * 8); ctx.stroke();
+    ctx.fillStyle = fur; ctx.beginPath(); ctx.arc(3, -10, 9, 0, TAU); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(-4, -14); ctx.lineTo(-3, -24); ctx.lineTo(3, -17); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(6, -18); ctx.lineTo(12, -25); ctx.lineTo(12, -13); ctx.fill();
+    ctx.fillStyle = "#f3b1b1"; ctx.beginPath(); ctx.moveTo(-2.5, -16); ctx.lineTo(-2.5, -21); ctx.lineTo(1, -17); ctx.fill();
+    ctx.fillStyle = "#d9483b"; ctx.beginPath(); ctx.arc(3, -11, 10, Math.PI, TAU); ctx.fill(); ctx.fillRect(-7, -12, 20, 2.5);
+    ctx.fillStyle = "#fbf4e4"; ctx.fillRect(-1, -21, 2, 8);
+    ctx.fillStyle = "rgba(120,200,240,.8)"; ctx.beginPath(); ctx.roundRect(2, -20, 11, 4, 2); ctx.fill();
+    ctx.fillStyle = belly; ctx.beginPath(); ctx.ellipse(9, -7, 4.5, 3.5, 0, 0, TAU); ctx.fill();
+    ctx.fillStyle = "#e58a8a"; ctx.beginPath(); ctx.moveTo(11.5, -9); ctx.lineTo(13.5, -9); ctx.lineTo(12.5, -7.5); ctx.fill();
+    ctx.strokeStyle = "#fbf4e4"; ctx.fillStyle = "#fbf4e4"; ctx.lineWidth = 1.7;
+    if (falling) { for (const ex of [3, 9]) { ctx.beginPath(); ctx.moveTo(ex - 2, -12); ctx.lineTo(ex + 2, -8); ctx.moveTo(ex + 2, -12); ctx.lineTo(ex - 2, -8); ctx.stroke(); } }
+    else if (happy || tilt < 5) { for (const ex of [3, 9]) { ctx.beginPath(); ctx.arc(ex, -9, 2, Math.PI * 1.1, Math.PI * 1.9); ctx.stroke(); } }
+    else if (tilt < 12) { for (const ex of [3, 9]) { ctx.fillStyle = "#6fb35a"; ctx.beginPath(); ctx.ellipse(ex, -10, 1.8, 2.2, 0, 0, TAU); ctx.fill(); ctx.fillStyle = "#2b2f2c"; ctx.fillRect(ex - 0.5, -11.5, 1, 3); } }
+    else { for (const ex of [3, 9]) { ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(ex, -10, 2.7, 0, TAU); ctx.fill(); ctx.fillStyle = "#3b2f2c"; ctx.beginPath(); ctx.arc(ex, -10, 1.3, 0, TAU); ctx.fill(); } }
+    ctx.restore();
+  }
+  _sky() { return WINDY_SKIES[(this.level - 1) % WINDY_SKIES.length]; }
+  _chip(ctx, x, y, w, h) { ctx.fillStyle = "rgba(251,244,228,.9)"; ctx.beginPath(); ctx.roundRect(x, y, w, h, h / 2); ctx.fill(); }
+
+  draw(ctx, c, now) {
+    const k = this.k, H = c.height, W = c.width;
+    ctx.save();
+    if (this.shake > 0) ctx.translate((Math.random() - 0.5) * this.shake, (Math.random() - 0.5) * this.shake);
+    for (const o of this.obs) { this._bridge(ctx, o); this._tower(ctx, o); }
+    const sh = this._sky().shade;
+    if (sh && this.obs.length) { ctx.fillStyle = `rgba(18,24,60,${sh * 0.45})`; ctx.fillRect(-20, -20, W + 40, H + 40); }
+    for (const it of this.items) this._feather(ctx, it);
+    for (const d of this.drones) this._drone(ctx, d);
+    this._jet(ctx, false); this._cat(ctx); this._jet(ctx, true);
+    ctx.restore();
+    // hearts (icons, never a number), the level's clock as a thin line, the
+    // wind, and the one number on screen: the tilt in degrees
+    for (let i = 0; i < WINDY_HEARTS; i++) {
+      const x = (26 + i * 30) * k, y = 40 * k;
+      ctx.fillStyle = i < this.lives ? "#d97b6c" : "rgba(59,74,90,.3)";
+      ctx.beginPath(); ctx.moveTo(x, y + 6 * k); ctx.bezierCurveTo(x - 12 * k, y - 4 * k, x - 6 * k, y - 12 * k, x, y - 5 * k); ctx.bezierCurveTo(x + 6 * k, y - 12 * k, x + 12 * k, y - 4 * k, x, y + 6 * k); ctx.fill();
+    }
+    if (this.flying || this.over) {
+      const bw = Math.min(260 * k, W * 0.3), bx = W / 2 - bw / 2, by = 24 * k;
+      this._chip(ctx, bx - 4 * k, by - 2 * k, bw + 8 * k, 14 * k);
+      ctx.fillStyle = this.lvT > this.lvFrames - 600 ? "rgba(243,181,98,.95)" : "rgba(111,163,90,.85)";
+      ctx.beginPath(); ctx.roundRect(bx, by, Math.max(10 * k, bw * Math.min(1, this.lvT / this.lvFrames)), 10 * k, 5 * k); ctx.fill();
+    }
+    if (this.lvl.wind && !this.tut && this.flying) {
+      const wx = W - 110 * k, wy = 28 * k;
+      this._chip(ctx, wx, wy, 90 * k, 20 * k);
+      ctx.fillStyle = "#3b4a5a"; ctx.font = `700 ${Math.round(12 * k)}px Nunito, sans-serif`; ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+      ctx.fillText("Wind", wx + 8 * k, wy + 14 * k);
+      const d = this.windNow / this.lvl.wind, cx = wx + 62 * k, sg = Math.sign(d || 1);
+      ctx.strokeStyle = "#4f9bd9"; ctx.lineWidth = 3 * k; ctx.lineCap = "round";
+      ctx.beginPath(); ctx.moveTo(cx - 12 * k * d, wy + 10 * k); ctx.lineTo(cx + 12 * k * d, wy + 10 * k); ctx.lineTo(cx + 12 * k * d - 5 * k * sg, wy + 6 * k); ctx.moveTo(cx + 12 * k * d, wy + 10 * k); ctx.lineTo(cx + 12 * k * d - 5 * k * sg, wy + 14 * k); ctx.stroke();
+    }
+    this._gauge(ctx, c);
+    // toasts: a word or two, mid screen
+    let ty = H * 0.3;
+    for (const q of this.toasts) {
+      const a = q.t < 12 ? q.t / 12 : q.t > 90 ? (110 - q.t) / 20 : 1;
+      ctx.save(); ctx.globalAlpha = Math.max(0, a);
+      ctx.font = `800 ${Math.round(22 * k)}px Nunito, sans-serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      const w2 = Math.max(160 * k, ctx.measureText(q.text).width + 40 * k);
+      ctx.fillStyle = "rgba(251,244,228,.93)"; ctx.beginPath(); ctx.roundRect(W / 2 - w2 / 2, ty - 20 * k, w2, 40 * k, 12 * k); ctx.fill();
+      if (q.col) { ctx.fillStyle = q.col; ctx.beginPath(); ctx.roundRect(W / 2 - w2 / 2, ty - 20 * k, 6 * k, 40 * k, [12 * k, 0, 0, 12 * k]); ctx.fill(); }
+      ctx.fillStyle = "#3b4a5a"; ctx.fillText(q.text, W / 2, ty);
+      ctx.restore(); ty += 48 * k;
+    }
+    if (this.tut && this.tut.step < 2) {
+      const gy = [this.laneTop + this.laneH * 0.25, this.laneTop + this.laneH * 0.78][this.tut.step];
+      ctx.save();
+      ctx.strokeStyle = "rgba(111,163,90,.9)"; ctx.lineWidth = 4 * k; ctx.setLineDash([8 * k, 8 * k]); ctx.lineDashOffset = -this.frame * 0.5;
+      ctx.beginPath(); ctx.ellipse(this.bx, gy - 6 * k, this.boardLen / 2 + 18 * k, 34 * k, 0, 0, TAU); ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillStyle = "#fbf4e4"; ctx.font = `700 ${Math.round(24 * k)}px Nunito, sans-serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(this.tut.step === 0 ? "▲" : "▼", this.bx + this.boardLen / 2 + 44 * k, gy + Math.sin(this.frame * 0.15) * 5 * k);
+      ctx.restore();
+    }
+    if (this.tut) {
+      const need = [30, 30, 25, 90, 100][this.tut.step], bw = W * 0.24;
+      ctx.fillStyle = "rgba(244,236,221,0.18)"; ctx.beginPath(); ctx.roundRect(W / 2 - bw / 2, H * 0.2, bw, 8 * k, 4 * k); ctx.fill();
+      ctx.fillStyle = "#9fc08a"; ctx.beginPath(); ctx.roundRect(W / 2 - bw / 2, H * 0.2, bw * Math.min(1, this.tut.hold / need), 8 * k, 4 * k); ctx.fill();
+    }
+    if (this.handsLost && !this.over) {
+      ctx.fillStyle = "rgba(59,74,90,.35)"; ctx.fillRect(0, 0, W, H);
+    }
+  }
+  // the tilt gauge: a bubble level under the city, green inside 5°, the
+  // degrees beside it
+  _gauge(ctx, c) {
+    const k = this.k, cx = c.width / 2, cy = this.ground + 20 * k, w = 170 * k, deg = this.board.ang * 180 / Math.PI, a = Math.abs(deg);
+    ctx.save();
+    ctx.fillStyle = "rgba(251,244,228,.9)"; ctx.beginPath(); ctx.roundRect(cx - w / 2, cy - 11 * k, w, 22 * k, 11 * k); ctx.fill();
+    ctx.fillStyle = "rgba(111,163,90,.35)"; ctx.fillRect(cx - w * 5 / 60, cy - 9 * k, w * 10 / 60, 18 * k);
+    ctx.strokeStyle = "rgba(59,74,90,.3)"; ctx.lineWidth = k; ctx.beginPath(); ctx.moveTo(cx, cy - 9 * k); ctx.lineTo(cx, cy + 9 * k); ctx.stroke();
+    const bx = cx + Math.max(-1, Math.min(1, deg / 30)) * (w / 2 - 12 * k);
+    ctx.fillStyle = a < 5 ? "#6fa35a" : a < 12 ? "#f3b562" : "#d97b6c"; ctx.beginPath(); ctx.arc(bx, cy, 8 * k, 0, TAU); ctx.fill();
+    ctx.fillStyle = "#fbf4e4"; ctx.font = `700 ${Math.round(13 * k)}px Nunito, sans-serif`; ctx.textAlign = "left"; ctx.textBaseline = "middle";
+    ctx.fillText(Math.round(a) + "°", cx + w / 2 + 8 * k, cy);
+    const goal = [2, 4, 7, 12].find(n => n > this.steadyT);
+    if (goal && !this.tut && this.flying) { ctx.fillStyle = "rgba(243,181,98,.9)"; ctx.fillRect(cx - w / 2 + 8 * k, cy + 13 * k, (w - 16 * k) * Math.min(1, this.steadyT / goal), 3 * k); }
+    ctx.restore();
+  }
+  // no arm skeleton: two small translucent hands at the ends of the jet they
+  // drive (the patient's real hand shapes, shrunk and moved, like Pong's
+  // hand on its paddle), the left hand at the left end, the right at the right
+  _drawArmAndCursor(ctx, c, now) {
+    const k = this.k, cs = Math.cos(this.board.ang), sn = Math.sin(this.board.ang), B = this.boardLen / 2 + 10 * k;
+    for (const [side, dir] of [["left", -1], ["right", 1]]) {
+      const hx = this.bx + cs * B * dir, hy = this.board.y + sn * B * dir - 6 * k;
+      const pm = this.t.palmPx(side, c);
+      ctx.save(); ctx.globalAlpha = PONG_HAND_ALPHA;
+      const map = pm ? (q => ({ x: (q.x - pm.x) * PONG_HAND_SCALE + hx, y: (q.y - pm.y) * PONG_HAND_SCALE + hy })) : null;
+      const drawn = map && drawHand(ctx, c, this.t, side, { map, scale: PONG_HAND_SCALE, fallback: false });
+      if (!drawn) {
+        ctx.strokeStyle = (side === "left" ? this.hL : this.hR) ? "rgba(244,236,221,0.7)" : "rgba(217,123,108,0.7)"; ctx.lineWidth = 2.5 * k;
+        ctx.beginPath(); ctx.arc(hx, hy, 11 * k, 0, TAU); ctx.stroke();
+      }
+      ctx.restore();
+    }
+  }
+
+  extra() {
+    const completed = !!this.over?.completed;
+    // the ladder: up a level on a finished flight (hearts are always left on
+    // one), down one at most when the hearts ran out
+    const next = completed ? Math.min(WINDY_MAX, this.level + 1) : Math.max(1, this.level - 1);
+    return {
+      level: this.level,
+      windyLevel: next,
+      completed,
+      gapsPassed: this.passed,
+      crashes: this.crashes,
+      crashBy: { ...this.crashBy },        // what was hit: tower | bridge | ground | drone
+      falls: this.falls,
+      feathers: this.feathersGot,
+      feathersSpawned: this.feathersSpawned,
+      steadyPct: this.tiltN ? Math.round(100 * this.steadyFrames / this.tiltN) : 0,
+      meanTiltDeg: this.tiltN ? Math.round(10 * this.tiltSum / this.tiltN) / 10 : 0,
+      maxTiltDeg: Math.round(this.tiltMax),
+      heartsLeft: this.lives,
+      levelStars: this.over?.stars ?? 0,     // the mockup's 1-3 stars for the level (the record's `stars` stays the engine's points)
+      score: this.score,
+      flightSeconds: Math.round(this.lvT / 60),
+      tutorial: this.hadTutorial,
+      laneSW: this.laneLo != null ? { lo: Math.round(this.laneLo * 100) / 100, hi: Math.round(this.laneHi * 100) / 100 } : null,
+    };
+  }
+}
+
 // `trains` = the one movement the game trains, shown on its card so
 // therapists can prescribe by movement (MindMotion labeling pattern).
 export const GAMES = [
@@ -8424,6 +9130,8 @@ export const GAMES = [
   { id: "candles", name: "Lantern", cls: Candles, trains: "Point-to-point reach" },
   // the card-matching Memory game from the mockups (Sep 2026, by request)
   { id: "pairs", name: "Memory Pairs", cls: MemoryPairs, trains: "Reach and remember" },
+  // Windy City Flap (Oct 2026, by request): the two arms fly one jet, height from their mean and tilt from their difference
+  { id: "windy", name: "Windy City Flap", cls: WindyCity, trains: "Both arms together" },
   // bimanual by definition, so off while every game is for the chosen arm alone
   { id: "rgs", name: "Catch Together", cls: CatchTogether, disabled: true, trains: "Both arms together" },
   { id: "sling", name: "Cloud Slingshot", disabled: true, cls: CloudSlingshot, trains: "Pull, hold and release" },

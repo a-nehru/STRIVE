@@ -29,6 +29,7 @@ const MOODS = {
   compass:        { bpm: 70, kick: [0, 10], snare: [4], padGain: 0.05, bassGain: 0.04, hatGain: 0.018 },
   echo:           { bpm: 64, kick: [0, 10], snare: [], padGain: 0.055, bassGain: 0.035, hatGain: 0.014 },
   rainbow:        { bpm: 80, kick: [0, 7, 10], snare: [4, 12], padGain: 0.045, bassGain: 0.05, hatGain: 0.024 },
+  windy:          { bpm: 76, kick: [0, 7, 10], snare: [4, 12], padGain: 0.045, bassGain: 0.045, hatGain: 0.022 },
 };
 const SWING = 0.16;   // fraction of a 16th added to off-beat hats
 
@@ -394,6 +395,32 @@ class GameAudio {
         if (a) [0, 4, 7, 12].forEach((s, i) => this._tone(semi(523.25, s), t + i * 0.1, 0.35, "triangle", 0.1, 0.01, true));
         else [0, 7].forEach((s, i) => this._tone(semi(440, s), t + i * 0.15, 0.4, "sine", 0.07, 0.01));
         break;
+    }
+  }
+  // Windy City Flap (Oct 2026): the mockup's synthesized sounds on the fx
+  // bus. kind: start | feather | hit (a bump) | fall | combo | tick | star
+  // (a = 0..2) | win | lose
+  windy(kind, a = 0) {
+    this._ensure();
+    const ctx = this.ctx, t = ctx.currentTime;
+    // a tone that may glide to a second pitch, the mockup's `tone(f, d, type, v, f2)`
+    const sweep = (f, d, type, v, f2 = null, delay = 0) => {
+      const o = ctx.createOscillator(), g = ctx.createGain(), t0 = t + delay;
+      o.type = type; o.frequency.setValueAtTime(f, t0);
+      if (f2) o.frequency.exponentialRampToValueAtTime(f2, t0 + d);
+      g.gain.setValueAtTime(0, t0); g.gain.linearRampToValueAtTime(v, t0 + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t0 + d);
+      o.connect(g); g.connect(this.fxBus); o.start(t0); o.stop(t0 + d + 0.02);
+    };
+    switch (kind) {
+      case "start": this._noise(t, 0.4, 900, 0.7, 0.06, this.fxBus); sweep(300, 0.4, "sine", 0.08, 900); break;
+      case "feather": sweep(1320, 0.12, "sine", 0.12); sweep(1760, 0.16, "sine", 0.1, null, 0.06); break;
+      case "hit": sweep(220, 0.3, "sawtooth", 0.1, 70); this._noise(t, 0.2, 700, 0.8, 0.12, this.fxBus); break;
+      case "fall": sweep(660, 0.5, "triangle", 0.12, 110); break;
+      case "combo": sweep(784, 0.1, "triangle", 0.1); sweep(1175, 0.14, "triangle", 0.1, null, 0.08); break;
+      case "tick": sweep(1000, 0.04, "square", 0.04); break;
+      case "star": sweep([784, 988, 1319][Math.max(0, Math.min(2, a))], 0.3, "triangle", 0.16); break;
+      case "win": [523, 659, 784, 1047, 1319].forEach((f, i) => sweep(f, 0.22, "triangle", 0.13, null, i * 0.1)); break;
+      case "lose": [392, 330, 262].forEach((f, i) => sweep(f, 0.3, "triangle", 0.1, null, i * 0.18)); break;
     }
   }
   serveTick(final = false) {
