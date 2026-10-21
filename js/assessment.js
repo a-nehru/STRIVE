@@ -125,14 +125,20 @@ const SPEECH_WAIT_MAX = 8000;
 // voice and a "Great job" ending; the demonstrator in a box with the
 // instructions on the LEFT of the frame and the right side empty). It shows
 // the LEFT arm and its text is burnt in, so it is never mirrored: a
-// right-arm recording goes in VIDEO_SRCS.right when there is one, and until
-// then the left one plays for both arms.
+// one recording per arm (Oct 2026): the same piece, same layout and the
+// same move times, demonstrated with the left or the right arm, so the
+// assessed arm always watches its own. A missing side falls back to the
+// other one's recording (VIDEO_ARM says which), never mirrored.
 const VIDEO_SRCS = {
-  left: "assets/music/ROM_Shoulder_Moves_1080p_left.mp4",
-  right: null,
+  left: "assets/music/ROM_Shoulder_Moves_LEFT_arm.mp4",
+  right: "assets/music/ROM_Shoulder_Moves_RIGHT_arm.mp4",
 };
-const VIDEO_ARM = "left";                // the arm the recording demonstrates
+const VIDEO_ARM = "left";                // the fallback recording's arm
 const VIDEO_MIRROR = false;              // burnt-in titles and captions: never mirrored
+// The posture coach speaks its cues (let your shoulder relax, sit tall)
+// during the measurement too (Oct 2026, by request); false keeps it quiet
+// here while it still records the compensation events the profile stores.
+const ASSESS_COACH_CUES = true;
 const VIDEO_CAPTIONED = true;            // it carries its own captions, so the app draws none
 const VIDEO_CROP_HALF_W = 2.3;           // patient panel: half-width about the body centre, SW
 const VIDEO_CROP_UP = 2.0, VIDEO_CROP_DOWN = 2.2;   // ...and above / below the shoulder line, SW
@@ -188,7 +194,7 @@ export class Assessment {
     this.opts = opts;
     this.style = opts.style === "video" ? "video" : "figure";
     this.coachSens = coachSens;
-    this.coach = new Coach(tracker, side, coachSens);
+    this.coach = new Coach(tracker, side, coachSens, { quiet: !ASSESS_COACH_CUES });
     this.active = false;
   }
 
@@ -197,6 +203,10 @@ export class Assessment {
     this.active = true;
     this.state = "settle";
     this.stateT = performance.now();
+    // the recording is fetched NOW, while the patient settles, not when its
+    // phase begins (Oct 2026: a 10 MB file opened at that moment left the
+    // demonstrator box on "Loading" for seconds)
+    if (this.style === "video") this._makeVideo();
     this.still = null; this.stillAt = null;
     this.prev = null;
     this.badSince = null;
@@ -333,7 +343,7 @@ export class Assessment {
     else if (this.badSince) { this._shiftTimers(now - this.badSince); this.badSince = null; }
     const paused = this.badSince && now - this.badSince > 1200;
     document.getElementById("paused").classList.toggle("hidden", !paused);
-    if (this.vid) this._videoTick(now, !!paused);
+    if (this.vid && this.state === "video") this._videoTick(now, !!paused);   // preloaded earlier: never run before its phase
     if (!this.t.trackingOk) return;
 
     // scooting/settling in the chair: re-baseline instead of letting geometry drift
@@ -580,21 +590,29 @@ export class Assessment {
     this.caption = VIDEO_LEAD;
     this._prompt("");                     // the instruction box on the stage carries the words
     try { speechSynthesis.cancel(); } catch {}
+    const v = this.vid || this._makeVideo();   // preloaded at start(), normally
+    v.muted = !VIDEO_HAS_VOICE;           // a silent track stays muted, so autoplay is never refused for it
+    this.vidSound = VIDEO_HAS_VOICE;      // false once the browser refuses sound (then the app speaks instead)
+    this._seekPlay(0);
+    if (!this.vidSound) this._speak(VIDEO_LEAD);
+  }
+
+  // the hidden <video> for this arm's recording, created once and kept in
+  // the document, off screen, rather than detached: a detached element's
+  // decoding can be throttled, and a stalled frame reads as a stalled
+  // demonstrator. preload=auto so it is buffered before it is needed.
+  _makeVideo() {
     this.vidSrc = VIDEO_SRCS[this.side] || VIDEO_SRCS[VIDEO_ARM];
     const v = document.createElement("video");
     v.src = this.vidSrc; v.playsInline = true; v.preload = "auto";
-    v.muted = !VIDEO_HAS_VOICE;           // a silent track stays muted, so autoplay is never refused for it
-    this.vidSound = VIDEO_HAS_VOICE;      // false once the browser refuses sound (then the app speaks instead)
-    // kept in the document, off screen, rather than detached: a detached
-    // element's decoding can be throttled, and a stalled frame reads as a
-    // stalled demonstrator
+    v.muted = !VIDEO_HAS_VOICE;
     v.style.cssText = "position:fixed;left:-9999px;top:0;width:2px;height:2px;opacity:0;pointer-events:none";
     v.setAttribute("aria-hidden", "true");
     document.body.appendChild(v);
     v.addEventListener("error", () => { this.vidFailedAt ??= performance.now(); });
+    try { v.load(); } catch {}
     this.vid = v;
-    this._seekPlay(0);
-    if (!this.vidSound) this._speak(VIDEO_LEAD);
+    return v;
   }
 
   _seekPlay(t) {
@@ -697,8 +715,8 @@ export class Assessment {
       src: this.vidSrc,
       seconds: Math.round((now - this.videoStart) / 1000),
       completed: parts.length === VIDEO_PARTS.length,
-      mirrored: VIDEO_MIRROR && this.side !== VIDEO_ARM,
-      arm: VIDEO_ARM,
+      mirrored: VIDEO_MIRROR && !VIDEO_SRCS[this.side],
+      arm: VIDEO_SRCS[this.side] ? this.side : VIDEO_ARM,
       parts,
     };
     if (v) { try { v.pause(); } catch {} v.removeAttribute("src"); v.load?.(); v.remove(); }
@@ -1356,7 +1374,7 @@ export class Assessment {
       const sc = Math.min(vidW / sw, bodyH / sh);
       const dw = sw * sc, dh = sh * sc;
       const dx = left + (vidW - dw) / 2, dy = bodyTop + (bodyH - dh) / 2;
-      if (VIDEO_MIRROR && this.side !== VIDEO_ARM) {
+      if (VIDEO_MIRROR && !VIDEO_SRCS[this.side]) {
         ctx.translate(dx + dw, dy); ctx.scale(-1, 1);
         ctx.drawImage(v, sx, 0, sw, sh, 0, 0, dw, dh);
       } else {
@@ -1509,9 +1527,10 @@ export class Assessment {
 
     // the demo owns the screen: the patient is told to watch, so there is
     // nothing else on it to react to
-    if (this.state === "demo") { this._drawDemo(ctx, c, now); return; }
-    // the video stage draws its own panels (recording left, patient right)
-    if (this.state === "video") return;
+    if (this.state === "demo") { this._drawDemo(ctx, c, now); this._drawCoach(ctx, c, now); return; }
+    // the video stage draws its own panels (recording left, patient right);
+    // the coach's dock and dim still go over it, so a cue is seen there too
+    if (this.state === "video") { this._drawCoach(ctx, c, now); return; }
 
     if (this.state !== "settle") {
       // the body centre, marked with a soft dot — everything else is drawn by
@@ -1715,7 +1734,11 @@ export class Assessment {
       ctx.restore();
     }
 
-    // coach + world dim
+    this._drawCoach(ctx, c, now);
+  }
+
+  // the posture coach's dock (bottom-left) and the world dim while it cues
+  _drawCoach(ctx, c, now) {
     if (this.coach.dimming) {
       ctx.fillStyle = `rgba(18,12,28,${this.coach.dimming})`;
       ctx.fillRect(0, 0, c.width, c.height);

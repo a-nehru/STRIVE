@@ -197,6 +197,7 @@ function finishLogin(name, isNew, arm) {
   $("in-remind-days").value = c.remindDays || "off";
   // a participant made just now hears the intro on their first Start
   state.introPending = !!isNew && name !== "guest";
+  Warmup.preload(arm);                    // the stretch recording for this arm, fetched now
   show("screen-welcome");
   if (name !== "guest") speak(isNew ? `Nice to meet you, ${name}.` : `Welcome back, ${name}.`);
   notifyLogin(name, arm);
@@ -456,7 +457,7 @@ function startWarmup(then = null) {
   if (!state.tracker) return;
   const next = then || (() => { renderSelect(); show("screen-select"); speak("What shall we play today?"); });
   show("stage");
-  const w = new Warmup(state.tracker, $("canvas"), { endLine: then ? "Lovely. Nice and loose. Now let's measure your reach." : null });
+  const w = new Warmup(state.tracker, $("canvas"), { side: state.side, endLine: then ? "Lovely. Nice and loose. Now let's measure your reach." : null });
   state.current = w;
   state.warmedUp = true;
   state.warmupThen = next;
