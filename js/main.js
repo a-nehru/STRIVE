@@ -23,7 +23,7 @@ const $ = id => document.getElementById(id);
 // recommended card pre-focused, arrow keys to move, Enter to go).
 const MENU_KEYS = false;
 const focusHint = el => { if (MENU_KEYS && el) el.classList.add("kbd-focus"); };
-const SCREENS = ["screen-login", "screen-welcome", "screen-intro", "screen-select", "stage", "screen-between", "screen-romcompare", "screen-collections", "screen-profile"];
+const SCREENS = ["screen-login", "screen-welcome", "screen-intro", "screen-select", "stage", "screen-between", "screen-romcompare", "screen-collections", "screen-profile", "screen-schedule"];
 
 const state = {
   tracker: null,
@@ -45,6 +45,7 @@ const state = {
   roundNumber: 0,
   sessionStars: 0,
   screen: "screen-login",
+  plan: null,          // the session plan being played: { blocks, idx, startedAt } (null when playing freely)
 };
 
 function show(id) {
@@ -54,7 +55,7 @@ function show(id) {
   if (id === "screen-welcome") state.warmedUp = false;   // a fresh session may stretch again
   // the floating Help follows the stage and the result screens; the welcome
   // and the menu carry their own inline buttons instead
-  $("btn-help").classList.toggle("hidden", ["screen-login", "screen-welcome", "screen-intro", "screen-select"].includes(id));
+  $("btn-help").classList.toggle("hidden", ["screen-login", "screen-welcome", "screen-intro", "screen-select", "screen-schedule"].includes(id));
 }
 
 function resize() { const c = $("canvas"); c.width = innerWidth; c.height = innerHeight; }
@@ -914,14 +915,185 @@ function renderSelect() {
     if (g.id === "candles") { gameBtns.candles = mk(g.id, g.name, !!gameLock, renderLanternLevels, g.trains, gameLock); continue; }
     gameBtns[g.id] = mk(g.id, g.name, !!gameLock, () => startGame(g.id, true), g.trains, gameLock);
   }
+  // the session plan, if the therapist made one: a strip above the cards
+  // with its start button, which is the recommended action once the arm is
+  // measured today (the plan's games wait for the measurement like the cards)
+  const planBtn = renderPlanStrip(gameLock);
   // default-first: one clearly recommended card, pre-focused so a single
-  // Enter continues the flow (no measurement today → assess; else last
-  // played game; else the first game)
-  const suggested = gameLock ? assessBtn : (gameBtns[state.lastGameId] || Object.values(gameBtns)[0]);
+  // Enter continues the flow (no measurement today → assess; else the plan;
+  // else last played game; else the first game)
+  const suggested = gameLock ? assessBtn : planBtn || (gameBtns[state.lastGameId] || Object.values(gameBtns)[0]);
   if (suggested) {
     focusHint(suggested);
-    if (MENU_KEYS) suggested.insertAdjacentHTML("beforeend", `<div class="suggest">Start here</div>`);
+    if (MENU_KEYS) {
+      if (suggested === planBtn) planBtn.classList.add("suggest-btn");
+      else suggested.insertAdjacentHTML("beforeend", `<div class="suggest">Start here</div>`);
+    }
   }
+}
+
+/* ================= the session plan (Oct 2026, by request) ================= */
+// The therapist's plan for the session: blocks of PLAN_BLOCK_MIN minutes, a
+// game each, chosen on #screen-schedule after the arm's FIRST assessment and
+// editable any time from the staff drawer or the profile screen. Stored per
+// patient (store.getSchedule / setSchedule). Playing it: "Start the plan" on
+// the hub runs block 1's game; between rounds the same game continues until
+// the block's minutes (wall clock since the block began) are up, then "Next
+// round" becomes "Next: <game>" and starts the next block fresh; after the
+// last block "Finish for today" is the way on. Finishing early loses
+// nothing: every round is logged as usual.
+const PLAN_BLOCK_MIN = 15, PLAN_MAX_BLOCKS = 6;
+let planDraft = [], planReturn = null;
+
+// the games a block can hold: the enabled cards, Pong as its two games
+function planChoices() {
+  const out = [];
+  for (const g of GAMES) {
+    if (g.disabled) continue;
+    if (g.id === "pong") {
+      out.push({ key: "pong", game: "pong", axis: "fe", name: "Pong FE" });
+      out.push({ key: "pong-abd", game: "pong", axis: "abd", name: "Pong Abd-Add" });
+      continue;
+    }
+    out.push({ key: g.id, game: g.id, name: g.name });
+  }
+  return out;
+}
+const planKey = b => b.game === "pong" ? (b.axis === "abd" ? "pong-abd" : "pong") : b.game;
+function planName(b) { return planChoices().find(c => c.key === planKey(b))?.name || GAMES.find(g => g.id === b.game)?.name || b.game; }
+function planMinutes(blocks) { return blocks.reduce((s, b) => s + (b.minutes || PLAN_BLOCK_MIN), 0); }
+
+// open the plan screen; `then` is where Save or Skip goes afterwards
+function renderSchedule(then) {
+  planReturn = then;
+  const saved = store.getSchedule(state.patient);
+  const choices = planChoices();
+  planDraft = saved?.blocks?.length
+    ? saved.blocks.map(b => ({ game: b.game, axis: b.axis, minutes: b.minutes || PLAN_BLOCK_MIN }))
+    : [{ game: choices[0].game, axis: choices[0].axis, minutes: PLAN_BLOCK_MIN }];
+  drawPlan();
+  show("screen-schedule");
+  document.querySelectorAll("#screen-schedule .kbd-focus").forEach(el => el.classList.remove("kbd-focus"));
+  focusHint($("btn-plan-save"));
+}
+function drawPlan() {
+  const choices = planChoices();
+  const wrap = $("plan-blocks");
+  wrap.innerHTML = "";
+  planDraft.forEach((b, i) => {
+    const row = document.createElement("div");
+    row.className = "plan-block";
+    const head = document.createElement("div");
+    head.className = "plan-block-head";
+    head.innerHTML = `<div><b>Block ${i + 1} · ${b.minutes} min</b><span class="pick">${planName(b)}</span></div>`;
+    if (planDraft.length > 1) {
+      const rm = document.createElement("button");
+      rm.className = "plan-remove"; rm.textContent = "Remove"; rm.dataset.dwell = "1";
+      rm.addEventListener("click", () => { planDraft.splice(i, 1); drawPlan(); });
+      head.appendChild(rm);
+    }
+    row.appendChild(head);
+    const tiles = document.createElement("div");
+    tiles.className = "plan-tiles";
+    for (const c of choices) {
+      const t = document.createElement("button");
+      t.className = "plan-tile" + (c.key === planKey(b) ? " on" : "");
+      t.dataset.dwell = "1";
+      t.innerHTML = (CARD_ART[c.game] || "") + `<div class="name">${c.name}</div>`;
+      t.addEventListener("click", () => { b.game = c.game; b.axis = c.axis; drawPlan(); });
+      tiles.appendChild(t);
+    }
+    row.appendChild(tiles);
+    wrap.appendChild(row);
+  });
+  const total = planMinutes(planDraft);
+  $("plan-total").textContent = `${planDraft.length} block${planDraft.length === 1 ? "" : "s"} · ${total} minutes`;
+  $("btn-plan-add").disabled = planDraft.length >= PLAN_MAX_BLOCKS;
+}
+$("btn-plan-add").addEventListener("click", () => {
+  if (planDraft.length >= PLAN_MAX_BLOCKS) return;
+  const last = planDraft[planDraft.length - 1] || planChoices()[0];
+  planDraft.push({ game: last.game, axis: last.axis, minutes: PLAN_BLOCK_MIN });
+  drawPlan();
+});
+$("btn-plan-save").addEventListener("click", () => {
+  store.setSchedule(state.patient, planDraft.map(b => ({ game: b.game, axis: b.axis, minutes: b.minutes })));
+  speak(`Plan saved. ${planDraft.length} block${planDraft.length === 1 ? "" : "s"}, ${planMinutes(planDraft)} minutes.`);
+  const then = planReturn; planReturn = null;
+  (then || (() => { renderSelect(); show("screen-select"); }))();
+});
+$("btn-plan-skip").addEventListener("click", () => {
+  const then = planReturn; planReturn = null;
+  (then || (() => { renderSelect(); show("screen-select"); }))();
+});
+
+// the hub strip; returns its start button (or null when there is no plan)
+function renderPlanStrip(gameLock) {
+  const strip = $("plan-strip");
+  const plan = store.getSchedule(state.patient);
+  if (!plan?.blocks?.length) { strip.classList.add("hidden"); strip.innerHTML = ""; return null; }
+  strip.classList.remove("hidden");
+  const text = plan.blocks.map(b => `${planName(b)} ${b.minutes || PLAN_BLOCK_MIN} min`).join(" · ");
+  strip.innerHTML = `<div>Today's plan: ${text}</div>`;
+  const btn = document.createElement("button");
+  btn.className = "btn"; btn.dataset.dwell = "1";
+  btn.textContent = gameLock ? gameLock : "Start the plan";
+  btn.disabled = !!gameLock;
+  if (!gameLock) btn.addEventListener("click", startPlan);
+  strip.appendChild(btn);
+  return gameLock ? null : btn;
+}
+function startPlan() {
+  const plan = store.getSchedule(state.patient);
+  if (!plan?.blocks?.length) return;
+  state.plan = { blocks: plan.blocks.map(b => ({ ...b, minutes: b.minutes || PLAN_BLOCK_MIN })), idx: 0, startedAt: 0 };
+  startPlanBlock(0);
+}
+function startPlanBlock(i) {
+  const p = state.plan;
+  if (!p || i >= p.blocks.length) return;
+  const b = p.blocks[i];
+  p.idx = i; p.startedAt = Date.now();
+  if (b.game === "pong") { state.pongMode = "solo"; state.pongAxis = b.axis || "fe"; $("in-pong").value = "solo"; }
+  startGame(b.game, true);
+}
+// minutes left in the current block (0 when it is over)
+function planLeftMin() {
+  const p = state.plan;
+  if (!p) return 0;
+  const b = p.blocks[p.idx];
+  return Math.max(0, Math.ceil((b.minutes * 60000 - (Date.now() - p.startedAt)) / 60000));
+}
+// the between-rounds card's plan line and the label of "Next round"
+function renderPlanBetween() {
+  const p = state.plan, line = $("rc-plan"), next = $("btn-next-round");
+  next.textContent = "Next round";
+  if (!p) { line.classList.add("hidden"); line.textContent = ""; return; }
+  line.classList.remove("hidden");
+  const left = planLeftMin();
+  const last = p.idx >= p.blocks.length - 1;
+  if (left > 0) {
+    line.textContent = `Block ${p.idx + 1} of ${p.blocks.length} · ${left} min left`;
+  } else if (!last) {
+    const nm = planName(p.blocks[p.idx + 1]);
+    line.textContent = `Block ${p.idx + 1} of ${p.blocks.length} done · next: ${nm}`;
+    next.textContent = `Next: ${nm}`;
+  } else {
+    line.textContent = "That's the whole plan. Well done.";
+    next.textContent = "One more round";
+  }
+}
+// "Next round": the same game while the block runs, the next block's game
+// once its minutes are up, and free play when there is no plan
+function nextRound() {
+  const p = state.plan;
+  if (p && planLeftMin() === 0 && p.idx < p.blocks.length - 1) {
+    const nm = planName(p.blocks[p.idx + 1]);
+    speak(`Time for ${nm}.`);
+    startPlanBlock(p.idx + 1);
+    return;
+  }
+  startGame(state.lastGameId, false);
 }
 
 // Pong mode picker: shown as tiles after choosing Arc Pong
@@ -1207,6 +1379,7 @@ function startAssessment(opts = {}) {
   if (noCamera()) return;
   const arm = state.side;
   const prof = store.getProfile(state.patient, arm);
+  const firstEver = !prof;    // the arm's first measurement: the therapist's plan screen follows it
   if (prof && measuredToday(prof) && !opts.override) {
     speak("Your reach is already measured today. Once a day is plenty.");
     renderSelect();
@@ -1246,10 +1419,16 @@ function startAssessment(opts = {}) {
     audio.fanfare();
     // what actually changed, before anyone goes back to playing: a
     // re-measure that never shows you the difference is just a delay
-    renderRomCompare([arm]);
-    show("screen-romcompare");
-    romLiveLoop();
-    focusHint($("btn-rom-done"));
+    const showResult = () => {
+      renderRomCompare([arm]);
+      show("screen-romcompare");
+      romLiveLoop();
+      focusHint($("btn-rom-done"));
+    };
+    // the arm's first measurement: the therapist chooses the session plan
+    // (15-minute blocks, a game each) before the result and the hub
+    if (firstEver) renderSchedule(showResult);
+    else showResult();
   });
 }
 
@@ -1695,9 +1874,11 @@ function onRoundEnd(round) {
 
   renderBetween(round, result.note);
   show("screen-between");
-  // default-first: Enter continues the session without hunting for a button
+  // default-first: Enter continues the session without hunting for a button;
+  // once the plan's last block is over, finishing is the way on
   document.querySelectorAll("#screen-between .kbd-focus").forEach(el => el.classList.remove("kbd-focus"));
-  focusHint($("btn-next-round"));
+  const planDone = state.plan && planLeftMin() === 0 && state.plan.idx >= state.plan.blocks.length - 1;
+  focusHint($(planDone ? "btn-finish" : "btn-next-round"));
 }
 
 /* ================= P5 between rounds ================= */
@@ -1787,6 +1968,7 @@ function renderBetween(round, note) {
     ? " You've earned a longer break. Have some water."
     : "";
   $("rc-note").textContent = note + rest;
+  renderPlanBetween();
 
   for (const f of document.querySelectorAll(".face")) f.classList.remove("selected");
 }
@@ -1806,8 +1988,8 @@ document.querySelectorAll(".face").forEach(f => {
 
 $("btn-next-round").dataset.dwell = "1";
 $("btn-finish").dataset.dwell = "1";
-$("btn-next-round").addEventListener("click", () => startGame(state.lastGameId, false));
-$("btn-finish").addEventListener("click", () => { renderCollections(); show("screen-collections"); });
+$("btn-next-round").addEventListener("click", nextRound);
+$("btn-finish").addEventListener("click", () => { state.plan = null; renderCollections(); show("screen-collections"); });
 
 /* ================= P7 collections ================= */
 const DECOR = [
@@ -2106,6 +2288,7 @@ $("btn-prof-back").addEventListener("click", () => { renderSelect(); show("scree
     : `<div class="comp-row"><span style="opacity:.6">Not played yet on this arm — every game starts from the assessment</span></div>`;
 $("btn-prof-session").addEventListener("click", () => { renderSelect(); show("screen-select"); });
 $("btn-prof-assess").addEventListener("click", () => startAssessment({ force: true, override: true }));
+$("btn-prof-plan").addEventListener("click", () => renderSchedule(() => { renderProfile(); show("screen-profile"); }));
 $("btn-prof-export").addEventListener("click", () => {
   const blob = new Blob([store.exportPatient(state.patient)], { type: "application/json" });
   const a = document.createElement("a");
@@ -2346,6 +2529,12 @@ $("btn-drawer-intro").addEventListener("click", () => {
   const back = state.screen;
   playIntro(() => show(back));
 });
+$("btn-drawer-plan").addEventListener("click", () => {
+  $("drawer").classList.add("hidden");
+  // back to the menu screen it was opened from (never into a running game)
+  const back = ["screen-select", "screen-profile", "screen-collections", "screen-between"].includes(state.screen) ? state.screen : "screen-select";
+  renderSchedule(() => { if (back === "screen-select") renderSelect(); show(back); });
+});
 $("btn-drawer-collections").addEventListener("click", () => { $("drawer").classList.add("hidden"); renderCollections(); show("screen-collections"); });
 
 $("btn-quit").addEventListener("click", () => {
@@ -2372,7 +2561,7 @@ function kbdTargets() {
 }
 addEventListener("keydown", e => {
   if (!MENU_KEYS) return;
-  if (!["screen-select", "screen-between", "screen-collections"].includes(state.screen)) return;
+  if (!["screen-select", "screen-between", "screen-collections", "screen-schedule"].includes(state.screen)) return;
   const els = kbdTargets();
   if (!els.length) return;
   const cur = els.findIndex(el => el.classList.contains("kbd-focus"));

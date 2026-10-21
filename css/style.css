@@ -385,6 +385,48 @@ body.hc #caption { background: rgba(8, 6, 18, 0.97); border-color: rgba(244,236,
 }
 #handcursor.comet { background: radial-gradient(circle, #fff, #9fc0c8); box-shadow: 0 0 22px 7px rgba(200,230,235,.7); }
 
+/* ---------- the session plan (Oct 2026) ---------- */
+#screen-schedule {
+  background: linear-gradient(165deg, #1b1b3a 0%, #2a2454 60%, #3a3168 100%); color: var(--cream);
+  justify-content: flex-start; overflow-y: auto; padding: 4.5vh 0 6vh; gap: 14px;
+}
+#screen-schedule h1 { font-weight: 800; font-size: clamp(30px, 3.4vw, 54px); flex-shrink: 0; }
+.plan-blocks { display: flex; flex-direction: column; gap: 14px; width: min(94vw, 1180px); }
+.plan-block { background: rgba(244,236,221,0.07); border: 1px solid rgba(244,236,221,0.14); border-radius: 18px; padding: 14px 18px 16px; }
+.plan-block-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.plan-block-head b { font-size: 19px; }
+.plan-block-head .pick { font-weight: 700; font-size: 15px; opacity: 0.8; margin-left: 12px; }
+.plan-remove { background: transparent; border: 2px solid rgba(244,236,221,.3); color: var(--cream); border-radius: 10px; padding: 7px 14px; font-weight: 800; font-size: 14px; }
+.plan-remove:hover { background: rgba(244,236,221,.12); }
+.plan-tiles { display: flex; flex-wrap: wrap; gap: 10px; }
+.plan-tile {
+  position: relative; width: 128px; height: 128px; border-radius: 14px; overflow: hidden; border: 3px solid transparent; padding: 0;
+  color: var(--cream); background: #23234a; box-shadow: 0 6px 18px rgba(10,10,30,.45); transition: transform .2s;
+}
+.plan-tile .art { position: absolute; inset: 0; }
+.plan-tile .name { position: absolute; left: 0; right: 0; bottom: 8px; font-weight: 800; font-size: 14px; text-shadow: 0 2px 6px rgba(0,0,0,.6); padding: 0 6px; }
+.plan-tile:hover, .plan-tile.kbd-focus { transform: translateY(-3px); }
+.plan-tile.kbd-focus { outline: 3px solid var(--amber); outline-offset: 2px; }
+.plan-tile.on { border-color: var(--amber); box-shadow: 0 0 0 3px rgba(232,168,106,.35), 0 6px 18px rgba(10,10,30,.45); }
+.plan-tile.on::after { content: "✓"; position: absolute; top: 6px; right: 8px; font-weight: 900; font-size: 18px; color: #1b1b3a; background: var(--amber); border-radius: 50%; width: 26px; height: 26px; line-height: 26px; text-align: center; }
+.plan-foot { display: flex; align-items: center; gap: 18px; width: min(94vw, 1180px); }
+.plan-foot .btn[disabled] { opacity: 0.45; }
+.plan-total { font-weight: 800; font-size: 18px; opacity: 0.9; }
+.plan-actions { display: flex; gap: 14px; margin-top: 6px; }
+/* the hub strip: today's plan in one line, with its start button */
+.plan-strip {
+  width: min(92vw, 1100px); margin: -8px auto 6px; padding: 12px 18px; border-radius: 16px; flex-shrink: 0;
+  background: rgba(244,236,221,0.08); border: 1px solid rgba(244,236,221,0.16);
+  display: flex; align-items: center; justify-content: space-between; gap: 16px; font-weight: 700; font-size: 17px;
+}
+.plan-strip .btn { position: relative; white-space: nowrap; }
+.plan-strip .btn.suggest-btn::before {
+  content: "Start here"; position: absolute; top: -14px; left: 50%; transform: translateX(-50%);
+  background: var(--amber); color: #1b1b3a; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 800; box-shadow: 0 3px 10px rgba(0,0,0,.3);
+}
+.plan-strip .btn[disabled] { opacity: 0.55; }
+.rc-plan { margin-top: 16px; text-align: center; font-weight: 800; font-size: 15px; color: var(--terra); }
+
 /* ---------- P5 between-rounds ---------- */
 #screen-between { background: radial-gradient(circle at 50% 30%, #3a3168, #20204a); }
 .round-card {
