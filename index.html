@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>STRIVE</title>
-<link rel="stylesheet" href="css/style.css?v=65">
+<link rel="stylesheet" href="css/style.css?v=66">
 </head>
 <body>
 
@@ -94,15 +94,12 @@
   <div class="brand-foot">Developed by Synapse Lab · Shirley Ryan AbilityLab</div>
 </div>
 
-<!-- The intro (Oct 2026, by request): a new participant's first Start on the
-     welcome screen plays this, the coach's voice over one line at a time -->
+<!-- The intro (Oct 2026, by request): the STRIVE Intro recording, silent,
+     with the coach's voice reading the script over its captions. Played
+     right after a new participant is created, and from the staff drawer. -->
 <div id="screen-intro" class="screen hidden">
-  <div class="blob b1"></div><div class="blob b2"></div>
-  <div class="brand-title">STRIVE</div>
-  <div id="intro-line"></div>
-  <div id="intro-dots"></div>
+  <video id="intro-video" muted playsinline preload="auto" aria-hidden="true"></video>
   <button class="btn ghost-light" id="btn-intro-skip">Skip</button>
-  <div class="brand-foot">Developed by Synapse Lab · Shirley Ryan AbilityLab</div>
 </div>
 
 <!-- P3 game select -->
@@ -375,6 +372,7 @@
   <div class="row"><button class="btn ghost-light" id="btn-mail-test">Send test email</button><button class="btn ghost-light" id="btn-mail-help">Report a problem</button></div>
   <div class="row"><button class="btn ghost-light" id="btn-mail-progress">Email progress</button></div>
   <div class="row"><button class="btn" id="btn-drawer-assess">Re-measure this arm</button></div>
+  <div class="row"><button class="btn ghost-light" id="btn-drawer-intro" title="The welcome video with the coach's voice (not during a round)">Play the intro</button></div>
   <div class="row"><button class="btn ghost-light" id="btn-drawer-profile">Profile</button></div>
   <div class="row"><button class="btn ghost-light" id="btn-drawer-collections">Collections</button><button class="btn ghost-light" id="btn-drawer-close">Close</button></div>
 </div>
@@ -389,6 +387,6 @@
 <div id="loading" class="hidden"><div class="spinner"></div><div id="loading-text">Waking up the camera&hellip;</div>
   <div id="loading-error" class="hidden"><button class="btn big" id="btn-loading-retry">Try again</button><button class="btn ghost-light" id="btn-loading-continue">Continue without the camera</button></div></div>
 
-<script type="module" src="js/main.js?v=65"></script>
+<script type="module" src="js/main.js?v=66"></script>
 </body>
 </html>

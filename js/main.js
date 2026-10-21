@@ -1,4 +1,4 @@
-import { Tracker } from "./tracker.js?v=65";
+import { Tracker } from "./tracker.js?v=66";
 import { Assessment } from "./assessment.js";
 import { GAMES, STAR_RANKS, CANDLE_MAX, LUMEN_STAGES } from "./games.js";
 import { Warmup } from "./warmup.js";
@@ -8,7 +8,7 @@ import { drawBody, drawVideoMirror } from "./engine.js";
 import { store } from "./storage.js";
 import { drawVillage, villageLine, villageCounts } from "./village.js";
 import { audio } from "./audio.js";
-import { A11Y, applySettings, speakLine } from "./a11y.js";
+import { A11Y, applySettings, speakLine, showCaption } from "./a11y.js";
 import { probeMail, sendMail, mailTarget, mailReady, diagnostics, progressReport, setReminder, pushSnapshot } from "./mail.js";
 
 // "12 min" / "1 h 05 min"
@@ -54,7 +54,7 @@ function show(id) {
   if (id === "screen-welcome") state.warmedUp = false;   // a fresh session may stretch again
   // the floating Help follows the stage and the result screens; the welcome
   // and the menu carry their own inline buttons instead
-  $("btn-help").classList.toggle("hidden", ["screen-login", "screen-welcome", "screen-select"].includes(id));
+  $("btn-help").classList.toggle("hidden", ["screen-login", "screen-welcome", "screen-intro", "screen-select"].includes(id));
 }
 
 function resize() { const c = $("canvas"); c.width = innerWidth; c.height = innerHeight; }
@@ -132,7 +132,10 @@ $("btn-loading-continue").addEventListener("click", () => $("loading").classList
 function loginStep(step) {
   for (const s of ["login-choice", "login-list", "login-create", "login-arm"])
     $(s).classList.toggle("hidden", s !== step);
-  if (step === "login-create") setTimeout(() => $("login-name").focus(), 50);
+  if (step === "login-create") {
+    setTimeout(() => $("login-name").focus(), 50);
+    preloadIntro();          // a new participant hears the intro next: have it buffered
+  }
 }
 
 function renderLoginPeople() {
@@ -195,10 +198,14 @@ function finishLogin(name, isNew, arm) {
   $("in-email").value = c.email || "";
   $("in-remind-time").value = c.remindAt || "";
   $("in-remind-days").value = c.remindDays || "off";
-  // a participant made just now hears the intro on their first Start
-  state.introPending = !!isNew && name !== "guest";
-  show("screen-welcome");
-  if (name !== "guest") speak(isNew ? `Nice to meet you, ${name}.` : `Welcome back, ${name}.`);
+  // a participant made just now sees the intro first (Oct 2026, by
+  // request), then the welcome screen and the greeting
+  if (isNew && name !== "guest") {
+    playIntro(() => { show("screen-welcome"); speak(`Nice to meet you, ${name}.`); });
+  } else {
+    show("screen-welcome");
+    if (name !== "guest") speak(`Welcome back, ${name}.`);
+  }
   notifyLogin(name, arm);
   syncReminder(name);
   snapshot(name);
@@ -440,10 +447,7 @@ function watchWelcome() {
     // fire before the patient had finished sitting down.
   }
   loop();
-  $("btn-welcome-start").addEventListener("click", () => {
-    if (state.introPending) { state.introPending = false; playIntro(); }
-    else enterSelect();
-  });
+  $("btn-welcome-start").addEventListener("click", enterSelect);
   $("btn-welcome-warmup").addEventListener("click", () => startWarmup());
 }
 
@@ -468,10 +472,16 @@ function startWarmup(then = null) {
 }
 
 /* ================= the intro (Oct 2026, by request) ================= */
-// What STRIVE is and why the reps matter, in the coach's own voice, one line
-// on screen at a time as it is spoken; Skip (or Enter / Escape) goes straight
-// on. Played once, on a newly created participant's first Start; then the
-// hub, exactly as Start would have.
+// The STRIVE Intro recording (55 s, silent, its own big captions) with the
+// coach's voice reading the script over it: each paragraph is cued where
+// the recording's caption for it begins, and the lines are QUEUED, never
+// cut mid-sentence, so a long paragraph simply finishes before the next
+// starts. The recording holds its last frame until the voice is done.
+// Played right after a new participant is created, before the welcome
+// screen, and from the staff drawer; Skip (or Enter / Space / Escape) goes
+// straight on. With no recording (missing file, slow network) the voice
+// still reads the whole script on the dark screen.
+const INTRO_SRC = "assets/music/STRIVE Intro.mp4";
 const INTRO_LINES = [
   "Congratulations! You are about to use the STRIVE system. Let me explain how STRIVE can help you reach your therapy goals.",
   "Your brain has the power to heal itself. This is called neuroplasticity.",
@@ -480,36 +490,71 @@ const INTRO_LINES = [
   "STRIVE will continuously adjust to make sure the games are customized to provide you the best level of challenge and movement.",
   "With STRIVE, your next rep is always one game away. Let's play.",
 ];
+// seconds into the recording where each line's caption section begins
+const INTRO_CUES = [0.5, 10, 17.7, 33.2, 39.2, 48.2];
+const INTRO_GAP_MS = 350;        // breath between queued lines
+const INTRO_STALL_MS = 8000;     // a recording that never starts: read the script without it
+const INTRO_TAIL_MS = 800;       // after the last line, before what comes next
+// the written form is as scripted; the spoken form reads as words
+const introSpoken = s => s.replace(/STRIVE/g, "Strive").replace("1,000", "a thousand").replace("than 100", "than a hundred");
+
+let introVid = null;
+function preloadIntro() {
+  if (introVid) return introVid;
+  const v = $("intro-video");
+  v.muted = true; v.playsInline = true; v.preload = "auto";
+  v.src = INTRO_SRC;
+  try { v.load(); } catch {}
+  introVid = v;
+  return v;
+}
+
 let introRun = 0;
-function playIntro() {
+function playIntro(then = null) {
   const run = ++introRun;
-  const line = $("intro-line"), dots = $("intro-dots");
-  dots.innerHTML = INTRO_LINES.map(() => "<span></span>").join("");
+  const v = preloadIntro();
   show("screen-intro");
+  const startedAt = performance.now();
+  let next = 0, queue = [], speaking = false, done = false, raf = 0;
   const finish = () => {
-    if (run !== introRun) return;
-    introRun++;
-    speechSynthesis.cancel?.();
+    if (done || run !== introRun) return;
+    done = true; introRun++;
+    cancelAnimationFrame(raf);
+    try { speechSynthesis.cancel(); } catch {}
+    try { v.pause(); } catch {}
     removeEventListener("keydown", onKey, true);
-    show("screen-welcome");           // enterSelect continues from the welcome screen
-    enterSelect();
+    $("btn-intro-skip").onclick = null;
+    then?.();
   };
   const onKey = e => {
     if (["Enter", " ", "Escape"].includes(e.key)) { e.preventDefault(); e.stopPropagation(); finish(); }
   };
   addEventListener("keydown", onKey, true);
   $("btn-intro-skip").onclick = finish;
-  const sayFrom = i => {
-    if (run !== introRun) return;
-    if (i >= INTRO_LINES.length) { setTimeout(finish, 900); return; }
-    [...dots.children].forEach((d, k) => { d.className = k < i ? "done" : k === i ? "now" : ""; });
-    line.textContent = INTRO_LINES[i];
-    line.style.animation = "none"; void line.offsetWidth; line.style.animation = "";
-    // the written form is as scripted; the spoken form reads as words
-    const spoken = INTRO_LINES[i].replace(/STRIVE/g, "Strive").replace("1,000", "a thousand").replace("than 100", "than a hundred");
-    speakLine(spoken, 0.9, false, () => setTimeout(() => sayFrom(i + 1), 500));
+  // one line at a time, the next only when this one has been said
+  const pump = () => {
+    if (done || speaking || !queue.length) return;
+    const i = queue.shift(); speaking = true;
+    showCaption(INTRO_LINES[i]);
+    speakLine(introSpoken(INTRO_LINES[i]), 0.9, false, () => {
+      speaking = false;
+      setTimeout(pump, INTRO_GAP_MS);
+    });
   };
-  sayFrom(0);
+  const tick = now => {
+    if (done) return;
+    const t = v.currentTime || 0;
+    // a recording that failed or never started: the voice carries the script
+    const failed = !!v.error || (t === 0 && now - startedAt > INTRO_STALL_MS);
+    const over = v.ended || failed;
+    while (next < INTRO_CUES.length && (over || t >= INTRO_CUES[next])) queue.push(next++);
+    pump();
+    if (over && next >= INTRO_CUES.length && !queue.length && !speaking) { setTimeout(finish, INTRO_TAIL_MS); return; }
+    raf = requestAnimationFrame(tick);
+  };
+  try { v.currentTime = 0; } catch {}
+  v.play().catch(() => {});       // muted: autoplay is never refused
+  raf = requestAnimationFrame(tick);
 }
 
 function enterSelect() {
@@ -2292,6 +2337,14 @@ $("in-song").innerHTML = [...SONGS]
   .join("");
 $("btn-drawer-assess").addEventListener("click", () => { $("drawer").classList.add("hidden"); startAssessment({ force: true, override: true }); });
 $("btn-drawer-profile").addEventListener("click", () => { $("drawer").classList.add("hidden"); renderProfile(); show("screen-profile"); });
+// the intro again, for this participant, back to the screen it was on after;
+// never over a round (the stage), where a game is drawing and speaking
+$("btn-drawer-intro").addEventListener("click", () => {
+  $("drawer").classList.add("hidden");
+  if (state.screen === "stage" || state.screen === "screen-intro") return;
+  const back = state.screen;
+  playIntro(() => show(back));
+});
 $("btn-drawer-collections").addEventListener("click", () => { $("drawer").classList.add("hidden"); renderCollections(); show("screen-collections"); });
 
 $("btn-quit").addEventListener("click", () => {

@@ -46,15 +46,11 @@ button { font-family: inherit; cursor: pointer; }
 }
 @keyframes screenfade { from { opacity: 0; } to { opacity: 1; } }
 
-/* the intro: the welcome's night sky, one spoken line at a time, large */
-#screen-intro { background: linear-gradient(165deg, #1b1b3a 0%, #3a3168 46%, #8f76b0 100%); color: var(--cream); }
-#intro-line { max-width: min(1100px, 86vw); min-height: 3.6em; text-align: center; font-weight: 700;
-  font-size: clamp(26px, 3vw, 46px); line-height: 1.35; z-index: 2; position: relative; animation: screenfade 0.6s ease; }
-#intro-dots { display: flex; gap: 10px; margin-top: 28px; z-index: 2; position: relative; }
-#intro-dots span { width: 12px; height: 12px; border-radius: 50%; background: rgba(244,236,221,0.25); }
-#intro-dots span.done { background: var(--amber); }
-#intro-dots span.now { background: var(--cream); }
-#btn-intro-skip { margin-top: 34px; z-index: 2; position: relative; }
+/* the intro: the recording fills the screen on the ink of its own edges,
+   the coach's voice over it (captions through #caption), Skip bottom right */
+#screen-intro { background: #09172a; color: var(--cream); }
+#intro-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #09172a; }
+#btn-intro-skip { position: absolute; right: 24px; bottom: 24px; z-index: 2; }
 
 /* P1 welcome — option 1a */
 #screen-welcome { background: linear-gradient(165deg, #1b1b3a 0%, #3a3168 46%, #8f76b0 100%); }
