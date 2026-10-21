@@ -6,13 +6,11 @@
 
 import { audio } from "./audio.js";
 import { speakLine } from "./a11y.js";
+import { coachLine } from "./coachlines.js";
 
-const CUES = {
-  lean: "Sit tall, reach with your arm",
-  hike: "Let your shoulder relax",
-  rotation: "Keep your chest facing me",
-  tilt: "Straighten up gently, nice and tall",
-};
+// The cue's words come from the chosen coach's phrasebook (coachlines.js,
+// Oct 2026): lean | hike | rotation | tilt each have a line in Rook's,
+// Lumi's and Maple's voice. Lumi's first lines are the original cues.
 const THRESH = { gentle: 1.0, strict: 0.65 };
 
 export class Coach {
@@ -45,8 +43,9 @@ export class Coach {
           this.state = "alert"; this.type = worst[0]; this.alertStart = now; this.stateT = now;
           if (!this.quiet) {
             audio.whoosh();
-            this._speak(CUES[this.type]);
-            this._cuePill(CUES[this.type], true);
+            const cue = coachLine("compensation", { type: this.type });
+            this._speak(cue);
+            this._cuePill(cue, true);
           }
         }
       } else if (!over) this.overSince = null;

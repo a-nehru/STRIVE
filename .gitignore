@@ -4,6 +4,8 @@ desktop.ini
 __pycache__/
 # SMTP credentials for tools/mail_bridge.py - never commit these
 tools/mail_config.json
+# API key for tools/coach_bridge.py (Claude-written coach lines) - never commit this
+tools/coach_config.json
 # session reminders set from the game: participant email addresses
 tools/reminders.json
 # progress snapshots pushed by the game for update-by-email: patient data

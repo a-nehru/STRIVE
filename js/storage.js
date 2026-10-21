@@ -292,6 +292,7 @@ export const store = {
       field: "none",         // visual field cut: none | left | right
       fieldMode: "comfort",  // comfort = bias spawns to intact side | scan = train the cut side
       volVoice: 1, volMusic: 1, volFx: 1,
+      coach: "lumi",         // the AI coach (Oct 2026): rook | lumi | maple; Lumi for anyone who never chose
       ...patient(load(), name).settings,
     };
   },

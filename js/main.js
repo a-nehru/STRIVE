@@ -8,7 +8,9 @@ import { drawBody, drawVideoMirror } from "./engine.js";
 import { store } from "./storage.js";
 import { drawVillage, villageLine, villageCounts } from "./village.js";
 import { audio } from "./audio.js";
-import { A11Y, applySettings, speakLine, showCaption } from "./a11y.js";
+import { A11Y, applySettings, speakLine, showCaption, COACHES } from "./a11y.js";
+import { coachLine } from "./coachlines.js";
+import { probeCoach, coachRelayReady, coachRelayInfo } from "./coachline.js";
 import { probeMail, sendMail, mailTarget, mailReady, diagnostics, progressReport, setReminder, pushSnapshot } from "./mail.js";
 
 // "12 min" / "1 h 05 min"
@@ -131,12 +133,73 @@ $("btn-loading-continue").addEventListener("click", () => $("loading").classList
 // stored under rehabsuite-v1 immediately, so stars, profiles and history come
 // back next visit. The camera keeps warming up in the background meanwhile.
 function loginStep(step) {
-  for (const s of ["login-choice", "login-list", "login-create", "login-arm"])
+  for (const s of ["login-choice", "login-list", "login-create", "login-coach", "login-arm"])
     $(s).classList.toggle("hidden", s !== step);
   if (step === "login-create") {
     setTimeout(() => $("login-name").focus(), 50);
     preloadIntro();          // a new participant hears the intro next: have it buffered
   }
+  if (step === "login-coach") setTimeout(() => document.querySelector("#login-coach .coach[aria-checked=\"true\"]")?.focus(), 50);
+}
+
+// The AI coach (Oct 2026, by request, from the choose-your-coach mockup): a
+// new participant picks Rook, Lumi or Maple right after their name, before
+// the arm. The choice is a per-patient setting (store.getSettings().coach),
+// so everything the app says from then on is in that coach's words and
+// voice (coachlines.js, a11y.js); the staff drawer's Coach select changes it
+// later. Lumi is pre-selected and is what anyone who never chose gets.
+let coachPick = "lumi";
+let pendingCreate = null;                    // the name waiting on a coach
+function renderCoachPick() {
+  for (const card of document.querySelectorAll("#login-coach .coach")) {
+    const on = card.dataset.coach === coachPick;
+    card.setAttribute("aria-checked", String(on));
+    card.tabIndex = on ? 0 : -1;
+  }
+  const c = COACHES[coachPick];
+  $("btn-login-coach").textContent = `Start with ${c.name}`;
+  $("btn-login-coach").dataset.coach = coachPick;
+}
+function selectCoach(id, focus) {
+  if (!COACHES[id]) return;
+  coachPick = id;
+  renderCoachPick();
+  if (focus) document.querySelector(`#login-coach .coach[data-coach="${id}"]`)?.focus();
+}
+{
+  const cards = [...document.querySelectorAll("#login-coach .coach")];
+  cards.forEach((card, i) => {
+    card.addEventListener("click", e => {
+      if (e.target.closest(".coach-hear")) return;       // "Hear it" is its own button
+      selectCoach(card.dataset.coach, false);
+    });
+    card.addEventListener("keydown", e => {
+      const k = e.key;
+      if (["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp"].includes(k)) {
+        e.preventDefault();
+        const step = k === "ArrowRight" || k === "ArrowDown" ? 1 : -1;
+        selectCoach(cards[(i + step + cards.length) % cards.length].dataset.coach, true);
+      } else if ((k === "Enter" || k === " ") && coachPick === card.dataset.coach) {
+        e.preventDefault(); $("btn-login-coach").click();
+      }
+    });
+  });
+  // "Hear it": the coach's sample line in that coach's own voice, nothing saved
+  for (const b of document.querySelectorAll("#login-coach .coach-hear")) {
+    b.addEventListener("click", e => {
+      e.stopPropagation();
+      const id = b.closest(".coach").dataset.coach;
+      speakLine(COACHES[id].sample, 0.9, false, null, id);
+    });
+  }
+  $("btn-login-coach").addEventListener("click", () => {
+    if (!pendingCreate) return;
+    const name = pendingCreate; pendingCreate = null;
+    store.saveSettings(name, { coach: coachPick });
+    loginAs(name, true);
+  });
+  $("btn-login-back-coach").addEventListener("click", () => { pendingCreate = null; loginStep("login-create"); });
+  renderCoachPick();
 }
 
 function renderLoginPeople() {
@@ -203,10 +266,10 @@ function finishLogin(name, isNew, arm) {
   // request), then the welcome screen and the greeting
   Warmup.preload(arm);                    // the stretch recording for this arm, fetched now
   if (isNew && name !== "guest") {
-    playIntro(() => { show("screen-welcome"); speak(`Nice to meet you, ${name}.`); });
+    playIntro(() => { show("screen-welcome"); speak(`Nice to meet you, ${name}. ` + coachLine("session_start")); });
   } else {
     show("screen-welcome");
-    if (name !== "guest") speak(`Welcome back, ${name}.`);
+    if (name !== "guest") speak(`Welcome back, ${name}. ` + coachLine("session_start"));
   }
   notifyLogin(name, arm);
   syncReminder(name);
@@ -246,7 +309,11 @@ function createLogin() {
   const email = $("login-email").value.trim();
   const remindAt = $("login-remind-time").value, remindDays = $("login-remind-days").value;
   if (email || remindDays !== "off") store.setContact(name, { email, remindAt, remindDays });
-  loginAs(name, !store.hasPatient(name));   // existing name just logs in
+  if (store.hasPatient(name)) { loginAs(name, false); return; }   // existing name just logs in
+  // a new participant: the coach comes next, then the arm
+  pendingCreate = name;
+  selectCoach("lumi", false);
+  loginStep("login-coach");
 }
 
 // the progress snapshot the relay answers update-by-email from: pushed at
@@ -1844,8 +1911,9 @@ function onRoundEnd(round) {
   // rest pacing: every 4th round, or a compensation spike (fatigue proxy),
   // earns a gentle spoken + captioned break suggestion — never an auto-stop
   if (state.roundNumber % 4 === 0 || round.compEvents.length >= 4) {
-    result.note += " This is a lovely moment for a short rest.";
-    setTimeout(() => speak("This is a lovely moment for a short rest. Continue whenever you are ready."), 1200);
+    const rest = coachLine("fatigue_detected");       // the coach's own words for a break
+    result.note += " " + rest;
+    setTimeout(() => speak(rest + " Continue whenever you are ready."), 1200);
   }
 
   // Catch Together stages (the RGS conditions, graded): catch → carry → sort
@@ -2376,6 +2444,16 @@ probeMail().then(() => mailState(
               : `Mail: relay offline · buttons open your mail app (${mailTarget()})`,
   mailReady() ? "ok" : ""));
 
+// the coach relay (tools/coach_bridge.py): Claude writes the between-rep
+// lines when it is up; the phrasebook speaks otherwise, so this is a status
+// line and never a dependency
+probeCoach().then(() => {
+  const el = $("coachstate");
+  const info = coachRelayInfo();
+  el.textContent = coachRelayReady() ? `Coach lines: Claude via relay (${info.model})` : "Coach lines: local phrasebook";
+  el.className = coachRelayReady() ? "ok" : "";
+});
+
 async function doMail(kind, subject, body, label) {
   mailState(`Mail: sending ${label}…`);
   const r = await sendMail(kind, subject, body);
@@ -2483,8 +2561,13 @@ function syncComfortControls() {
   $("in-volvoice").value = s.volVoice;
   $("in-volmusic").value = s.volMusic;
   $("in-volfx").value = s.volFx;
+  $("in-coach").value = COACHES[s.coach] ? s.coach : "lumi";
   state.tracker?.setSqueezeEase?.(s.squeezeEase);
 }
+$("in-coach").addEventListener("change", e => {
+  saveSetting({ coach: e.target.value });
+  speakLine(COACHES[A11Y.coach].sample, 0.9, false);   // hear the change at once
+});
 $("in-captions").addEventListener("change", e => saveSetting({ captions: e.target.value === "on" }));
 $("in-dwell").addEventListener("change", e => saveSetting({ dwellMs: +e.target.value }));
 $("in-radius").addEventListener("change", e => saveSetting({ radiusScale: +e.target.value }));

@@ -59,6 +59,85 @@
       </div>
     </div>
 
+    <!-- step 2c: the coach (Oct 2026, by request, from the choose-your-coach
+         mockup): three styles, a sample line each, arrow keys and Enter -->
+    <div id="login-coach" class="hidden">
+      <h1 class="login-head">Choose your coach</h1>
+      <p class="login-sub">Pick the coach you like. You can change any time.</p>
+      <div class="coaches" role="radiogroup" aria-label="Coaches">
+        <button class="coach coach-rook" type="button" role="radio" aria-checked="false" data-coach="rook">
+          <span class="tick" aria-hidden="true"></span>
+          <svg viewBox="0 0 200 200" aria-hidden="true">
+            <circle cx="100" cy="100" r="96" fill="#fde7e2"/>
+            <path d="M58 150q-30 0-34-30" stroke="#2f3340" stroke-width="10" fill="none" stroke-linecap="round"/>
+            <ellipse cx="100" cy="140" rx="42" ry="36" fill="#2f3340"/><ellipse cx="108" cy="148" rx="20" ry="20" fill="#f4f1ea"/>
+            <path d="M60 78L62 34L88 62Z" fill="#2f3340"/><path d="M140 78L138 34L112 62Z" fill="#2f3340"/>
+            <circle cx="100" cy="88" r="40" fill="#2f3340"/>
+            <path d="M60 80a40 40 0 0 1 80 0z" fill="#d9483b"/><rect x="60" y="76" width="80" height="8" rx="3" fill="#d9483b"/><rect x="96" y="48" width="8" height="26" rx="3" fill="#fbf4e4"/>
+            <ellipse cx="100" cy="100" rx="22" ry="16" fill="#f4f1ea"/>
+            <path d="M80 92q6-7 12 0M108 92q6-7 12 0" stroke="#fbf4e4" stroke-width="4" fill="none" stroke-linecap="round"/>
+            <path d="M96 100h8l-4 5z" fill="#e58a8a"/><path d="M92 110q8 6 16 0" stroke="#2f3340" stroke-width="3" fill="none" stroke-linecap="round"/>
+            <path d="M70 122q30 14 60 0" stroke="#d9483b" stroke-width="9" fill="none" stroke-linecap="round"/><path d="M128 124l20 22" stroke="#d9483b" stroke-width="9" stroke-linecap="round"/>
+          </svg>
+          <span class="txt">
+            <span class="name">Rook</span>
+            <span class="style">Fun and upbeat</span>
+            <span class="line">"Smooth flying, co-pilot! Two more!"</span>
+          </span>
+          <span class="coach-hear" role="button" tabindex="-1">Hear it</span>
+        </button>
+        <button class="coach coach-lumi" type="button" role="radio" aria-checked="true" data-coach="lumi">
+          <span class="tick" aria-hidden="true"></span>
+          <svg viewBox="0 0 200 200" aria-hidden="true">
+            <circle cx="100" cy="100" r="96" fill="#fdf1d6"/>
+            <circle cx="100" cy="100" r="70" fill="#ffe7a8" opacity=".5"/>
+            <ellipse cx="66" cy="78" rx="30" ry="18" fill="#ffffff" opacity=".85" transform="rotate(-25 66 78)"/><ellipse cx="134" cy="78" rx="30" ry="18" fill="#ffffff" opacity=".85" transform="rotate(25 134 78)"/>
+            <ellipse cx="100" cy="128" rx="20" ry="26" fill="#f2b33d"/><ellipse cx="100" cy="132" rx="13" ry="17" fill="#fff3c4"/>
+            <circle cx="100" cy="82" r="26" fill="#6b5b8a"/>
+            <path d="M90 58q-8-20-20-22M110 58q8-20 20-22" stroke="#6b5b8a" stroke-width="4" fill="none" stroke-linecap="round"/><circle cx="70" cy="36" r="5" fill="#f2b33d"/><circle cx="130" cy="36" r="5" fill="#f2b33d"/>
+            <path d="M88 82q5-5 10 0M102 82q5-5 10 0" stroke="#fdf1d6" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+            <path d="M94 93q6 5 12 0" stroke="#fdf1d6" stroke-width="3" fill="none" stroke-linecap="round"/>
+            <circle cx="84" cy="91" r="3.5" fill="#f19bb5" opacity=".8"/><circle cx="116" cy="91" r="3.5" fill="#f19bb5" opacity=".8"/>
+            <path d="M150 104v14" stroke="#6b5b8a" stroke-width="3"/><rect x="138" y="118" width="24" height="30" rx="6" fill="#f7c65b" stroke="#8a6a2a" stroke-width="3"/><circle cx="150" cy="133" r="6" fill="#fff3c4"/>
+            <path d="M122 104q16-4 28 0" stroke="#6b5b8a" stroke-width="4" fill="none" stroke-linecap="round"/>
+          </svg>
+          <span class="txt">
+            <span class="name">Lumi</span>
+            <span class="style">Calm and gentle</span>
+            <span class="line">"Nice and slow. Take your time."</span>
+          </span>
+          <span class="coach-hear" role="button" tabindex="-1">Hear it</span>
+        </button>
+        <button class="coach coach-maple" type="button" role="radio" aria-checked="false" data-coach="maple">
+          <span class="tick" aria-hidden="true"></span>
+          <svg viewBox="0 0 200 200" aria-hidden="true">
+            <circle cx="100" cy="100" r="96" fill="#e6f1df"/>
+            <path d="M50 196q0-62 50-62t50 62z" fill="#3f7fbf"/><path d="M96 136h8v60h-8z" fill="#fbf4e4"/>
+            <circle cx="66" cy="54" r="16" fill="#9a6a44"/><circle cx="134" cy="54" r="16" fill="#9a6a44"/><circle cx="66" cy="54" r="8" fill="#c99a72"/><circle cx="134" cy="54" r="8" fill="#c99a72"/>
+            <circle cx="100" cy="92" r="44" fill="#9a6a44"/>
+            <ellipse cx="100" cy="108" rx="22" ry="17" fill="#d7b08a"/><ellipse cx="100" cy="101" rx="8" ry="6" fill="#3a2a22"/>
+            <path d="M91 113q9 8 18 0" stroke="#3a2a22" stroke-width="3" fill="none" stroke-linecap="round"/>
+            <circle cx="84" cy="86" r="5" fill="#3a2a22"/><circle cx="116" cy="86" r="5" fill="#3a2a22"/><circle cx="85.5" cy="84.5" r="1.6" fill="#fff"/><circle cx="117.5" cy="84.5" r="1.6" fill="#fff"/>
+            <path d="M77 76l13 1M123 76l-13 1" stroke="#3a2a22" stroke-width="3.5" stroke-linecap="round"/>
+            <path d="M100 136q-20 14-14 34" stroke="#d9483b" stroke-width="3" fill="none"/><rect x="74" y="168" width="22" height="12" rx="5" fill="#c9ced6" stroke="#6b7480" stroke-width="2"/>
+            <rect x="124" y="150" width="34" height="42" rx="4" fill="#fbf4e4" stroke="#6b7480" stroke-width="3"/><rect x="133" y="146" width="16" height="8" rx="2" fill="#6b7480"/>
+            <path d="M130 164h22M130 172h22M130 180h14" stroke="#9aa3ae" stroke-width="2.5"/>
+          </svg>
+          <span class="txt">
+            <span class="name">Maple</span>
+            <span class="style">Pushes you to do more</span>
+            <span class="line">"Up six from last week. Now beat it."</span>
+          </span>
+          <span class="coach-hear" role="button" tabindex="-1">Hear it</span>
+        </button>
+      </div>
+      <div class="login-actions">
+        <button class="btn big" id="btn-login-coach">Start with Lumi</button>
+        <button class="btn ghost-light" id="btn-login-back-coach">Back</button>
+      </div>
+      <p class="coach-hint">Use the arrow keys to move and Enter to choose.</p>
+    </div>
+
     <!-- step 3: the arm to train, chosen once -->
     <div id="login-arm" class="hidden">
       <h1 class="login-head">One more thing</h1>
@@ -375,6 +454,10 @@
   <label>Field targets
     <select id="in-fieldmode"><option value="comfort">Comfort (where they see)</option><option value="scan">Scanning training</option></select>
   </label>
+  <label>Coach
+    <select id="in-coach"><option value="rook">Rook (fun and upbeat)</option><option value="lumi">Lumi (calm and gentle)</option><option value="maple">Maple (pushes you to do more)</option></select>
+  </label>
+  <div id="coachstate">Coach lines: checking</div>
   <label>Voice volume <input type="range" id="in-volvoice" min="0" max="1" step="0.1"></label>
   <label>Music volume <input type="range" id="in-volmusic" min="0" max="1" step="0.1"></label>
   <label>Sounds volume <input type="range" id="in-volfx" min="0" max="1" step="0.1"></label>
