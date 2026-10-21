@@ -5,6 +5,7 @@
 import { Coach } from "./coach.js";
 import { audio } from "./audio.js";
 import { A11Y, speakLine } from "./a11y.js";
+import { coachLine, coachSpeak } from "./coachlines.js";
 
 export const TAU = Math.PI * 2;
 // Reach center: all envelope-based targets (and the assessment circle) are
@@ -17,7 +18,6 @@ export const CENTER = { x: 0, y: 0.25 };
 const CENTER_DEFAULT = { x: 0, y: 0.25 };
 const BINS = 16;
 const MARGIN = 80;                 // px: no target may spawn closer to an edge
-const pickOne = arr => arr[Math.floor(Math.random() * arr.length)];
 
 // Live mirror body: the tracked upper body + both hands drawn so the patient
 // SEES what the camera sees. Shared by the welcome screen and the assessment.
@@ -387,11 +387,10 @@ export class GameBase {
     this.fb.lastEvent = performance.now();
     this.fb.hitStreak++; this.fb.missStreak = 0;
     if ([5, 10, 15].includes(this.fb.hitStreak)) {
-      this.say(pickOne([
-        `${this.fb.hitStreak} in a row, wonderful!`,
-        `${this.fb.hitStreak} straight! Beautiful control.`,
-        "You're on a roll, keep that rhythm.",
-      ]));
+      // the chosen coach's words (coachlines.js): a between-rep line, so the
+      // relay may write it when it is up; say() keeps its own throttle
+      coachSpeak("rep_result", { streak: this.fb.hitStreak, hits: this.stats.hits },
+        { game: this.id, say: t => this.say(t) });
     }
   }
   miss(target, silent = false) {
@@ -448,7 +447,9 @@ export class GameBase {
     }
     if (this.fb.missStreak >= 3) {
       this.fb.missStreak = 0;
-      this.say(this.tips?.miss || "No rush. Watch it come, and start your reach early.");
+      // a game's own miss tip is kept (it names the game's goal); the generic
+      // one is the coach's
+      this.say(this.tips?.miss || coachLine("miss"));
       return;
     }
     // arc encouragement once per round when playing safe & shallow
@@ -456,7 +457,7 @@ export class GameBase {
       const mean = this.stats.reachFracs.reduce((s, v) => s + v, 0) / this.stats.reachFracs.length;
       if (mean < 0.58) {
         this.fb.saidReach = true;
-        this.say("Lovely! Now try stretching a little farther out.");
+        this.say(coachLine("reach_more"));
       }
     }
   }

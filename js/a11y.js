@@ -16,7 +16,49 @@ export const A11Y = {
   field: "none",
   fieldMode: "comfort",
   volVoice: 1, volMusic: 1, volFx: 1,
+  coach: "lumi",            // rook | lumi | maple (coachlines.js has the words, COACH_VOICE the sound)
 };
+
+// The three coaches (Oct 2026, by request, from the choose-your-coach mockup
+// and the coach feedback prompt): a coaching STYLE each, never a real person.
+// The words are in coachlines.js; this is how each one sounds through the
+// browser's own speech engine, with no server: a pitch and a pace about the
+// house rate, and a preferred voice when the machine offers one of them.
+export const COACHES = {
+  rook:  { name: "Rook",  title: "Rook the cat pilot",       style: "Fun and upbeat",
+           sample: "Smooth flying, co-pilot! Two more!" },
+  lumi:  { name: "Lumi",  title: "Lumi the lantern firefly", style: "Calm and gentle",
+           sample: "Nice and slow. Take your time." },
+  maple: { name: "Maple", title: "Coach Maple the bear",     style: "Pushes you to do more",
+           sample: "Up six from last week. Now beat it." },
+};
+export const COACH_VOICE = {
+  rook:  { pitch: 1.15, rate: 1.05, prefer: ["Google UK English Female", "Microsoft Libby", "Microsoft Zira", "Samantha", "Karen"] },
+  lumi:  { pitch: 1.0,  rate: 0.95, prefer: ["Microsoft Aria", "Google US English", "Microsoft Jenny", "Moira", "Samantha"] },
+  maple: { pitch: 0.85, rate: 1.0,  prefer: ["Microsoft Guy", "Google UK English Male", "Microsoft Ryan", "Daniel", "Microsoft David"] },
+};
+export function coachInfo(id = A11Y.coach) { return COACHES[id] || COACHES.lumi; }
+
+// A voice for the coach: the first preferred name the browser has, else an
+// English voice, else the default (null). getVoices() is empty until the
+// engine has listed them, so the answer is cached per list length and asked
+// again whenever that changes.
+let _voiceCache = { key: "", voice: null };
+export function coachVoice(id = A11Y.coach) {
+  let voices = [];
+  try { voices = speechSynthesis.getVoices() || []; } catch { return null; }
+  const key = id + ":" + voices.length;
+  if (_voiceCache.key === key) return _voiceCache.voice;
+  const v = COACH_VOICE[id] || COACH_VOICE.lumi;
+  let pick = null;
+  for (const name of v.prefer) {
+    pick = voices.find(x => x.name === name) || voices.find(x => x.name.startsWith(name));
+    if (pick) break;
+  }
+  if (!pick) pick = voices.find(x => /^en[-_]/i.test(x.lang) && x.default) || voices.find(x => /^en[-_]/i.test(x.lang)) || null;
+  _voiceCache = { key, voice: pick };
+  return pick;
+}
 
 export function applySettings(s) {
   Object.assign(A11Y, s);
@@ -32,7 +74,14 @@ export function applySettings(s) {
 // One speech path for the whole app: unhurried rate, patient-set volume,
 // and an optional on-screen caption (hearing loss is near-universal in the
 // target demographic — GAG "subtitles for all important speech").
-export function speakLine(text, rate = 0.9, caption = true, onend = null) {
+// `coach` (optional) speaks as that coach instead of the chosen one: the
+// chooser's "Hear it" buttons. The voice tags the coach prompt allows
+// ("[chuckle]", "[laugh]") are for a voice engine that renders them; the
+// browser's would read the brackets out, so they are stripped here, in the
+// one place every line passes through.
+export function speakLine(text, rate = 0.9, caption = true, onend = null, coach = null) {
+  text = String(text || "").replace(/\s*\[(chuckle|laugh|cough)\]\s*/gi, " ").replace(/\s{2,}/g, " ").trim();
+  const cv = COACH_VOICE[coach || A11Y.coach] || COACH_VOICE.lumi;
   // onend (optional) fires once when the line has been spoken, or after a
   // reading-paced fallback when speech is unavailable or silent, so a caller
   // chaining several lines (the intro) never stalls on a browser with no voice
@@ -43,7 +92,10 @@ export function speakLine(text, rate = 0.9, caption = true, onend = null) {
   try {
     speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
-    u.rate = rate;
+    u.rate = rate * cv.rate;
+    u.pitch = cv.pitch;
+    const voice = coachVoice(coach || A11Y.coach);
+    if (voice) u.voice = voice;
     u.volume = A11Y.volVoice;
     u.onend = finish;
     u.onerror = finish;
