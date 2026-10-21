@@ -32,11 +32,15 @@ export const COACHES = {
   maple: { name: "Maple", title: "Coach Maple the bear",     style: "Pushes you to do more",
            sample: "Up six from last week. Now beat it." },
 };
-export const COACH_VOICE = {
-  rook:  { pitch: 1.15, rate: 1.05, prefer: ["Google UK English Female", "Microsoft Libby", "Microsoft Zira", "Samantha", "Karen"] },
-  lumi:  { pitch: 1.0,  rate: 0.95, prefer: ["Microsoft Aria", "Google US English", "Microsoft Jenny", "Moira", "Samantha"] },
-  maple: { pitch: 0.85, rate: 1.0,  prefer: ["Microsoft Guy", "Google UK English Male", "Microsoft Ryan", "Daniel", "Microsoft David"] },
-};
+// ONE voice for everything (Oct 2026, by request: the first pick came out
+// deep, and the voice must not change between the intro, the coach and the
+// games). The coaches differ in their words only. A clear, warm, not-deep
+// voice is preferred wherever the browser has one; the pitch is never bent.
+export const VOICE_PREFER = ["Microsoft Aria Online (Natural)", "Microsoft Jenny Online (Natural)", "Microsoft Aria",
+  "Microsoft Jenny", "Microsoft Zira", "Google US English", "Samantha", "Microsoft Libby Online (Natural)",
+  "Google UK English Female", "Karen", "Moira"];
+const ONE_VOICE = { pitch: 1.0, rate: 1.0, prefer: VOICE_PREFER };
+export const COACH_VOICE = { rook: ONE_VOICE, lumi: ONE_VOICE, maple: ONE_VOICE };
 export function coachInfo(id = A11Y.coach) { return COACHES[id] || COACHES.lumi; }
 
 // A voice for the coach: the first preferred name the browser has, else an
@@ -44,6 +48,7 @@ export function coachInfo(id = A11Y.coach) { return COACHES[id] || COACHES.lumi;
 // engine has listed them, so the answer is cached per list length and asked
 // again whenever that changes.
 let _voiceCache = { key: "", voice: null };
+try { speechSynthesis.addEventListener("voiceschanged", () => { _voiceCache = { key: "", voice: null }; }); } catch {}
 export function coachVoice(id = A11Y.coach) {
   let voices = [];
   try { voices = speechSynthesis.getVoices() || []; } catch { return null; }
@@ -55,7 +60,8 @@ export function coachVoice(id = A11Y.coach) {
     pick = voices.find(x => x.name === name) || voices.find(x => x.name.startsWith(name));
     if (pick) break;
   }
-  if (!pick) pick = voices.find(x => /^en[-_]/i.test(x.lang) && x.default) || voices.find(x => /^en[-_]/i.test(x.lang)) || null;
+  if (!pick) pick = voices.find(x => /^en[-_]/i.test(x.lang) && /female|aria|jenny|zira|samantha|libby|karen|moira|sonia|natasha/i.test(x.name))
+    || voices.find(x => /^en[-_]/i.test(x.lang) && x.default) || voices.find(x => /^en[-_]/i.test(x.lang)) || null;
   _voiceCache = { key, voice: pick };
   return pick;
 }

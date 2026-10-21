@@ -1,4 +1,4 @@
-import { Tracker } from "./tracker.js?v=68";
+import { Tracker } from "./tracker.js?v=69";
 import { Assessment } from "./assessment.js";
 import { GAMES, STAR_RANKS, CANDLE_MAX, LUMEN_STAGES, WINDY_MAX } from "./games.js";
 import { Warmup } from "./warmup.js";
@@ -1147,7 +1147,7 @@ function planLeftMin() {
 // the between-rounds card's plan line and the label of "Next round"
 function renderPlanBetween() {
   const p = state.plan, line = $("rc-plan"), next = $("btn-next-round");
-  next.textContent = "Next round";
+  next.textContent = "Play again";
   if (!p) { line.classList.add("hidden"); line.textContent = ""; return; }
   line.classList.remove("hidden");
   const left = planLeftMin();
@@ -1473,13 +1473,9 @@ function startAssessment(opts = {}) {
     show("screen-select");
     return;
   }
-  // warm up first (Oct 2026, by request): the day's measurement opens with
-  // the short stretch, once a session, skippable with the ✕; a staff
-  // re-measure (override) goes straight in
-  if (!opts.override && !state.warmedUp) {
-    startWarmup(() => startAssessment(opts));
-    return;
-  }
+  // The warm-up no longer opens the measurement (Oct 2026, by request: "no
+  // need warm up before ROM"); it stays optional from the welcome screen's
+  // "Warm up first" button.
   show("stage");
   audio.startBgm("assessment");
   const a = new Assessment(state.tracker, $("canvas"), arm, state.coachSens, {
