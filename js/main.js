@@ -2632,10 +2632,10 @@ function syncComfortControls() {
   $("in-volvoice").value = s.volVoice;
   $("in-volmusic").value = s.volMusic;
   $("in-volfx").value = s.volFx;
-  $("in-coach").value = COACHES[s.coach] ? s.coach : "lumi";
+  $("in-coach-pick").value = COACHES[s.coach] ? s.coach : "lumi";
   state.tracker?.setSqueezeEase?.(s.squeezeEase);
 }
-$("in-coach").addEventListener("change", e => {
+$("in-coach-pick").addEventListener("change", e => {
   saveSetting({ coach: e.target.value });
   speakLine(COACHES[A11Y.coach].sample, 0.9, false);   // hear the change at once
 });
