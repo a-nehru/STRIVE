@@ -46,6 +46,7 @@ const state = {
   current: null,
   roundNumber: 0,
   sessionStars: 0,
+  starCarrySec: 0,          // play seconds not yet turned into a star (one star a minute)
   screen: "screen-login",
   plan: null,          // the session plan being played: { blocks, idx, startedAt } (null when playing freely)
 };
@@ -1819,6 +1820,17 @@ function onRoundEnd(round) {
   audio.stopBgm();
   round.round = state.roundNumber;
   store.logPlaytime(state.patient, (round.seconds || 0) * 1000, "round");
+  // Stars are minutes of play (Oct 2026, by request): one star for every
+  // whole minute, with the odd seconds carried into the next round so two
+  // 45-second rounds give one star between them and no time is ever lost.
+  // The game's own score stays on the record as `gamePoints` for the therapist.
+  round.gamePoints = round.stars || 0;
+  if (A11Y.practice) round.stars = 0;          // nothing counts in practice
+  else {
+    const sec = (round.seconds || 0) + (state.starCarrySec || 0);
+    round.stars = Math.floor(sec / 60);
+    state.starCarrySec = sec - round.stars * 60;
+  }
   // Scratch Cards: bank the level the round ended on
   if (round.game === "lens" && round.scratchLevel) {
     store.setLevel(state.patient, "scratchLevel", round.scratchLevel, 6);
@@ -1950,107 +1962,166 @@ function onRoundEnd(round) {
 }
 
 /* ================= P5 between rounds ================= */
+// The round card (Oct 2026, by request, after the user's mockup), the same
+// for every game: the stars pill (+n this round, lifetime saved), one big
+// headline, one plain sentence of fact, a row of glyphs for the count the
+// sentence names, the three faces, Play again. The number is the sentence;
+// nothing else is scored on screen.
+const RC_GLYPHS = {
+  star: `<svg viewBox="0 0 24 24" width="40" height="40"><polygon points="12,2 14.9,8.6 22,9.3 16.5,14 18.3,21 12,17.3 5.7,21 7.5,14 2,9.3 9.1,8.6" fill="#e8a86a"/></svg>`,
+  lantern: `<svg viewBox="0 0 30 44" width="42" height="60"><rect x="3" y="3" width="24" height="38" rx="9" fill="#e8a86a"/><ellipse cx="15" cy="22" rx="5" ry="7" fill="#fff3c9"/></svg>`,
+  ball: `<svg viewBox="0 0 40 40" width="40" height="40"><circle cx="20" cy="20" r="17" fill="#e8a86a"/><circle cx="14" cy="14" r="5" fill="#fff3c9" opacity=".8"/></svg>`,
+  card: `<svg viewBox="0 0 32 44" width="36" height="50"><rect x="2" y="2" width="28" height="40" rx="5" fill="#e8a86a"/><rect x="9" y="12" width="14" height="20" rx="3" fill="#fff3c9"/></svg>`,
+  jet: `<svg viewBox="0 0 56 32" width="56" height="32"><path d="M4 18 L30 8 L52 14 L50 20 L30 24 L12 24 Z" fill="#e8a86a"/><path d="M26 10 L34 2 L40 4 L34 11 Z" fill="#c77f4a"/><circle cx="40" cy="15" r="3" fill="#fff3c9"/></svg>`,
+  crate: `<svg viewBox="0 0 40 40" width="40" height="40"><rect x="3" y="3" width="34" height="34" rx="5" fill="#e8a86a"/><path d="M3 20 H37 M20 3 V37" stroke="#fff3c9" stroke-width="3"/></svg>`,
+  cloud: `<svg viewBox="0 0 48 32" width="48" height="32"><path d="M12 28 a8 8 0 0 1 -1 -16 a10 10 0 0 1 19 -4 a8 8 0 0 1 8 12 a7 7 0 0 1 -2 8 Z" fill="#e8a86a"/></svg>`,
+  dot: `<svg viewBox="0 0 24 24" width="28" height="28"><circle cx="12" cy="12" r="9" fill="#e8a86a"/></svg>`,
+};
+const RC_MAX_GLYPHS = 12;
+const plural = (n, one, many = one + "s") => `${n} ${n === 1 ? one : many}`;
+
+// headline, sentence, glyph and count for one round record
+function roundSummary(round) {
+  const r = round, g = r.game;
+  const gname = GAMES.find(x => x.id === g)?.name ?? "";
+  const minutes = Math.max(1, Math.round((r.seconds || 0) / 60));
+  const played = `You played ${gname || "the game"} for ${plural(minutes, "minute")}.`;
+  let head = "Good work!", text = played, glyph = "star", count = 0;
+  switch (g) {
+    case "candles": {
+      const lit = r.lanternsLit || 0, c = r.candles || 0;
+      head = lit > 0 && lit >= c ? "Every lantern lit!" : lit > 0 ? "Lanterns lit!" : "A gentle start.";
+      text = c ? `You lit ${plural(lit, "lantern")} from ${plural(c, "candle")}.` : `You lit ${plural(lit, "lantern")}.`;
+      if (r.endReason === "target") text += " Pip reached the flag!";
+      glyph = "lantern"; count = lit; break;
+    }
+    case "pong": {
+      const duo = r.pongMode === "duo", them = duo ? (r.p2Name || "player two") : "the star";
+      head = r.matchWon === true ? "You won the game!" : r.matchWon === false ? "A good game!"
+        : r.pointsPlayed > 0 ? "A draw!" : "Great rally!";
+      const rally = r.bestRally ?? r.hits ?? 0;
+      text = r.points != null && (r.points > 0 || r.aiPoints > 0)
+        ? `You scored ${r.points} to ${r.aiPoints} against ${them} and your longest rally was ${rally}.`
+        : `Your longest rally was ${plural(rally, "return")}.`;
+      if (r.smashEnded) text += " You finished it with the smash.";
+      glyph = "ball"; count = rally; break;
+    }
+    case "pairs": {
+      const n = r.pairsFound || 0;
+      head = r.boardsCleared ? "All pairs found!" : n > 0 ? "Pairs found!" : "A good look around.";
+      text = `You found ${plural(n, "pair")} in ${plural(r.turns || 0, "turn")}${r.boardsCleared ? ` and cleared ${plural(r.boardsCleared, "board")}` : ""}.`;
+      glyph = "card"; count = n; break;
+    }
+    case "windy": {
+      const n = r.gapsPassed || 0;
+      head = r.completed ? "Nice flying!" : n > 0 ? "A windy ride!" : "A bumpy start.";
+      text = `You flew through ${plural(n, "gap")}${r.feathers ? ` and caught ${plural(r.feathers, "feather")}` : ""}.`;
+      glyph = "jet"; count = n; break;
+    }
+    case "lens": {
+      const pc = Math.round((r.coverage ?? 0) * 100);
+      head = pc >= 99 ? "Card cleared!" : pc >= 50 ? "Nice scratching!" : "A good start.";
+      text = `You cleared ${pc}% of the card${r.panes > 1 ? ` across ${plural(r.panes, "pane")}` : ""}.`;
+      glyph = "card"; count = Math.round(pc / 10); break;
+    }
+    case "dots": {
+      const n = r.hits || 0;
+      head = r.pictures ? "Picture finished!" : n > 0 ? "Dots connected!" : "A good start.";
+      text = `You joined ${plural(n, "dot")}${r.pictures ? ` and finished ${plural(r.pictures, "picture")}` : ""}.`;
+      glyph = "dot"; count = n; break;
+    }
+    case "sling": {
+      const n = r.hits || 0;
+      head = n > 0 ? "Clouds cleared!" : "A good stretch.";
+      text = `You knocked down ${plural(n, "cloud")}${r.bestPullFrac ? `, pulling to ${Math.round(r.bestPullFrac * 100)}% of your reach` : ""}.`;
+      glyph = "cloud"; count = n; break;
+    }
+    case "boxes": {
+      const n = r.boxes || 0;
+      head = n > 0 ? "Crates delivered!" : "A good try.";
+      text = `You carried ${plural(n, "crate")} across.`;
+      glyph = "crate"; count = n; break;
+    }
+    case "rainbow": {
+      const n = r.cloudsPushed || 0;
+      head = n > 0 ? "Rainbow saved!" : "A good try.";
+      text = `You whooshed ${plural(n, "cloud")} off the rainbow and saved ${plural(r.friendsSaved || 0, "friend")}.`;
+      glyph = "cloud"; count = n; break;
+    }
+    case "rgs": {
+      head = r.hits > 0 ? "Caught together!" : "A good try.";
+      text = `You caught ${plural(r.hits || 0, "light")} with both hands.`;
+      glyph = "star"; count = r.hits || 0; break;
+    }
+    case "rhythm": {
+      head = (r.notesHitPct || 0) >= 70 ? "In the groove!" : "A good tune.";
+      text = `You played ${r.notesHitPct || 0}% of the notes, best streak ${plural(r.bestCombo || 0, "note")}.`;
+      glyph = "star"; count = r.bestCombo || 0; break;
+    }
+    default: {
+      const total = (r.hits || 0) + (r.misses || 0);
+      if (total > 0) {
+        head = r.hitRate >= 0.7 ? "Well caught!" : r.hits > 0 ? "Good work!" : "A good try.";
+        text = `You caught ${r.hits} of ${total} in ${gname || "the game"}.`;
+        glyph = "star"; count = r.hits || 0;
+      }
+    }
+  }
+  return { head, text, glyph, count };
+}
+
 function renderBetween(round, note) {
-  const starN = round.hitRate >= 0.65 ? 3 : round.hitRate >= 0.4 ? 2 : 1;
-  $("rc-stars").innerHTML = [0, 1, 2].map(i => {
-    const size = i === 1 ? 64 : 52;
-    const fill = i < starN ? "#e8a86a" : "rgba(27,27,58,.16)";
-    return `<svg viewBox="0 0 24 24" width="${size}" height="${size}"><polygon points="12,2 14.9,8.6 22,9.3 16.5,14 18.3,21 12,17.3 5.7,21 7.5,14 2,9.3 9.1,8.6" fill="${fill}"/></svg>`;
-  }).join("");
+  // the pill: stars this round (minutes of play) and the lifetime total,
+  // which only ever grows (starsLifetime; `stars` is the spendable balance)
+  const p = store.getPatient(state.patient);
+  const saved = Math.max(p?.starsLifetime || 0, p?.stars || 0);
+  const n = round.stars || 0;
+  $("rc-stars").innerHTML = `<svg viewBox="0 0 24 24" width="30" height="30"><polygon points="12,2 14.9,8.6 22,9.3 16.5,14 18.3,21 12,17.3 5.7,21 7.5,14 2,9.3 9.1,8.6" fill="#e8a86a"/></svg>`
+    + `<span>+${plural(n, "star")}</span><span class="saved">${plural(saved, "star")} saved</span>`;
 
-  const pct = Math.round(round.hitRate * 100);
-  const dash = 314, off = dash * (1 - round.hitRate);
-  const justRight = pct >= 50 && pct <= 78;
-  $("rc-ring").innerHTML = `
-    <circle cx="60" cy="60" r="50" fill="none" stroke="rgba(27,27,58,.1)" stroke-width="12"/>
-    <circle cx="60" cy="60" r="50" fill="none" stroke="${justRight ? "#e8a86a" : "#c8b39a"}" stroke-width="12"
-      stroke-linecap="round" stroke-dasharray="${dash}" stroke-dashoffset="${off}" transform="rotate(-90 60 60)"/>
-    <text x="60" y="58" text-anchor="middle" font-family="Nunito" font-weight="800" font-size="30" fill="#c77f4a">${pct}%</text>
-    <text x="60" y="78" text-anchor="middle" font-family="Nunito" font-weight="700" font-size="12" fill="rgba(27,27,58,.5)">${justRight ? "just right" : pct > 78 ? "so strong!" : "warming up"}</text>`;
+  const sum = roundSummary(round);
+  $("rc-head").textContent = sum.head;
+  $("rc-text").textContent = sum.text;
+  const shown = Math.min(sum.count, RC_MAX_GLYPHS);
+  $("rc-glyphs").innerHTML = (RC_GLYPHS[sum.glyph] || RC_GLYPHS.star).repeat(shown)
+    + (sum.count > shown ? `<span class="more">+${sum.count - shown}</span>` : "");
+  $("rc-how").textContent = "";
 
-  const gname = GAMES.find(g => g.id === round.game)?.name ?? "";
-  const lines = [];
-  const balls = round.hits + round.misses;
-  // the board under the card: the Lantern's Guild, or the two-player record
+  // the board under the sentence: the Lantern's Guild, or the two-player record
   $("rc-board").innerHTML = round.game === "candles" ? lanternBoardHTML(store.getProgress(state.patient, "candlesLumen") || {})
     : round.game === "pong" && round.pongMode === "duo" ? (() => {
         const r = store.getRivalry(state.patient, round.p2Name || "guest");
-        return `<div class="board"><p>Head to head: <b>${r.wins}</b> – <b>${r.losses}</b> ${round.p2Name || "player two"}${r.draws ? ` · ${r.draws} drawn` : ""} · best rally ever <b>${r.bestRally}</b></p></div>`;
+        return `<div class="board"><p>Head to head: <b>${r.wins}</b> to <b>${r.losses}</b> ${round.p2Name || "player two"}${r.draws ? ` · ${r.draws} drawn` : ""} · best rally ever <b>${r.bestRally}</b></p></div>`;
       })()
     : "";
-  if (round.game === "pong") {
-    // three short lines at most: the score, the rally and style, the titles
-    const duo = round.pongMode === "duo", p2 = duo ? (round.p2Name || "player two") : "star";
-    if (round.points != null && (round.points > 0 || round.aiPoints > 0))
-      lines.push(`<b>You ${round.points} : ${round.aiPoints} ${p2}</b>${round.matchWon === true ? " 🌟 You won!" : round.matchWon === null ? " · a draw" : ""}`
-        + (round.smashEnded ? " · finished with the smash 🔥" : ""));
-    lines.push(`Longest rally: <b>${round.bestRally ?? round.hits}</b> · style <b>${round.style ?? 0}</b>${duo ? ` : <b>${round.styleThem ?? 0}</b>` : ""}`
-      + (round.orbs ? ` · ${round.orbs} orb${round.orbs === 1 ? "" : "s"}` : ""));
-    const tl = [];
-    if (round.titles?.us?.length) tl.push(`🏅 You: ${round.titles.us.join(", ")}`);
-    if (duo && round.titles?.them?.length) tl.push(`🏅 ${p2}: ${round.titles.them.join(", ")}`);
-    if (round.challenge) tl.push(round.challengeWon ? `challenge done ✓` : `challenge: ${round.challenge.toLowerCase()}`);
-    if (tl.length) lines.push(tl.join(" · "));
-  }
-  else if (round.game === "boxes") lines.push(`You carried <b>${round.boxes} crates</b> across, a fine ferry load!`);
-  else if (round.game === "rainbow") {
-    lines.push(`You whooshed <b>${round.cloudsPushed} clouds</b> off the rainbow and saved <b>${round.friendsSaved} friend${round.friendsSaved === 1 ? "" : "s"}</b>!`);
-    if (round.jackpots) lines.push(`Jackpots reached: <b>${round.jackpots}</b> ✦ Strivealon's sky is getting brighter.`);
-  }
-  else if (round.game === "rhythm") lines.push(`You played <b>${round.notesHitPct}%</b> of "${round.song}", best streak <b>${round.bestCombo} notes</b>.`);
-  else if (round.game === "compass") lines.push(`You lit <b>${round.hits} compass points</b> and always found your way home.`);
-  else if (round.game === "pairs") lines.push(`You found <b>${round.pairsFound} pair${round.pairsFound === 1 ? "" : "s"}</b> in <b>${round.turns} turns</b>${round.boardsCleared ? `, and cleared <b>${round.boardsCleared} board${round.boardsCleared === 1 ? "" : "s"}</b>` : ""}.`);
-  else if (round.game === "echo") lines.push(`You found <b>${round.hits} echoes</b>${round.meanEchoErrSW != null ? `, on average <b>${round.meanEchoErrSW}</b> shoulder-widths from the star` : ""}.`);
-  else if (round.game === "candles") {
-    lines.push(`You lit <b>${round.lanternsLit} lantern${round.lanternsLit === 1 ? "" : "s"}</b>${round.candles ? ` from <b>${round.candles} candle${round.candles === 1 ? "" : "s"}</b>` : ""}${round.endReason === "target" ? ", and Pip reached the flag!" : "."}`);
-    if (round.verdict === "up" && round.candlesLevel > round.levelPlayed) lines.push(`Level <b>${round.candlesLevel}</b> next time, a little more to reach for.`);
-    else if (round.verdict === "down") lines.push(`Back to level <b>${round.candlesLevel}</b> for a bit of practice.`);
-    else if (round.holdFrac != null) lines.push(`The candle stayed on its stand <b>${Math.round(round.holdFrac * 100)}%</b> of the time.`);
-  }
-  else if (round.game === "lens") lines.push(`You cleared <b>${Math.round((round.coverage ?? 0) * 100)}%</b> of the fog${round.panes > 1 ? ` across <b>${round.panes} panes</b>` : ""}.`);
-  else if (round.game === "crane") lines.push(`You delivered <b>${round.delivered} crates</b>, holding the crane up <b>${Math.round((round.holdFrac ?? 0) * 100)}%</b> of the time.`);
-  else if (round.game === "feather") lines.push(`<b>${round.cycles} gentle landings</b>, smooth for <b>${Math.round((round.descentSmooth ?? 0) * 100)}%</b> of the way down.`);
-  else if (round.game === "buoys") lines.push(`<b>${round.hits} taps</b> between the lights, steady as a metronome.`);
-  else if (round.game === "oars") lines.push(`<b>${round.crossings} crossings</b>, rowing <b>${Math.round((round.symmetry ?? 0) * 100)}%</b> in step.`);
-  else if (round.game === "ferry") lines.push(`You steered through <b>${round.gates} gates</b>${round.bumps ? `, with ${round.bumps} soft bumps` : ", without a single bump"}.`);
-  else if (round.game === "stars") lines.push(`You swept <b>${round.swept} falling stars</b>${round.midlineCrossed ? `, <b>${round.midlineCrossed}</b> from across the midline` : ""}.`);
-  else if (round.game === "flare") lines.push(`<b>${round.lit} lanterns lit</b> from ${round.launches} launches.`);
-  else if (round.game === "shelf") lines.push(`<b>${round.jarsPlaced} jars</b> up on the shelves tonight.`);
-  else if (round.game === "windows") lines.push(`You lit <b>${round.windowsLit} windows</b> before dawn.`);
-  else if (round.game === "sorting") lines.push(`<b>${round.correctCatches} right lanterns</b> caught${round.wrongCatches ? `, ${round.wrongCatches} slipped in` : ", not one wrong"}.`);
-  else if (round.game === "teapot") lines.push(`<b>${round.turns} palm turns</b>, honey and tea in balance.`);
-  else if (round.game === "glide") lines.push(`The firefly slipped through <b>${round.gatesThrough} reed gates</b>.`);
-  else if (round.game === "bloom") lines.push(`You gathered <b>${round.bloomsGathered} night blooms</b>, hand shaped just right.`);
-  else if (round.game === "pinch") lines.push(`<b>${round.pinched} fireflies</b> caught with two fingertips.`);
-  else lines.push(`You caught <b>${round.hits} of ${round.hits + round.misses}</b> in ${gname}.`);
-  lines.push(`⭐ <b>${round.stars}</b> this round · <b>${state.sessionStars}</b> today`);
-  $("rc-text").innerHTML = lines.join("<br>");
-  // one short sentence on what the ring is; the rest of the explanation
-  // came off in Sep 2026 (by request: too much text after a round)
-  $("rc-how").textContent = round.game === "pong"
-    ? `The ring is balls returned: ${round.hits} of ${balls}.`
-    : round.game === "candles" ? `The ring is lanterns lit: ${round.hits} of ${balls} candles.`
-    : `The ring is catches: ${round.hits} of ${balls}.`;
 
   const rest = state.roundNumber % 4 === 0
     ? " You've earned a longer break. Have some water."
     : "";
-  $("rc-note").textContent = note + rest;
+  $("rc-note").textContent = (note || "") + rest;
   renderPlanBetween();
 
   for (const f of document.querySelectorAll(".face")) f.classList.remove("selected");
 }
 
+const REST_LINE = "This is a lovely moment for a short rest. Continue whenever you are ready.";
 document.querySelectorAll(".face").forEach(f => {
   f.dataset.dwell = "1";
   f.addEventListener("click", () => {
     document.querySelectorAll(".face").forEach(x => x.classList.remove("selected"));
     f.classList.add("selected");
     store.logFeel(state.patient, f.dataset.feel);
-    if (f.dataset.feel === "hurts")
+    if (f.dataset.feel === "hurts") {
       $("rc-note").textContent = "Thank you for telling us. Let's stop here for today and rest that arm.";
+      speak("Thank you for telling us. " + REST_LINE);
+      // rest is the gentle default now: Finish for today takes the focus
+      document.querySelectorAll("#screen-between .kbd-focus").forEach(el => el.classList.remove("kbd-focus"));
+      focusHint($("btn-finish"));
+    }
     if (f.dataset.feel === "tired")
       $("rc-note").textContent = "A little tired is okay. One gentler round, or finish for today?";
+    if (f.dataset.feel === "fine")
+      $("rc-note").textContent = "Lovely. Play again whenever you are ready.";
   });
 });
 
@@ -2668,7 +2739,7 @@ loadSettings(state.patient);
 const previewOf = new URLSearchParams(location.search).get("preview");
 if (previewOf === "pongscore") {
   state.patient = "guest"; state.side = "right"; state.roundNumber = 2; state.sessionStars = 420;
-  const sample = { game: "pong", hits: 19, misses: 3, hitRate: 19 / 22, stars: 200, bestRally: 9,
+  const sample = { game: "pong", hits: 19, misses: 3, hitRate: 19 / 22, stars: 2, gamePoints: 200, seconds: 96, bestRally: 9,
     points: 3, aiPoints: 1, matchWon: true, trickPoints: 1, trickShots: { curve: 1 }, compEvents: [] };
   renderBetween(sample, "You won, so the ball comes a little quicker next game, and the star grows into a Bright star.");
   show("screen-between");

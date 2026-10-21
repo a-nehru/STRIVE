@@ -213,30 +213,29 @@
 <!-- P5 between rounds -->
 <div id="screen-between" class="screen hidden">
   <div class="round-card">
-    <div class="rc-stars" id="rc-stars"></div>
-    <div class="rc-main">
-      <svg class="rc-ring" id="rc-ring" viewBox="0 0 120 120" width="132" height="132"></svg>
-      <div class="rc-text" id="rc-text"></div>
-    </div>
+    <div class="rc-pill" id="rc-stars"></div>
+    <div class="rc-head" id="rc-head"></div>
+    <div class="rc-text" id="rc-text"></div>
+    <div class="rc-glyphs" id="rc-glyphs"></div>
     <div class="rc-how" id="rc-how"></div>
-    <div class="rc-ask">How does your arm feel?</div>
+    <div class="rc-board" id="rc-board"></div>
+    <div class="rc-ask">How does your arm feel? <span class="rc-opt">(optional)</span></div>
     <div class="faces">
       <button class="face f-fine" data-feel="fine"><span class="disc">
-        <svg viewBox="0 0 48 48" width="52" height="52"><g fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><circle cx="18" cy="20" r="2.5" fill="currentColor" stroke="none"/><circle cx="30" cy="20" r="2.5" fill="currentColor" stroke="none"/><path d="M16 30 Q24 37 32 30"/></g></svg>
+        <svg viewBox="0 0 48 48" width="64" height="64"><g fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><circle cx="18" cy="20" r="2.5" fill="currentColor" stroke="none"/><circle cx="30" cy="20" r="2.5" fill="currentColor" stroke="none"/><path d="M16 30 Q24 37 32 30"/></g></svg>
       </span><span class="lbl">Fine</span></button>
       <button class="face f-tired" data-feel="tired"><span class="disc">
-        <svg viewBox="0 0 48 48" width="52" height="52"><g fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><circle cx="18" cy="20" r="2.5" fill="currentColor" stroke="none"/><circle cx="30" cy="20" r="2.5" fill="currentColor" stroke="none"/><line x1="16" y1="31" x2="32" y2="31"/></g></svg>
+        <svg viewBox="0 0 48 48" width="64" height="64"><g fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><circle cx="18" cy="20" r="2.5" fill="currentColor" stroke="none"/><circle cx="30" cy="20" r="2.5" fill="currentColor" stroke="none"/><line x1="16" y1="31" x2="32" y2="31"/></g></svg>
       </span><span class="lbl">Tired</span></button>
       <button class="face f-hurts" data-feel="hurts"><span class="disc">
-        <svg viewBox="0 0 48 48" width="52" height="52"><g fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><circle cx="18" cy="20" r="2.5" fill="currentColor" stroke="none"/><circle cx="30" cy="20" r="2.5" fill="currentColor" stroke="none"/><path d="M16 33 Q24 26 32 33"/></g></svg>
+        <svg viewBox="0 0 48 48" width="64" height="64"><g fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><circle cx="18" cy="20" r="2.5" fill="currentColor" stroke="none"/><circle cx="30" cy="20" r="2.5" fill="currentColor" stroke="none"/><path d="M16 33 Q24 26 32 33"/></g></svg>
       </span><span class="lbl">Hurts</span></button>
     </div>
     <div class="rc-note" id="rc-note"></div>
-    <div class="rc-board" id="rc-board"></div>
     <div class="rc-plan hidden" id="rc-plan"></div>
     <div class="rc-actions">
-      <button class="btn" id="btn-next-round">Next round</button>
-      <button class="btn ghost" id="btn-finish">Finish for today</button>
+      <button class="btn big" id="btn-next-round">Play again</button>
+      <button class="btn ghost big" id="btn-finish">Finish for today</button>
     </div>
   </div>
 </div>
