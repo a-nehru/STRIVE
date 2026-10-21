@@ -113,6 +113,7 @@
     <canvas id="village-canvas"></canvas>
     <div class="village-line" id="village-line"></div>
   </div>
+  <div class="plan-strip hidden" id="plan-strip"></div>
   <div class="cards" id="cards"></div>
   <div class="menu-actions">
     <button class="btn ghost-light" id="btn-select-help">Ask for help</button>
@@ -156,10 +157,27 @@
     </div>
     <div class="rc-note" id="rc-note"></div>
     <div class="rc-board" id="rc-board"></div>
+    <div class="rc-plan hidden" id="rc-plan"></div>
     <div class="rc-actions">
       <button class="btn" id="btn-next-round">Next round</button>
       <button class="btn ghost" id="btn-finish">Finish for today</button>
     </div>
+  </div>
+</div>
+
+<!-- The session plan (Oct 2026, by request): the therapist's 15-minute
+     blocks, a game each, after the first assessment and from the drawer -->
+<div id="screen-schedule" class="screen hidden">
+  <h1>Today's plan</h1>
+  <div class="select-sub">Each block is 15 minutes. Pick a game for each.</div>
+  <div class="plan-blocks" id="plan-blocks"></div>
+  <div class="plan-foot">
+    <button class="btn ghost-light" id="btn-plan-add" data-dwell="1">+ Add 15 minutes</button>
+    <div class="plan-total" id="plan-total"></div>
+  </div>
+  <div class="plan-actions">
+    <button class="btn" id="btn-plan-save" data-dwell="1">Save plan</button>
+    <button class="btn ghost-light" id="btn-plan-skip" data-dwell="1">Skip for now</button>
   </div>
 </div>
 
@@ -239,6 +257,7 @@
     <div class="prof-actions">
       <button class="btn" id="btn-prof-session">Start session</button>
       <button class="btn ghost" id="btn-prof-assess">Re-measure this arm</button>
+      <button class="btn ghost" id="btn-prof-plan">Session plan</button>
       <button class="btn ghost" id="btn-prof-export">Export data</button>
     </div>
   </div>
@@ -374,7 +393,7 @@
   <div id="mailstate">Mail: checking</div>
   <div class="row"><button class="btn ghost-light" id="btn-mail-test">Send test email</button><button class="btn ghost-light" id="btn-mail-help">Report a problem</button></div>
   <div class="row"><button class="btn ghost-light" id="btn-mail-progress">Email progress</button></div>
-  <div class="row"><button class="btn" id="btn-drawer-assess">Re-measure this arm</button></div>
+  <div class="row"><button class="btn" id="btn-drawer-assess">Re-measure this arm</button><button class="btn ghost-light" id="btn-drawer-plan">Session plan</button></div>
   <div class="row"><button class="btn ghost-light" id="btn-drawer-profile">Profile</button></div>
   <div class="row"><button class="btn ghost-light" id="btn-drawer-collections">Collections</button><button class="btn ghost-light" id="btn-drawer-close">Close</button></div>
 </div>

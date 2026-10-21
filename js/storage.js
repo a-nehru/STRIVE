@@ -217,6 +217,16 @@ export const store = {
 
   // A free-form per-patient progress bag for a game, kept beside the ladder
   // levels in `progress` (the Lantern's per-level bests and its Star Atlas).
+  // The session plan (Oct 2026, by request): 15-minute blocks with a game
+  // each, chosen by the therapist after the first assessment and editable
+  // any time. `blocks` is [{game, axis?, minutes}]; null when there is none.
+  getSchedule(name) { return patient(load(), name).schedule || null; },
+  setSchedule(name, blocks) {
+    const db = load(); const p = patient(db, name);
+    p.schedule = blocks?.length ? { blocks, saved: new Date().toISOString() } : null;
+    save(db);
+  },
+
   getProgress(name, key) { return patient(load(), name).progress?.[key] ?? null; },
   setProgress(name, key, value) {
     const db = load(); const p = patient(db, name);
