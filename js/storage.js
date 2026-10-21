@@ -149,6 +149,10 @@ export const store = {
     const db = load(); const p = patient(db, name);
     p.feel.push({ at: new Date().toISOString(), feel });
     p.feel = p.feel.slice(-200);
+    // and on the round it answers for, so the therapist's log and the
+    // export show how the arm felt after each round (Oct 2026)
+    const last = p.sessions[p.sessions.length - 1];
+    if (last) last.feel = feel;
     save(db);
   },
 
