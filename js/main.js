@@ -1,4 +1,4 @@
-import { Tracker } from "./tracker.js?v=66";
+import { Tracker } from "./tracker.js?v=67";
 import { Assessment } from "./assessment.js";
 import { GAMES, STAR_RANKS, CANDLE_MAX, LUMEN_STAGES } from "./games.js";
 import { Warmup } from "./warmup.js";
