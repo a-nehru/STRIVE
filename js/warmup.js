@@ -1,38 +1,66 @@
 // The opening stretch (Oct 2026, by request): a brief, optional warm-up
-// led by the Stretch Break video (assets/music/Stretch_Break.mp4, about two
-// minutes: five seated moves, overhead, cross-body both sides, wrist and
-// prayer, with its own titles, countdowns, captions and voice). Nothing is
-// measured and nothing is stored but the play time: it is there to loosen
-// up and to be enjoyed. It opens the day's assessment (main.js
-// startAssessment, once a session, the ✕ skips it) and can be taken from
-// the welcome screen at any time. The video is the star, large on the
-// left, and the patient sees themselves beside it with their skeleton so
-// they can match the picture; a note and a little shower of light mark
-// each new move, and a cheer ends it. Captions are the video's own.
+// led by the Warm-Up Time recording (one per arm since Oct 2026, by
+// request: assets/music/Warmup_Stretches_LEFT_arm.mp4 and _RIGHT_arm.mp4,
+// 1:45 each: five seated stretches, shoulder blade squeeze, cradle and
+// lift, scoop and elbows out, elbow stretch and wrist waves, with its own
+// titles, hold counts, captions and voice). Nothing is measured and nothing
+// is stored but the play time: it is there to loosen up and to be enjoyed.
+// It opens the day's assessment (main.js startAssessment, once a session,
+// the ✕ skips it) and can be taken from the welcome screen at any time.
+// The video is the star, large on the left, and the patient sees themselves
+// beside it with their skeleton so they can match the picture; a note and
+// a little shower of light mark each new stretch, and a cheer ends it.
+// Captions are the video's own.
 import { drawBody, TAU } from "./engine.js";
 import { audio } from "./audio.js";
 import { A11Y, speakLine } from "./a11y.js";
 
-export const WARMUP_SRC = "assets/music/Stretch_Break.mp4";
-// where each move begins, seconds into the video: a chime and a shower of
-// light there, and the name spoken only if the video has to play muted
+export const WARMUP_SRCS = {
+  left: "assets/music/Warmup_Stretches_LEFT_arm.mp4",
+  right: "assets/music/Warmup_Stretches_RIGHT_arm.mp4",
+};
+export const warmupSrc = side => WARMUP_SRCS[side] || WARMUP_SRCS.left;
+// where each stretch begins, seconds into the recording (its own title
+// changes): a chime and a shower of light there, and the name spoken only
+// if the video has to play muted
 export const WARMUP_STEPS = [
-  { t: 0, name: "Stretch break. Five quick moves, just you and a chair." },
-  { t: 4, name: "Overhead stretch. Sit tall, feet flat, shoulders relaxed." },
-  { t: 44, name: "Cross-body stretch." },
-  { t: 64, name: "Cross-body stretch, the other side." },
-  { t: 80, name: "Wrist stretch. Bend it back, nice and slow." },
-  { t: 96, name: "Prayer stretch. Palms together, breathe." },
-  { t: 120, name: "All five done. Shake out those hands." },
+  { t: 0, name: "Warm-up time. Five gentle stretches to get ready." },
+  { t: 4, name: "Shoulder blade squeeze. Pull them back and together, and hold." },
+  { t: 23, name: "Cradle and lift. Cup your arm and lift it up high." },
+  { t: 42, name: "Scoop and elbows out. Lift up, push your elbows wide." },
+  { t: 61, name: "Elbow stretch. Hold your wrist, bring it up." },
+  { t: 83, name: "Wrist waves. Fingers laced, forward and back." },
+  { t: 100, name: "All warmed up. Five stretches done." },
 ];
 const WARMUP_END_HOLD = 3200;    // ms the cheer stays before what comes next
+
+// hidden, preloaded <video> elements by src: Warmup.preload(side) makes one
+// as soon as the arm is known (the welcome screen), so the stretch starts
+// the moment it is asked for instead of fetching 13 MB first. start() takes
+// it out of the cache; stop() removes it from the document.
+const PRELOADED = new Map();
+function makeVideo(src) {
+  const v = document.createElement("video");
+  v.src = src; v.playsInline = true; v.preload = "auto";
+  v.style.cssText = "position:fixed;left:-9999px;top:0;width:2px;height:2px;opacity:0;pointer-events:none";
+  v.setAttribute("aria-hidden", "true");
+  document.body.appendChild(v);
+  try { v.load(); } catch {}
+  return v;
+}
 
 export class Warmup {
   constructor(tracker, canvas, opts = {}) {
     this.t = tracker;
     this.canvas = canvas;
-    this.opts = opts;       // endLine: what to say at the end (what comes next)
+    this.opts = opts;       // side: the arm (which recording); endLine: what to say at the end
     this.active = false;
+  }
+
+  static preload(side) {
+    const src = warmupSrc(side);
+    if (!PRELOADED.has(src)) PRELOADED.set(src, makeVideo(src));
+    return PRELOADED.get(src);
   }
 
   start(onDone) {
@@ -44,11 +72,10 @@ export class Warmup {
     this.endAt = null;
     this.failedAt = null;
     this.spoken = false;
-    const v = document.createElement("video");
-    v.src = WARMUP_SRC; v.playsInline = true; v.preload = "auto";
-    v.style.cssText = "position:fixed;left:-9999px;top:0;width:2px;height:2px;opacity:0;pointer-events:none";
-    v.setAttribute("aria-hidden", "true");
-    document.body.appendChild(v);
+    const src = warmupSrc(this.opts.side);
+    const v = PRELOADED.get(src) || makeVideo(src);
+    PRELOADED.delete(src);
+    if (v.error) { v.removeAttribute("src"); v.src = src; try { v.load(); } catch {} }
     v.addEventListener("error", () => { this.failedAt ??= performance.now(); });
     v.addEventListener("ended", () => { this.endAt ??= performance.now(); });
     this.vid = v;

@@ -16,10 +16,13 @@ const CUES = {
 const THRESH = { gentle: 1.0, strict: 0.65 };
 
 export class Coach {
-  constructor(tracker, side, sensitivity = "gentle") {
+  // opts.quiet: watch and log compensation but never speak, dim or show
+  // the cue pill (the assessment's ASSESS_COACH_CUES flips it)
+  constructor(tracker, side, sensitivity = "gentle", opts = {}) {
     this.t = tracker;
     this.side = side;
     this.sens = sensitivity;
+    this.quiet = !!opts.quiet;
     this.state = "idle";
     this.type = null;
     this.overSince = null;
@@ -40,9 +43,11 @@ export class Coach {
         if (!this.overSince) this.overSince = now;
         if (now - this.overSince > 600) {
           this.state = "alert"; this.type = worst[0]; this.alertStart = now; this.stateT = now;
-          audio.whoosh();
-          this._speak(CUES[this.type]);
-          this._cuePill(CUES[this.type], true);
+          if (!this.quiet) {
+            audio.whoosh();
+            this._speak(CUES[this.type]);
+            this._cuePill(CUES[this.type], true);
+          }
         }
       } else if (!over) this.overSince = null;
     } else if (this.state === "alert") {
@@ -57,7 +62,7 @@ export class Coach {
     }
   }
 
-  get dimming() { return this.state === "alert" ? 0.15 : 0; }
+  get dimming() { return this.state === "alert" && !this.quiet ? 0.15 : 0; }
 
   // caption false: the cue pill already shows the text on screen
   _speak(text) { speakLine(text, 0.95, false); }
