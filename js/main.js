@@ -1,4 +1,4 @@
-import { Tracker } from "./tracker.js";
+import { Tracker } from "./tracker.js?v=65";
 import { Assessment } from "./assessment.js";
 import { GAMES, STAR_RANKS, CANDLE_MAX, LUMEN_STAGES } from "./games.js";
 import { Warmup } from "./warmup.js";
@@ -13,7 +13,7 @@ import { probeMail, sendMail, mailTarget, mailReady, diagnostics, progressReport
 
 // "12 min" / "1 h 05 min"
 const fmtDur = ms => { const m = Math.round(ms / 60000); return m >= 60 ? `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, "0")} min` : `${m} min`; };
-const dayKey = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const dayKey = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
 const $ = id => document.getElementById(id);
 
@@ -23,7 +23,7 @@ const $ = id => document.getElementById(id);
 // recommended card pre-focused, arrow keys to move, Enter to go).
 const MENU_KEYS = false;
 const focusHint = el => { if (MENU_KEYS && el) el.classList.add("kbd-focus"); };
-const SCREENS = ["screen-login", "screen-welcome", "screen-select", "stage", "screen-between", "screen-romcompare", "screen-collections", "screen-profile"];
+const SCREENS = ["screen-login", "screen-welcome", "screen-intro", "screen-select", "stage", "screen-between", "screen-romcompare", "screen-collections", "screen-profile"];
 
 const state = {
   tracker: null,
@@ -84,20 +84,46 @@ async function boot() {
     const t = new Tracker();
     // device-level setting (not per-patient): "auto" probes the local ZED
     // bridge (tools/zed_bridge.py) and falls back to the webcam
-    await t.init($("video"), localStorage.getItem("strive-cam-source") || "auto");
+    $("loading-text").textContent = "Waking up the camera…";
+    $("loading-error").classList.add("hidden");
+    await t.init($("video"), localStorage.getItem("strive-cam-source") || "auto",
+      s => { $("loading-text").textContent = s; });
     t.start();
     state.tracker = t;
     $("camstate").textContent = t.source === "zed"
       ? "Camera: ZED 2 (SDK body tracking via bridge)"
-      : "Camera: tracking";
+      : `Camera: tracking (webcam, models ${t.mpLocal ? "from this site" : "from the CDN"})`;
     $("camstate").className = "ok";
+    $("loading").classList.add("hidden");
   } catch (e) {
+    // say what went wrong where the patient and staff can see it (the staff
+    // drawer's camstate line is not visible on the login screen), and offer a
+    // reload; "continue" lets staff reach the drawer to change the source
+    console.error("Camera boot failed", e);
     $("camstate").textContent = "Camera: unavailable. " + e.message;
     $("camstate").className = "bad";
-  } finally {
-    $("loading").classList.add("hidden");
+    $("loading-text").textContent = "The camera could not start: " + e.message;
+    $("loading-error").classList.remove("hidden");
   }
 }
+// FPS readout at the top (Oct 2026, by request): the camera and its picture
+// size, how many pose samples a second the tracker ingests (the bridge's rate
+// on the ZED, MediaPipe's on a webcam) and the screen's own frame rate
+let _fpsScreen = 0, _fpsSeen = 0;
+(function _fpsRaf() { _fpsScreen++; requestAnimationFrame(_fpsRaf); })();
+setInterval(() => {
+  const t = state.tracker, box = $("fpsbox");
+  if (!t) return;
+  const n = t.frames - _fpsSeen; _fpsSeen = t.frames;
+  const cam = t.source === "zed" ? `ZED ${t.zedInfo?.w}×${t.zedInfo?.h}`
+    : `webcam ${t.srcW || t.video?.videoWidth || "?"}×${t.srcH || t.video?.videoHeight || "?"}`;
+  box.textContent = `${cam}  ·  ${n} fps tracking  ·  ${_fpsScreen} fps screen`;
+  box.classList.toggle("stale", n === 0);
+  box.classList.remove("hidden");
+  _fpsScreen = 0;
+}, 1000);
+$("btn-loading-retry").addEventListener("click", () => location.reload());
+$("btn-loading-continue").addEventListener("click", () => $("loading").classList.add("hidden"));
 
 /* ================= login (P0) ================= */
 // First screen: pick an existing participant or create one. Every choice is
@@ -169,6 +195,8 @@ function finishLogin(name, isNew, arm) {
   $("in-email").value = c.email || "";
   $("in-remind-time").value = c.remindAt || "";
   $("in-remind-days").value = c.remindDays || "off";
+  // a participant made just now hears the intro on their first Start
+  state.introPending = !!isNew && name !== "guest";
   show("screen-welcome");
   if (name !== "guest") speak(isNew ? `Nice to meet you, ${name}.` : `Welcome back, ${name}.`);
   notifyLogin(name, arm);
@@ -412,7 +440,10 @@ function watchWelcome() {
     // fire before the patient had finished sitting down.
   }
   loop();
-  $("btn-welcome-start").addEventListener("click", enterSelect);
+  $("btn-welcome-start").addEventListener("click", () => {
+    if (state.introPending) { state.introPending = false; playIntro(); }
+    else enterSelect();
+  });
   $("btn-welcome-warmup").addEventListener("click", () => startWarmup());
 }
 
@@ -434,6 +465,51 @@ function startWarmup(then = null) {
     if (res?.seconds) store.logPlaytime(state.patient, res.seconds * 1000, "warmup");
     next();
   });
+}
+
+/* ================= the intro (Oct 2026, by request) ================= */
+// What STRIVE is and why the reps matter, in the coach's own voice, one line
+// on screen at a time as it is spoken; Skip (or Enter / Escape) goes straight
+// on. Played once, on a newly created participant's first Start; then the
+// hub, exactly as Start would have.
+const INTRO_LINES = [
+  "Congratulations! You are about to use the STRIVE system. Let me explain how STRIVE can help you reach your therapy goals.",
+  "Your brain has the power to heal itself. This is called neuroplasticity.",
+  "Movement drives that healing, and more is better. The more you practice moving your arm, the more your brain can heal. 1,000 repetitions causes far more changes in the brain than 100.",
+  "STRIVE helps you get more reps, even when you are not in a therapy session.",
+  "STRIVE will continuously adjust to make sure the games are customized to provide you the best level of challenge and movement.",
+  "With STRIVE, your next rep is always one game away. Let's play.",
+];
+let introRun = 0;
+function playIntro() {
+  const run = ++introRun;
+  const line = $("intro-line"), dots = $("intro-dots");
+  dots.innerHTML = INTRO_LINES.map(() => "<span></span>").join("");
+  show("screen-intro");
+  const finish = () => {
+    if (run !== introRun) return;
+    introRun++;
+    speechSynthesis.cancel?.();
+    removeEventListener("keydown", onKey, true);
+    show("screen-welcome");           // enterSelect continues from the welcome screen
+    enterSelect();
+  };
+  const onKey = e => {
+    if (["Enter", " ", "Escape"].includes(e.key)) { e.preventDefault(); e.stopPropagation(); finish(); }
+  };
+  addEventListener("keydown", onKey, true);
+  $("btn-intro-skip").onclick = finish;
+  const sayFrom = i => {
+    if (run !== introRun) return;
+    if (i >= INTRO_LINES.length) { setTimeout(finish, 900); return; }
+    [...dots.children].forEach((d, k) => { d.className = k < i ? "done" : k === i ? "now" : ""; });
+    line.textContent = INTRO_LINES[i];
+    line.style.animation = "none"; void line.offsetWidth; line.style.animation = "";
+    // the written form is as scripted; the spoken form reads as words
+    const spoken = INTRO_LINES[i].replace(/STRIVE/g, "Strive").replace("1,000", "a thousand").replace("than 100", "than a hundred");
+    speakLine(spoken, 0.9, false, () => setTimeout(() => sayFrom(i + 1), 500));
+  };
+  sayFrom(0);
 }
 
 function enterSelect() {
@@ -1033,7 +1109,6 @@ function renderLanternLevels() {
 // here compares one patient with another.
 const GUILD = [["Grandma Sela", 2.6], ["Captain Ravi", 2.2], ["Ferryman Jo", 1.9], ["Nila the Baker", 1.65], ["Kofi the Smith", 1.45],
   ["Elder Moss", 1.28], ["Ada of the Mill", 1.12], ["Little Wren", 0.95], ["Bram the Shepherd", 0.8], ["Pip the Owl", 0.62]];
-function dayKey(d = new Date()) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
 function lanternBoardHTML(prog) {
   const days = prog.days || [];
   const first = days.find(x => x.scores?.length)?.scores?.[0] || 0;
@@ -1076,8 +1151,14 @@ function lanternBoardHTML(prog) {
 function measuredToday(prof) {
   return !!prof?.date && new Date(prof.date).toDateString() === new Date().toDateString();
 }
+function noCamera() {
+  if (state.tracker) return false;
+  speak("The camera is not running. Press Try again, or ask a staff member.");
+  $("loading").classList.remove("hidden");
+  return true;
+}
 function startAssessment(opts = {}) {
-  if (!state.tracker) return;
+  if (noCamera()) return;
   const arm = state.side;
   const prof = store.getProfile(state.patient, arm);
   if (prof && measuredToday(prof) && !opts.override) {
@@ -1363,7 +1444,7 @@ function paramKey(id, axis) { return id === "pong" && axis === "abd" ? "pong-abd
 
 function startGame(id, fresh) {
   const prof = store.getProfile(state.patient, state.side);
-  if (!prof || !state.tracker) return;
+  if (noCamera() || !prof) return;
   if (fresh) { state.roundNumber = 0; state.sessionStars = 0; state.driftStage = 1; }
   state.roundNumber++;
   state.lastGameId = id;

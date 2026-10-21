@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>STRIVE</title>
-<link rel="stylesheet" href="css/style.css?v=61">
+<link rel="stylesheet" href="css/style.css?v=65">
 </head>
 <body>
 
@@ -91,6 +91,17 @@
     <button class="btn ghost-light" id="btn-welcome-help">Ask for help</button>
   </div>
   <div class="track-status" id="welcome-track"></div>
+  <div class="brand-foot">Developed by Synapse Lab · Shirley Ryan AbilityLab</div>
+</div>
+
+<!-- The intro (Oct 2026, by request): a new participant's first Start on the
+     welcome screen plays this, the coach's voice over one line at a time -->
+<div id="screen-intro" class="screen hidden">
+  <div class="blob b1"></div><div class="blob b2"></div>
+  <div class="brand-title">STRIVE</div>
+  <div id="intro-line"></div>
+  <div id="intro-dots"></div>
+  <button class="btn ghost-light" id="btn-intro-skip">Skip</button>
   <div class="brand-foot">Developed by Synapse Lab · Shirley Ryan AbilityLab</div>
 </div>
 
@@ -373,9 +384,11 @@
 <div id="handcursor" class="hidden"></div>
 
 <button id="btn-help" class="hidden" title="Ask your therapist for help">Help</button>
+<div id="fpsbox" class="hidden" title="Camera, tracking rate and screen rate"></div>
 
-<div id="loading" class="hidden"><div class="spinner"></div><div id="loading-text">Waking up the camera&hellip;</div></div>
+<div id="loading" class="hidden"><div class="spinner"></div><div id="loading-text">Waking up the camera&hellip;</div>
+  <div id="loading-error" class="hidden"><button class="btn big" id="btn-loading-retry">Try again</button><button class="btn ghost-light" id="btn-loading-continue">Continue without the camera</button></div></div>
 
-<script type="module" src="js/main.js?v=61"></script>
+<script type="module" src="js/main.js?v=65"></script>
 </body>
 </html>

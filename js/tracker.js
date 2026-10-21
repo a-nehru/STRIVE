@@ -5,7 +5,64 @@
 //   fast vs slow -> compensation signal (Posture Coach)
 //   large/sustained change -> relocation (graceful pause + re-baseline)
 
-import { FilesetResolver, PoseLandmarker, HandLandmarker } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+// MediaPipe is loaded at init, not as a static import: a static import that
+// fails (CDN blocked, no internet) takes the whole app down with it, and the
+// camera never even gets asked for. The runtime, its wasm and the two models
+// are looked for in assets/mediapipe first (vendored copies, so the site
+// works with no outside network at all), then on the CDN (Oct 2026).
+const MP_VER = "0.10.14";
+const MP_LOCAL = new URL("../assets/mediapipe/", import.meta.url).href;
+const MP_CDN = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VER}/`;
+const MP_MODELS = {
+  pose: {
+    file: "pose_landmarker_full.task",
+    cdn: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task",
+  },
+  hand: {
+    file: "hand_landmarker.task",
+    cdn: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+  },
+};
+// how long a model download may take before the boot gives up with a clear
+// message instead of a spinner for ever (the full pose model is 9 MB)
+const MP_LOAD_MS = 90000;
+
+async function _exists(url) {
+  try {
+    const r = await fetch(url, { method: "HEAD", cache: "force-cache" });
+    return r.ok;
+  } catch { return false; }
+}
+function _withTimeout(p, ms, what) {
+  let t;
+  const timer = new Promise((_, rej) => { t = setTimeout(() => rej(new Error(`${what} took too long. Is the network blocking the download?`)), ms); });
+  return Promise.race([p, timer]).finally(() => clearTimeout(t));
+}
+// the tasks-vision runtime: {FilesetResolver, PoseLandmarker, HandLandmarker}
+// plus the wasm root it should be told about, local first, CDN second
+let _mp = null;
+async function loadMediaPipe(status) {
+  if (_mp) return _mp;
+  const local = await _exists(MP_LOCAL + "vision_bundle.mjs");
+  const base = local ? MP_LOCAL : MP_CDN;
+  status?.(local ? "Loading the tracking model…" : "Downloading the tracking model…");
+  let mod;
+  try {
+    mod = await _withTimeout(import(base + "vision_bundle.mjs"), MP_LOAD_MS, "Loading MediaPipe");
+  } catch (e) {
+    if (!local) throw e;
+    console.warn("Local MediaPipe bundle failed, trying the CDN", e);
+    mod = await _withTimeout(import(MP_CDN + "vision_bundle.mjs"), MP_LOAD_MS, "Loading MediaPipe");
+  }
+  const wasmLocal = local && await _exists(MP_LOCAL + "wasm/vision_wasm_internal.js");
+  const vision = await mod.FilesetResolver.forVisionTasks((wasmLocal ? MP_LOCAL : MP_CDN) + "wasm");
+  _mp = { ...mod, vision, local };
+  return _mp;
+}
+async function modelPath(key) {
+  const m = MP_MODELS[key];
+  return (await _exists(MP_LOCAL + m.file)) ? MP_LOCAL + m.file : m.cdn;
+}
 
 const LM = {
   nose: 0,
@@ -66,6 +123,7 @@ export class Tracker {
     this.running = false;
     this.listeners = [];
     this.lastSeen = 0;
+    this.frames = 0;          // pose samples ingested, for the FPS readout
 
     this.anchor = null;        // slow shoulder midpoint (video-norm, mirrored)
     this.anchorFast = null;    // fast shoulder midpoint
@@ -128,10 +186,12 @@ export class Tracker {
   // the ZED SDK skeleton when it's running; "webcam" forces MediaPipe. The
   // bridge speaks the MediaPipe 33-landmark layout, so everything downstream
   // of _ingest (smoothing, stable frame, coach, grip fallback) is identical.
-  async init(videoEl, source = "auto") {
+  async init(videoEl, source = "auto", status = null) {
     this.video = videoEl;
     this.source = "webcam";
+    this.onStatus = status;
     if (source !== "webcam") {
+      status?.("Looking for the ZED bridge…");
       const zed = await this._probeZed();
       if (zed) {
         this.source = "zed";
@@ -155,18 +215,65 @@ export class Tracker {
         // frames (_startZed) — a fallback, and a weak one at ward distances,
         // where a hand is a few dozen pixels of the whole picture.
         if (!zed.hand_model) {
-          const vision = await FilesetResolver.forVisionTasks(
-            "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
-          await this._loadHands(vision);
+          const mp = await loadMediaPipe(status);
+          await this._loadHands(mp);
         }
         return;
       }
     }
-    const vision = await FilesetResolver.forVisionTasks(
-      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
-    this.landmarker = await PoseLandmarker.createFromOptions(vision, {
+    // THE CAMERA FIRST (Oct 2026): the permission prompt and the live picture
+    // come up at once, before the 9 MB pose model is fetched. Before this the
+    // models were loaded first, so a slow or filtered network (a hospital
+    // proxy blocking Google storage) left "Waking up the camera" on screen
+    // for ever and the browser never even asked for the camera.
+    status?.("Starting the camera…");
+    if (!navigator.mediaDevices?.getUserMedia) {
+      throw new Error(location.protocol === "http:" && location.hostname !== "localhost"
+        ? "the browser blocks the camera on a plain http:// address. Open the page on localhost or over https."
+        : "this browser cannot open a camera.");
+    }
+    const open = async video => {
+      try {
+        return await navigator.mediaDevices.getUserMedia({ video, audio: false });
+      } catch (e) {
+        const why = e.name === "NotAllowedError" ? "camera permission was refused. Allow the camera for this site and reload."
+          : e.name === "NotFoundError" ? "no camera was found."
+          : e.name === "NotReadableError" ? "the camera is in use by another program."
+          : e.name === "OverconstrainedError" ? "no camera matched the request."
+          : e.message;
+        throw new Error(why);
+      }
+    };
+    const size = { width: { ideal: 1280 }, height: { ideal: 720 } };
+    let stream = await open({ ...size, facingMode: "user" });
+    // a laptop with a Windows Hello camera lists an infrared camera beside
+    // the colour one and the browser may hand over the IR one by default:
+    // it gives a black or empty picture and the pose model sees nobody.
+    // Once permission is granted the labels are readable, so swap to a
+    // colour camera when the one we were given looks like IR or depth.
+    try {
+      const isIR = d => /\bIR\b|infrared|depth/i.test(d.label);
+      const cams = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === "videoinput");
+      const track = stream.getVideoTracks()[0];
+      const cur = cams.find(d => d.deviceId === track.getSettings().deviceId);
+      const colour = cams.find(d => !isIR(d));
+      if (cur && isIR(cur) && colour) {
+        console.warn("Default camera looks infrared, switching", cur.label, "->", colour.label);
+        track.stop();
+        stream = await open({ ...size, deviceId: { exact: colour.deviceId } });
+      }
+      this.cameraLabel = (cams.find(d => d.deviceId === stream.getVideoTracks()[0].getSettings().deviceId) || cur || {}).label || "";
+    } catch (e) { console.warn("Camera enumeration failed", e); }
+    videoEl.srcObject = stream;
+    await _withTimeout(new Promise(res => { videoEl.onloadedmetadata = res; }), 15000,
+      "The camera opened but gave no picture");
+    await videoEl.play();
+
+    const mp = await loadMediaPipe(status);
+    this.mpLocal = mp.local;
+    this.landmarker = await _withTimeout(mp.PoseLandmarker.createFromOptions(mp.vision, {
       baseOptions: {
-        modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task",
+        modelAssetPath: await modelPath("pose"),
         delegate: "GPU",
       },
       runningMode: "VIDEO",
@@ -175,28 +282,23 @@ export class Tracker {
       // whoever it scored highest THIS frame. We take all of them and pick the
       // patient ourselves (_pickBody).
       numPoses: NUM_POSES,
-    });
-    await this._loadHands(vision);
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: { width: 1280, height: 720, facingMode: "user" }, audio: false,
-    });
-    videoEl.srcObject = stream;
-    await new Promise(res => { videoEl.onloadedmetadata = res; });
-    await videoEl.play();
+    }), MP_LOAD_MS, "Loading the pose model");
+    status?.("Loading the hand model…");
+    await this._loadHands(mp);
   }
 
   // dedicated hand model for real grasp detection — optional: pose tracking
   // still works if it fails to load
-  async _loadHands(vision) {
+  async _loadHands(mp) {
     try {
-      this.handLandmarker = await HandLandmarker.createFromOptions(vision, {
+      this.handLandmarker = await _withTimeout(mp.HandLandmarker.createFromOptions(mp.vision, {
         baseOptions: {
-          modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+          modelAssetPath: await modelPath("hand"),
           delegate: "GPU",
         },
         runningMode: "VIDEO",
         numHands: 2,
-      });
+      }), MP_LOAD_MS, "Loading the hand model");
     } catch (e) {
       console.warn("Hand Landmarker unavailable — using pose-fingertip grasp fallback", e);
     }
@@ -453,6 +555,7 @@ export class Tracker {
     const vis = i => (lm[i].visibility ?? 1) > 0.5;
     if (!vis(LM.shL) || !vis(LM.shR)) return;
     this.lastSeen = now;
+    this.frames++;
     const p = i => ({ x: 1 - lm[i].x, y: lm[i].y, ok: vis(i) });
 
     const raw = {};

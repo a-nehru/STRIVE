@@ -86,15 +86,32 @@ MP_FROM_38 = {
     24: ["RIGHT_HIP"],
 }
 
-# game-tuned profiles: latency and sample rate matter more than millimetres
-# 30 fps, not 60: at 60 the sensor may never expose longer than ~16 ms, so in
-# a ward without studio light the picture comes out dark and flat and the auto
-# gain adds noise on top. Body tracking does not need 60 samples a second and
-# the depth pipeline does not run that fast anyway. --fps overrides.
+# game-tuned profiles. HD2K at 15 fps (Oct 2026, by request): 2208x1242 is the
+# ZED 2's full sensor and the only rate it offers at that size is 15 fps. The
+# extra pixels are what make a hand at 4 m big enough for the hand model, and
+# the long exposure suits a ward without studio light (at 60 fps the sensor
+# could never expose longer than ~16 ms and the picture came out dark, flat
+# and noisy). Body tracking does not need more than 15 samples a second;
+# the browser's paddle filter is built for a 30 fps source and tolerates 15.
+# --res and --fps override; the fps is clamped to what the size supports.
 PROFILES = {
-    "fast":     dict(res="HD720", fps=30, depth="NEURAL_LIGHT", model="HUMAN_BODY_MEDIUM", fp16=True),
-    "balanced": dict(res="HD720", fps=30, depth="NEURAL", model="HUMAN_BODY_ACCURATE", fp16=False),
+    "fast":     dict(res="HD2K", fps=15, depth="NEURAL_LIGHT", model="HUMAN_BODY_MEDIUM", fp16=True),
+    "balanced": dict(res="HD2K", fps=15, depth="NEURAL", model="HUMAN_BODY_ACCURATE", fp16=False),
 }
+# the frame rates each ZED 2 picture size can run at
+RES_FPS = {"HD2K": (15,), "HD1080": (15, 30), "HD720": (15, 30, 60), "VGA": (15, 30, 60, 100)}
+# the hand crop and a few pixel thresholds were tuned on a 1280-wide picture
+REF_WIDTH = 1280
+
+
+def pick_fps(res, want):
+    """The highest frame rate the size supports that is not above the one
+    asked for (HD2K only does 15, so --fps 30 there quietly becomes 15)."""
+    ok = RES_FPS.get(res, (15, 30, 60))
+    fps = max([f for f in ok if f <= want] or [ok[0]])
+    if fps != want:
+        print(f"  {res} cannot run at {want} fps; using {fps}")
+    return fps
 
 # The ZED's picture is deliberately flat out of the box: its ISP defaults are
 # tuned for matching pixels between the two eyes, not for a mirror a patient
@@ -576,13 +593,16 @@ class HandWorker(threading.Thread):
             self.result = {"hands": hands, "at": time.monotonic()}
 
 
-def hand_crops(body, table, shoulders):
+def hand_crops(body, table, shoulders, res_w=REF_WIDTH):
     """Where to look for each hand: a square about the wrist, nudged towards
-    the fingertips, sized by the shoulder width in pixels."""
+    the fingertips, sized by the shoulder width in pixels. The 150-460 px
+    band was set on a 1280-wide picture; it scales with the width so the
+    crop covers the same piece of the room at HD2K."""
+    k = res_w / REF_WIDTH
     kp2 = np.asarray(body.keypoint_2d, dtype=float)
     a, b = kp2[shoulders[0]], kp2[shoulders[1]]
     shw = math.hypot(a[0] - b[0], a[1] - b[1]) if np.isfinite(a).all() and np.isfinite(b).all() else None
-    size = min(max(1.15 * shw if shw else 260, 150), 460)
+    size = min(max(1.15 * shw if shw else 260 * k, 150 * k), 460 * k)
     crops = {}
     for side, wi, ti in (("left", 15, 19), ("right", 16, 20)):
         w = kp2[table[wi][0]]
@@ -802,8 +822,8 @@ def capture(zed, rt, run, table, shoulders, res_w, res_h, preview_w, jpeg_every,
         hand_payload = None
         if HANDS is not None:
             primary_body = seated[0] if seated and seated[0] is not None else None
-            if primary_body is not None and n % 2 == 0:
-                crops = hand_crops(primary_body, table, shoulders)
+            if primary_body is not None and n % jpeg_every == 0:
+                crops = hand_crops(primary_body, table, shoulders, res_w)
                 if crops:
                     zed.retrieve_image(image_full, sl.VIEW.LEFT, sl.MEM.CPU)
                     HANDS.submit(image_full.get_data().copy(), crops, int(now * 1000))
@@ -869,9 +889,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--profile", choices=PROFILES, default="fast",
                     help="fast = game default (MEDIUM model); balanced = ACCURATE model")
-    ap.add_argument("--fps", type=int, choices=[15, 30, 60], default=None,
-                    help="camera frame rate (default 30: 60 caps the exposure and "
-                         "makes a dim ward look dimmer)")
+    ap.add_argument("--res", choices=list(RES_FPS), default=None,
+                    help="camera picture size (default HD2K, 2208x1242)")
+    ap.add_argument("--fps", type=int, choices=[15, 30, 60, 100], default=None,
+                    help="camera frame rate (default 15 at HD2K, the only rate it "
+                         "offers; clamped to what --res supports. 60 caps the "
+                         "exposure and makes a dim ward look dimmer)")
     ap.add_argument("--port", type=int, default=8322)
     ap.add_argument("--max-range", type=float, default=5.0,
                     help="metres: how far the depth and body tracking look "
@@ -916,8 +939,9 @@ def main():
     args = ap.parse_args()
 
     P = dict(PROFILES[args.profile])
-    if args.fps:
-        P["fps"] = args.fps
+    if args.res:
+        P["res"] = args.res
+    P["fps"] = pick_fps(P["res"], args.fps or P["fps"])
     table, shoulders = resolve_indexes()
 
     init = sl.InitParameters()
@@ -993,7 +1017,10 @@ def main():
 
     threading.Thread(target=capture,
                      args=(zed, rt, run, table, shoulders, cam.width, cam.height,
-                           args.preview_width, 2, SEATS, play),
+                           # the hand model and the MJPEG preview take every 2nd
+                           # frame at 30 fps and every frame at 15 (HD2K), so
+                           # both keep their rate whichever size the camera runs
+                           args.preview_width, 2 if P["fps"] >= 30 else 1, SEATS, play),
                      daemon=True).start()
 
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)

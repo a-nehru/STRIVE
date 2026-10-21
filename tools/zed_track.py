@@ -414,7 +414,8 @@ class MpHands:
             cx, cy = wr
             if tip is not None:
                 cx, cy = wr[0] + 0.55 * (tip[0] - wr[0]), wr[1] + 0.55 * (tip[1] - wr[1])
-            side_px = int(min(max(1.15 * shw if shw else 260, 150), 460))
+            k = W / REF_WIDTH         # keep the crop the same piece of the room at HD2K
+            side_px = int(min(max(1.15 * shw if shw else 260 * k, 150 * k), 460 * k))
             x0 = int(min(max(cx - side_px / 2, 0), max(W - side_px, 0)))
             y0 = int(min(max(cy - side_px / 2, 0), max(H - side_px, 0)))
             crop = bgr[y0:y0 + side_px, x0:x0 + side_px]
@@ -745,13 +746,28 @@ class View:
 
 
 # --- sources -----------------------------------------------------------------
-# 30 fps, not 60: at 60 the sensor may never expose longer than ~16 ms, so in
-# a ward without studio light the picture comes out dark and flat and the auto
-# gain adds noise on top. --fps overrides.
+# HD2K at 15 fps (Oct 2026, by request), the same as the bridge: the full
+# 2208x1242 sensor, whose only rate is 15 fps. The extra pixels make a hand
+# at 4 m big enough for the hand model, and the long exposure suits a ward
+# without studio light (at 60 fps the sensor could never expose longer than
+# ~16 ms and the picture came out dark, flat and noisy). --res and --fps
+# override; the fps is clamped to what the size supports.
 PROFILES = {
-    "fast":     dict(res="HD720", fps=30, depth="NEURAL_LIGHT", fp16=True),
-    "balanced": dict(res="HD720", fps=30, depth="NEURAL", fp16=False),
+    "fast":     dict(res="HD2K", fps=15, depth="NEURAL_LIGHT", fp16=True),
+    "balanced": dict(res="HD2K", fps=15, depth="NEURAL", fp16=False),
 }
+RES_FPS = {"HD2K": (15,), "HD1080": (15, 30), "HD720": (15, 30, 60), "VGA": (15, 30, 60, 100)}
+REF_WIDTH = 1280          # the hand crop band was tuned on a 1280-wide picture
+
+
+def pick_fps(res, want):
+    """The highest frame rate the size supports that is not above the one
+    asked for (HD2K only does 15, so --fps 30 there quietly becomes 15)."""
+    ok = RES_FPS.get(res, (15, 30, 60))
+    fps = max([f for f in ok if f <= want] or [ok[0]])
+    if fps != want:
+        print(f"  {res} cannot run at {want} fps; using {fps}")
+    return fps
 
 # The ZED's picture is flat out of the box (its ISP is tuned for stereo
 # matching, not for a mirror), and unlike a webcam driver it lifts nothing.
@@ -776,12 +792,13 @@ class ZedSource:
     can be swapped live (set_model): the camera stays open, only the body
     tracking module restarts."""
 
-    def __init__(self, profile, max_range, min_conf, model, fps=None, picture=None):
+    def __init__(self, profile, max_range, min_conf, model, fps=None, picture=None, res=None):
         import pyzed.sl as sl
         self.sl = sl
         P = dict(PROFILES[profile])
-        if fps:
-            P["fps"] = fps
+        if res:
+            P["res"] = res
+        P["fps"] = pick_fps(P["res"], fps or P["fps"])
         self.P, self.max_range = P, max_range
         init = sl.InitParameters()
         init.camera_resolution = getattr(sl.RESOLUTION, P["res"])
@@ -988,8 +1005,11 @@ def main():
                     help="metres: how far the depth and body tracking look "
                          "(a ward bed can be 4.5 m from the camera)")
     ap.add_argument("--min-conf", type=float, default=40.0)
-    ap.add_argument("--fps", type=int, choices=[15, 30, 60], default=None,
-                    help="camera frame rate (default 30: 60 caps the exposure and "
+    ap.add_argument("--res", choices=list(RES_FPS), default=None,
+                    help="camera picture size (default HD2K, 2208x1242)")
+    ap.add_argument("--fps", type=int, choices=[15, 30, 60, 100], default=None,
+                    help="camera frame rate (default 15 at HD2K, the only rate it offers; "
+                         "clamped to what --res supports. 60 caps the exposure and "
                          "makes a dim ward look dimmer)")
     ap.add_argument("--brightness", type=int, default=PICTURE_DEFAULTS["brightness"],
                     help="0-8, SDK default 4")
@@ -1033,7 +1053,7 @@ def main():
                    gain=args.gain)
     src = (DemoSource() if args.demo
            else ZedSource(args.profile, args.max_range, args.min_conf, model,
-                          fps=args.fps, picture=picture))
+                          fps=args.fps, picture=picture, res=args.res))
     view = View(src.W, src.H)
     grips = {"LEFT": Grip(), "RIGHT": Grip()}
     focus = {"LEFT", "RIGHT"}

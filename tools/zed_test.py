@@ -125,7 +125,7 @@ def main():
         note("broken until that import works, even if the camera is fine.")
 
     profiles = getattr(bridge, "PROFILES", None) or {
-        "fast": dict(res="HD720", fps=60, depth="NEURAL_LIGHT",
+        "fast": dict(res="HD2K", fps=15, depth="NEURAL_LIGHT",
                      model="HUMAN_BODY_MEDIUM", fp16=True),
     }
     if args.profile not in profiles:

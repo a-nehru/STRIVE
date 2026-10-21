@@ -32,14 +32,23 @@ export function applySettings(s) {
 // One speech path for the whole app: unhurried rate, patient-set volume,
 // and an optional on-screen caption (hearing loss is near-universal in the
 // target demographic — GAG "subtitles for all important speech").
-export function speakLine(text, rate = 0.9, caption = true) {
+export function speakLine(text, rate = 0.9, caption = true, onend = null) {
+  // onend (optional) fires once when the line has been spoken, or after a
+  // reading-paced fallback when speech is unavailable or silent, so a caller
+  // chaining several lines (the intro) never stalls on a browser with no voice
+  let done = false;
+  const finish = () => { if (done || !onend) return; done = true; clearTimeout(guard); onend(); };
+  const words = text.split(/\s+/).length;
+  const guard = onend ? setTimeout(finish, Math.max(3000, words * 430 / rate) + 1500) : null;
   try {
     speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
     u.rate = rate;
     u.volume = A11Y.volVoice;
+    u.onend = finish;
+    u.onerror = finish;
     speechSynthesis.speak(u);
-  } catch { /* voice optional */ }
+  } catch { /* voice optional: the guard timer finishes the line */ }
   if (caption) showCaption(text);
 }
 

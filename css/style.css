@@ -46,6 +46,16 @@ button { font-family: inherit; cursor: pointer; }
 }
 @keyframes screenfade { from { opacity: 0; } to { opacity: 1; } }
 
+/* the intro: the welcome's night sky, one spoken line at a time, large */
+#screen-intro { background: linear-gradient(165deg, #1b1b3a 0%, #3a3168 46%, #8f76b0 100%); color: var(--cream); }
+#intro-line { max-width: min(1100px, 86vw); min-height: 3.6em; text-align: center; font-weight: 700;
+  font-size: clamp(26px, 3vw, 46px); line-height: 1.35; z-index: 2; position: relative; animation: screenfade 0.6s ease; }
+#intro-dots { display: flex; gap: 10px; margin-top: 28px; z-index: 2; position: relative; }
+#intro-dots span { width: 12px; height: 12px; border-radius: 50%; background: rgba(244,236,221,0.25); }
+#intro-dots span.done { background: var(--amber); }
+#intro-dots span.now { background: var(--cream); }
+#btn-intro-skip { margin-top: 34px; z-index: 2; position: relative; }
+
 /* P1 welcome — option 1a */
 #screen-welcome { background: linear-gradient(165deg, #1b1b3a 0%, #3a3168 46%, #8f76b0 100%); }
 .blob {
@@ -358,6 +368,13 @@ body.hc #caption { background: rgba(8, 6, 18, 0.97); border-color: rgba(244,236,
   border: 2px solid rgba(232,168,106,0.7); background: rgba(27,27,58,0.75); color: #f4ecdd;
   font: 800 18px Nunito, sans-serif; cursor: pointer; }
 #btn-help:hover { background: rgba(232,168,106,0.35); }
+/* FPS readout (Oct 2026, by request): camera source and size, tracking samples
+   per second and screen frames per second, top centre on every screen */
+#fpsbox { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 60;
+  padding: 6px 14px; border-radius: 10px; background: rgba(27,27,58,0.72); color: var(--cream);
+  font: 700 14px/1.2 system-ui, sans-serif; letter-spacing: 0.02em; pointer-events: none;
+  font-variant-numeric: tabular-nums; white-space: nowrap; }
+#fpsbox.stale { color: var(--amber); }
 
 /* keyboard menu navigation: arrow keys move this highlight, Enter selects */
 .kbd-focus { outline: 3px solid var(--amber); outline-offset: 3px; }
@@ -516,6 +533,8 @@ table.log td { padding: 7px 4px; font-size: 13px; font-weight: 700; border-top: 
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px;
   color: var(--cream); font-weight: 700; font-size: 18px;
 }
+#loading #loading-text { max-width: 720px; text-align: center; line-height: 1.5; padding: 0 24px; }
+#loading-error { display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; }
 .spinner { width: 52px; height: 52px; border-radius: 50%; border: 5px solid rgba(244,236,221,.18); border-top-color: var(--amber); animation: spin 0.9s linear infinite; }
 
 /* ---------- animations (from the design doc) ---------- */
