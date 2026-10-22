@@ -4,6 +4,8 @@
 // Kept in its own module so engine.js, coach.js, audio.js and main.js can all
 // read it without import cycles.
 
+import { ttsReady, fetchVoice } from "./tts.js";
+
 export const A11Y = {
   captions: true,
   dwellMs: 1400,
@@ -24,13 +26,19 @@ export const A11Y = {
 // The words are in coachlines.js; this is how each one sounds through the
 // browser's own speech engine, with no server: a pitch and a pace about the
 // house rate, and a preferred voice when the machine offers one of them.
+// `intro` is what a coach says when their card is chosen on the login step
+// (Oct 2026, by request): who they are and how they coach, in their own
+// voice, so the pick is made on the voice and not only on the drawing.
 export const COACHES = {
   rook:  { name: "Rook",  title: "Rook the cat pilot",       style: "Fun and upbeat",
-           sample: "Smooth flying, co-pilot! Two more!" },
+           sample: "Smooth flying, co-pilot! Two more!",
+           intro: "Hi, I'm Rook, your cat pilot. I keep things fun and upbeat, and I cheer every rep [chuckle]. Ready to fly?" },
   lumi:  { name: "Lumi",  title: "Lumi the lantern firefly", style: "Calm and gentle",
-           sample: "Nice and slow. Take your time." },
+           sample: "Nice and slow. Take your time.",
+           intro: "Hello, I'm Lumi, the lantern firefly. I'm calm and gentle. We go at your pace, one easy move at a time." },
   maple: { name: "Maple", title: "Coach Maple the bear",     style: "Pushes you to do more",
-           sample: "Up six from last week. Now beat it." },
+           sample: "Up six from last week. Now beat it.",
+           intro: "I'm Coach Maple, the bear. I'll push you to do a little more each day. That's how an arm gets stronger." },
 };
 // ONE voice for everything (Oct 2026, by request: the first pick came out
 // deep, and the voice must not change between the intro, the coach and the
@@ -81,13 +89,32 @@ export function applySettings(s) {
 // and an optional on-screen caption (hearing loss is near-universal in the
 // target demographic — GAG "subtitles for all important speech").
 // `coach` (optional) speaks as that coach instead of the chosen one: the
-// chooser's "Hear it" buttons. The voice tags the coach prompt allows
-// ("[chuckle]", "[laugh]") are for a voice engine that renders them; the
-// browser's would read the brackets out, so they are stripped here, in the
-// one place every line passes through.
+// chooser's "Hear it" buttons.
+//
+// Two voices can be behind it (Oct 2026, by request: the coaches should
+// SOUND different, not only read differently). When the voice bridge
+// (tools/tts_bridge.py, js/tts.js) is up, the line is rendered by Chatterbox
+// Turbo in the coach's own cloned voice and played as audio, tags like
+// "[chuckle]" rendered as sounds; the phrasebook is pre-rendered at login, a
+// Claude-written line is rendered as it arrives. Without the bridge, or when
+// it does not answer in time, the browser's speech engine reads it as
+// before, with the tags stripped (it would read the brackets out). Either
+// way the whole app speaks in the chosen coach's voice: the intro, the
+// games and the coach never change voice within a session.
+let voiceSeq = 0;                 // a newer line supersedes an older one still being fetched
+let voiceEl = null;               // the <audio> playing now
+function stopVoice() {
+  if (voiceEl) { try { voiceEl.pause(); voiceEl.src = ""; } catch {} voiceEl = null; }
+}
+function plainText(text) {
+  return String(text || "").replace(/\s*\[(\w+)\]\s*/g, " ").replace(/\s{2,}/g, " ").trim();
+}
+
 export function speakLine(text, rate = 0.9, caption = true, onend = null, coach = null) {
-  text = String(text || "").replace(/\s*\[(chuckle|laugh|cough)\]\s*/gi, " ").replace(/\s{2,}/g, " ").trim();
-  const cv = COACH_VOICE[coach || A11Y.coach] || COACH_VOICE.lumi;
+  const raw = String(text || "").replace(/\s{2,}/g, " ").trim();
+  text = plainText(raw);
+  const who = coach || A11Y.coach;
+  const cv = COACH_VOICE[who] || COACH_VOICE.lumi;
   // onend (optional) fires once when the line has been spoken, or after a
   // reading-paced fallback when speech is unavailable or silent, so a caller
   // chaining several lines (the intro) never stalls on a browser with no voice
@@ -95,19 +122,49 @@ export function speakLine(text, rate = 0.9, caption = true, onend = null, coach 
   const finish = () => { if (done || !onend) return; done = true; clearTimeout(guard); onend(); };
   const words = text.split(/\s+/).length;
   const guard = onend ? setTimeout(finish, Math.max(3000, words * 430 / rate) + 1500) : null;
-  try {
-    speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text);
-    u.rate = rate * cv.rate;
-    u.pitch = cv.pitch;
-    const voice = coachVoice(coach || A11Y.coach);
-    if (voice) u.voice = voice;
-    u.volume = A11Y.volVoice;
-    u.onend = finish;
-    u.onerror = finish;
-    speechSynthesis.speak(u);
-  } catch { /* voice optional: the guard timer finishes the line */ }
+  const seq = ++voiceSeq;
+  try { speechSynthesis.cancel(); } catch {}
+  stopVoice();
   if (caption) showCaption(text);
+  if (!text) { finish(); return; }
+
+  const browser = () => {
+    if (seq !== voiceSeq) return;                  // a newer line has taken over
+    try {
+      const u = new SpeechSynthesisUtterance(text);
+      u.rate = rate * cv.rate;
+      u.pitch = cv.pitch;
+      const voice = coachVoice(who);
+      if (voice) u.voice = voice;
+      u.volume = A11Y.volVoice;
+      u.onend = finish;
+      u.onerror = finish;
+      speechSynthesis.speak(u);
+    } catch { /* voice optional: the guard timer finishes the line */ }
+  };
+
+  if (!ttsReady() || A11Y.volVoice <= 0) { browser(); return; }
+  fetchVoice(who, raw).then(url => {
+    if (seq !== voiceSeq) return;
+    if (!url) { browser(); return; }
+    try {
+      const a = new Audio(url);
+      a.preservesPitch = true;
+      a.playbackRate = Math.min(1.2, Math.max(0.6, rate * cv.rate));
+      a.volume = Math.min(1, Math.max(0, A11Y.volVoice));
+      a.onended = () => { if (voiceEl === a) voiceEl = null; finish(); };
+      a.onerror = () => { if (voiceEl === a) voiceEl = null; browser(); };
+      voiceEl = a;
+      a.play().catch(() => { if (voiceEl === a) voiceEl = null; browser(); });
+    } catch { browser(); }
+  });
+}
+
+// stop whatever is being said now (both engines)
+export function hushVoice() {
+  voiceSeq++;
+  try { speechSynthesis.cancel(); } catch {}
+  stopVoice();
 }
 
 let capTimer = null;

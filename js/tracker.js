@@ -84,6 +84,35 @@ const SLOW = 0.04, FAST = 0.35, HAND = 0.5;
 // from the last matched frame, so a scoot or a big reach passes easily while
 // a different person standing somewhere else never does.
 const NUM_POSES = 3;
+// One complete part of a multipart/x-mixed-replace stream, or null when the
+// buffer does not hold a whole frame yet: {frame: Uint8Array, rest: Uint8Array}.
+// Reads the part header's Content-Length (the bridge always sends one); a
+// header without it falls back to scanning for the JPEG end marker.
+export function splitMjpeg(buf) {
+  const CRLF2 = [13, 10, 13, 10];
+  let hEnd = -1;
+  for (let i = 0; i + 3 < buf.length; i++) {
+    if (buf[i] === 13 && buf[i + 1] === 10 && buf[i + 2] === 13 && buf[i + 3] === 10) { hEnd = i; break; }
+  }
+  if (hEnd < 0) return null;
+  const header = String.fromCharCode(...buf.subarray(Math.max(0, hEnd - 200), hEnd));
+  const m = /content-length:\s*(\d+)/i.exec(header);
+  const start = hEnd + CRLF2.length;
+  if (m) {
+    const n = +m[1];
+    if (buf.length < start + n) return null;
+    return { frame: buf.slice(start, start + n), rest: buf.subarray(start + n) };
+  }
+  // no length: find FFD9 after an FFD8
+  let s0 = -1;
+  for (let i = start; i + 1 < buf.length; i++) if (buf[i] === 0xFF && buf[i + 1] === 0xD8) { s0 = i; break; }
+  if (s0 < 0) return null;
+  for (let i = s0 + 2; i + 1 < buf.length; i++) {
+    if (buf[i] === 0xFF && buf[i + 1] === 0xD9) return { frame: buf.slice(s0, i + 2), rest: buf.subarray(i + 2) };
+  }
+  return null;
+}
+
 const LOCK_GATE = 1.2;      // combined cost ceiling for "still the same person"
 const LOCK_GRACE = 3000;    // ms with no acceptable match before a new person is accepted
 // Distance changes must move the frame's SCALE (or every target silently
@@ -160,6 +189,8 @@ export class Tracker {
     // Which detected person is the patient (webcam path; the ZED bridge does
     // its own seating). Followed by build + position, never by confidence.
     this.lock = null;          // { mid, sw, torso, at }
+    this.pinned = null;        // build of a person staff clicked (webcam): followed through a login and an absence
+    this.pick = null;          // a pending click, in mirrored normalised coordinates
     this.peopleSeen = 0;       // bodies in frame this detection (for staff UI)
     // the SECOND PLAYER on the webcam path (Oct 2026, by request: two-player
     // Pong without the ZED). Asked for by setSecond(true); followed with its
@@ -196,17 +227,24 @@ export class Tracker {
       if (zed) {
         this.source = "zed";
         this.zedInfo = zed;
-        // the bridge's MJPEG preview stands in for the webcam <video>: expando
-        // props make it quack like one for drawVideoMirror and _videoToPx
-        const img = new Image();
-        img.crossOrigin = "anonymous";
-        img.src = `${ZED_BRIDGE}/video.mjpg`;
-        img.videoWidth = zed.w; img.videoHeight = zed.h; img.readyState = 2;
-        this.video = img;
+        // the bridge's MJPEG preview stands in for the webcam <video>: a
+        // canvas that always holds one WHOLE frame, with expando props so it
+        // quacks like a <video> for drawVideoMirror and _videoToPx. It used
+        // to be an <img src="/video.mjpg">: the browser paints a multipart
+        // JPEG progressively, so a frame copied mid-arrival showed its top
+        // half new and the rest old or grey (Oct 2026, "the picture loads
+        // half way"). _openPreview reads the stream itself and decodes each
+        // complete JPEG before it is shown.
+        const cv = document.createElement("canvas");
+        cv.width = zed.w; cv.height = zed.h;
+        cv.videoWidth = zed.w; cv.videoHeight = zed.h;
+        cv.naturalWidth = zed.w; cv.naturalHeight = zed.h;
+        cv.readyState = 0;
+        this.video = cv;
         // hold the "waking up the camera" screen until the stream's first
         // frame has actually arrived, so the welcome mirror does not open on
         // a blank panel and fill in a second or two later
-        await new Promise(res => { img.onload = () => res(); setTimeout(res, 4000); });
+        await Promise.race([this._openPreview(cv), new Promise(res => setTimeout(res, 4000))]);
         // GRASP ON THE ZED (Sep 2026): the bridge's BODY_38 fingertips are too
         // coarse to call open/close reliably, so the 21-point hand model runs
         // in the BRIDGE on a crop around each wrist (status.hand_model) and
@@ -316,6 +354,72 @@ export class Tracker {
     } catch { return null; }
   }
 
+  // Read the bridge's multipart MJPEG stream and draw every COMPLETE frame
+  // onto `cv` (the stand-in <video>). Frames that arrive while one is still
+  // decoding are dropped, so the picture never falls behind. Resolves when
+  // the first frame is showing; reconnects after a second if the stream ends
+  // while the tracker is meant to be running.
+  async _openPreview(cv) {
+    const ctx = cv.getContext("2d");
+    let first = null;
+    const firstShown = new Promise(res => { first = res; });
+    const run = async () => {
+      let res;
+      try { res = await fetch(`${ZED_BRIDGE}/video.mjpg`, { cache: "no-store" }); } catch { return false; }
+      if (!res.ok || !res.body) return false;
+      const reader = res.body.getReader();
+      let buf = new Uint8Array(0);
+      let decoding = false, pending = null;
+      const show = async bytes => {
+        if (decoding) { pending = bytes; return; }      // keep only the newest frame
+        decoding = true;
+        try {
+          const bmp = await createImageBitmap(new Blob([bytes], { type: "image/jpeg" }));
+          if (cv.width !== bmp.width || cv.height !== bmp.height) {
+            cv.width = bmp.width; cv.height = bmp.height;
+            cv.videoWidth = cv.naturalWidth = bmp.width; cv.videoHeight = cv.naturalHeight = bmp.height;
+          }
+          ctx.drawImage(bmp, 0, 0);
+          bmp.close?.();
+          cv.readyState = 2;
+          cv.frameAt = performance.now();
+          first?.(); first = null;
+        } catch { /* a truncated JPEG: skip it */ }
+        decoding = false;
+        if (pending) { const nx = pending; pending = null; show(nx); }
+      };
+      while (true) {
+        let chunk;
+        try { chunk = await reader.read(); } catch { break; }
+        if (chunk.done) break;
+        if (!this.running && this.frames > 0) { try { reader.cancel(); } catch {} return true; }
+        const merged = new Uint8Array(buf.length + chunk.value.length);
+        merged.set(buf); merged.set(chunk.value, buf.length);
+        buf = merged;
+        // frames: a part header ending in a blank line, then Content-Length
+        // bytes of JPEG. Anything before the header (the boundary, a stray
+        // CRLF) is skipped by searching for the header's end.
+        for (;;) {
+          const parts = splitMjpeg(buf);
+          if (!parts) break;
+          buf = parts.rest;
+          show(parts.frame);
+        }
+        if (buf.length > 16 * 1024 * 1024) buf = new Uint8Array(0);   // a stream we cannot parse: start over
+      }
+      return true;
+    };
+    (async () => {
+      for (;;) {
+        const ok = await run();
+        if (this.running === false && this.frames > 0) return;
+        if (!this.running && !ok && first === null) return;
+        await new Promise(r => setTimeout(r, ok ? 300 : 1000));
+      }
+    })();
+    return firstShown;
+  }
+
   _startZed() {
     this.es = new EventSource(`${ZED_BRIDGE}/stream`);
     this.es.onmessage = ev => {
@@ -387,6 +491,7 @@ export class Tracker {
         const src = this._detectSource();
         const r = this.landmarker.detectForVideo(src, now);
         const mine = r.landmarks?.length ? this._pickBody(r.landmarks, now) : null;
+        if (!r.landmarks?.length) { this.people = []; this.peopleSeen = 0; }
         if (mine) this._ingest(mine, now);
         if (this.wantSecond && r.landmarks?.length > 1) {
           const second = this._pickSecond(r.landmarks, mine, now);
@@ -437,7 +542,33 @@ export class Tracker {
   _pickBody(list, now) {
     const cands = list.map(l => this._feature(l)).filter(Boolean);
     this.peopleSeen = cands.length;
+    const chosen = this._pickFrom(cands, now);
+    // everyone in view for the welcome and login screens' markers, in the
+    // same shape the ZED bridge sends (x unmirrored), so staff can click the
+    // patient on a webcam too (Oct 2026, by request)
+    this.people = cands.map((c, i) => ({ id: i, x: 1 - c.mid.x, y: c.mid.y, sw: c.sw,
+                                         seat: c === chosen ? 0 : null }));
+    return chosen ? chosen.lm : null;
+  }
+
+  _pickFrom(cands, now) {
     if (!cands.length) return null;
+    // a click on a person (selectPerson): take the body nearest the click,
+    // whatever we were following, and remember their build
+    if (this.pick) {
+      const at = this.pick; this.pick = null;
+      let best = null, bestD = Infinity;
+      for (const c of cands) {
+        const d = Math.hypot(c.mid.x - at.x, c.mid.y - at.y);
+        if (d < bestD) { bestD = d; best = c; }
+      }
+      if (best && bestD < Math.max(0.12, best.sw * 1.5)) {
+        this.lock = null;
+        this._setLock(best, now);
+        this.pinned = { sw: best.sw, torso: best.torso };
+        return best;
+      }
+    }
 
     const lock = this.lock;
     if (lock && now - lock.at < LOCK_GRACE) {
@@ -453,15 +584,32 @@ export class Tracker {
         const cost = move + scale * 2 + build * 1.5;
         if (cost < bestCost) { bestCost = cost; best = c; }
       }
-      if (best && bestCost < LOCK_GATE) { this._setLock(best, now); return best.lm; }
+      if (best && bestCost < LOCK_GATE) { this._setLock(best, now); return best; }
       return null;   // the person we follow is not in this frame: pause, don't swap
+    }
+    // a person staff clicked is followed by BUILD once they have been out of
+    // view: the body whose shoulder width and torso ratio match, or the only
+    // body there is; with several strangers and no match, wait rather than
+    // hand the session to whoever stands in the middle
+    if (this.pinned) {
+      if (cands.length === 1) { this._setLock(cands[0], now); return cands[0]; }
+      let best = null, bestCost = Infinity;
+      for (const c of cands) {
+        const scale = Math.abs(c.sw - this.pinned.sw) / this.pinned.sw;
+        const build = (c.torso != null && this.pinned.torso != null)
+          ? Math.abs(c.torso - this.pinned.torso) / this.pinned.torso : 0.2;
+        const cost = scale * 2 + build * 1.5;
+        if (cost < bestCost) { bestCost = cost; best = c; }
+      }
+      if (best && bestCost < LOCK_GATE * 0.6) { this._setLock(best, now); return best; }
+      return null;
     }
     // no lock, or it expired: the patient is the person in front of the
     // camera, so take the most central body — not the largest, not the one
     // the model happens to be most confident about
     cands.sort((a, b) => Math.abs(a.mid.x - 0.5) - Math.abs(b.mid.x - 0.5));
     this._setLock(cands[0], now);
-    return cands[0].lm;
+    return cands[0];
   }
 
   _setLock(c, now) {
@@ -474,8 +622,14 @@ export class Tracker {
   }
 
   // forget who we were following (staff drawer / new patient): the next frame
-  // re-acquires the most central body
-  relock() { this.lock = null; }
+  // re-acquires the most central body. A person staff CLICKED stays followed
+  // through a login (the pick is made on the first screen, before the name);
+  // relock(true) lets go of them too.
+  relock(force = false) {
+    if (this.pinned && !force) return;
+    this.lock = null;
+    this.pinned = null;
+  }
 
   // two-player: start (or stop) following a second body. Off, the second
   // player is forgotten at once so a stale paddle never lingers.
@@ -520,8 +674,17 @@ export class Tracker {
   // tracking id and follows them from then on (build signature when the id
   // resets), wherever in the room they are. Resolves to true if the bridge
   // took it. No-op on the webcam path.
-  async selectPerson(id, seat = 0) {
-    if (this.source !== "zed") return false;
+  // Follow the person staff clicked. On the ZED the bridge pins the seat to
+  // that tracking id; on a webcam `at` (the marker's unmirrored normalised
+  // position, from this.people) picks the body nearest it on the next frame
+  // and its build is remembered (see _pickFrom).
+  async selectPerson(id, seat = 0, at = null) {
+    if (this.source !== "zed") {
+      const p = at || this.people?.find(q => q.id === id);
+      if (!p) return false;
+      this.pick = { x: 1 - p.x, y: p.y };
+      return true;
+    }
     try {
       const r = await fetch(`${ZED_BRIDGE}/select?id=${encodeURIComponent(id)}&seat=${seat}`);
       const j = await r.json();

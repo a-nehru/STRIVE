@@ -4,7 +4,7 @@
 
 import { Coach } from "./coach.js";
 import { audio } from "./audio.js";
-import { A11Y, speakLine } from "./a11y.js";
+import { A11Y, speakLine, hushVoice } from "./a11y.js";
 import { coachLine, coachSpeak } from "./coachlines.js";
 
 export const TAU = Math.PI * 2;
@@ -220,7 +220,7 @@ export class GameBase {
   stop() {
     this.active = false; this._prompt("");
     if (this._pauseKey) { removeEventListener("keydown", this._pauseKey); this._pauseKey = null; }
-    try { speechSynthesis.cancel(); } catch {}
+    hushVoice();
   }
 
   elapsed(now) { return (now - this.startT - this.pausedMs) / 1000; }

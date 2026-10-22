@@ -761,6 +761,21 @@ const AI_SLIP_GAP = 0.3;       // how far past the paddle edge the ball slips, i
 // — but the fade is now gentle and capped: a sluggish opponent is not the
 // mechanism, the misread is.
 const AI_FADE_FROM = 55, AI_FADE_TO = 95, AI_FADE_MAX = 0.4;
+const PONG_RACKET_CLOCK = false;
+// A ROUND IS A MATCH (Oct 2026, by request): best of PONG_BEST_OF games of
+// TRICK_AT seconds each, back to back with no card and no rest between them;
+// the first to PONG_GAMES_TO_WIN takes it
+const PONG_BEST_OF = 3, PONG_GAMES_TO_WIN = 2;
+// THE PACE (Oct 2026, by request): `pace` is the seconds the ball takes to
+// cross the court at full speed. On the first game ever on an arm the
+// tutorial's SWEEP sets it: three paddle sweeps rail to rail as quick as is
+// comfortable, the median leg T, and pace = PACE_K × (T + PACE_REACT),
+// because a rally caps at PONG_SPEED_MAX of full pace and the ball can ask
+// for a whole-lane move in one crossing. After every game of a match a won
+// game quickens it by PACE_WIN, a lost one slows it by PACE_LOSE, and the
+// pace the match ends on is what main.js saves for the next time.
+const PACE_K = 0.85, PACE_REACT = 0.3, PACE_WIN = 0.9, PACE_LOSE = 1.1, PACE_MIN = 1.6, PACE_MAX = 5.5;
+const SWEEP_LEGS = 3, SWEEP_MAX_MS = 45000, SWEEP_RING = 0.08;   // the burning-racket game clock (Oct 2026, off by request: the plain clock is clearer)
 // Modes:
 //   solo       patient arm vs gentle (beatable!) AI — points scored both ways
 //   bimanual   left arm vs right arm (self-rally)
@@ -895,6 +910,10 @@ export class ArcPong extends GameBase {
     this.p2Waiting = 0;
     this.rally = 0; this.bestRally = 0;
     this.score = { us: 0, ai: 0 };
+    this.pace = Math.min(PACE_MAX, Math.max(PACE_MIN, this.params.lifetime || 3));
+    this.paceStart = this.pace; this.paceLog = []; this.sweepT = null;
+    this.games = { us: 0, them: 0, list: [] };   // the match: games won each way, and each game's tally
+    this.matchDone = false;
     // the style layer, per player ("us" the patient, "them" the other side:
     // the star, player two, or the friend on the keys)
     this.pl = { us: mkPlayer(), them: mkPlayer() };
@@ -1063,7 +1082,11 @@ export class ArcPong extends GameBase {
   }
   extra() {
     return {
-      pongMode: this.mode, axis: this.axis, bestRally: this.bestRally, points: this.score.us, aiPoints: this.score.ai,
+      pongMode: this.mode, axis: this.axis, bestRally: this.bestRally,
+      // points over the whole match (every game's tally summed)
+      points: this.games.list.reduce((a, g) => a + g.us, 0) + (this.matchDone ? 0 : this.score.us),
+      aiPoints: this.games.list.reduce((a, g) => a + g.them, 0) + (this.matchDone ? 0 : this.score.ai),
+      games: this.games.list.map(g => ({ ...g })), gamesWon: this.games.us, gamesLost: this.games.them, bestOf: PONG_BEST_OF,
       // two-player rounds: whose arm, and whether the camera held them
       ...(this.isDuo ? { p2Side: this.p2Side, p2Name: this.opts.p2Name ?? null,
                          p2LostFrames: this._p2LostTotal | 0 } : {}),
@@ -1082,15 +1105,19 @@ export class ArcPong extends GameBase {
           ? { lo: Math.round(v.lo * 100) / 100, hi: Math.round(v.hi * 100) / 100 }
           : { lo: Math.round(v.lo), hi: Math.round(v.hi) }])),
       pongCrossTime: this.pongCrossTime ? Math.round(this.pongCrossTime * 100) / 100 : null,
+      // the pace (seconds across the court at full speed): where the round
+      // started, where it ended after each game's win or loss, and the sweep
+      sweepT: this.sweepT, paceStart: Math.round(this.paceStart * 100) / 100,
+      pace: Math.round(this.pace * 100) / 100, paceByGame: this.paceLog.map(p => ({ ...p })),
       // whether that measurement set the ball's pace (first game on this arm)
       calibrated: !!this._calibrated,
       // points taken with a trick shot, and points played in all
       trickPoints: this.trickPoints, pointsPlayed: this.pointsPlayed,
       // seconds of play, the tutorial excluded (the game is TRICK_AT of them)
       gameSeconds: Math.round(this.gameT(performance.now()) * 10) / 10,
-      // the game on the tally: won, lost, or null for a draw (or no points)
-      matchWon: this.score.us > this.score.ai ? true : this.score.us < this.score.ai ? false : null,
-      smashEnded: !!this._finalTrick,
+      // the match on the games (then the points): won, lost, or null for a draw
+      matchWon: this.games.list.length ? this._matchWon() : (this.score.us > this.score.ai ? true : this.score.us < this.score.ai ? false : null),
+      smashEnded: this.games.list.some(g => g.smash) || !!this._finalTrick,
       starRank: this.opts.starRank || 1,
       gameLength: TRICK_AT,
       // the style layer: the patient's and the other side's
@@ -1129,10 +1156,12 @@ export class ArcPong extends GameBase {
   // request; they simply happen when the paddle burns, so there is nothing
   // to teach but meeting the ball.) Nothing scores, the star never takes a
   // point, and hovering the skip pill goes straight to the game.
-  _tutSteps() { return ["meet"]; }
+  _tutSteps() { return this.opts.calibrate ? ["sweep", "meet"] : ["meet"]; }
   _tutLines(step) {
     const move = this.axis === "abd" ? "Move your arm to the side" : "Move your arm up or down";
+    const ends = this.axis === "abd" ? "out to one ring, then across to the other" : "up to the top ring, then down to the bottom one";
     return {
+      sweep: ["Sweep your paddle", `Take it ${ends}, as quick as is comfortable. Three times`],
       meet: ["Meet the ball", `A slow ball is coming. ${move} so your paddle is in its way`],
       play: ["Now let's play", "Score for 90 seconds. When your paddle catches fire, your next shot is the smash!"],
     }[step];
@@ -1148,12 +1177,12 @@ export class ArcPong extends GameBase {
       // the level the patient has played their way to, params.lifetime,
       // and the tutorial is a warm-up: re-measuring every session would
       // throw that level away each time.)
+      // (the meet step's own measurement is still logged, paddleTraversalS,
+      // but since Oct 2026 the pace comes from the SWEEP, see _sweep)
       if (t.speeds.length) {
         const v = [...t.speeds].sort((a, b) => a - b)[t.speeds.length >> 1];
         const T = (this.wallBottom - this.wallTop - this.paddleH) / Math.max(0.02, v);
         this.paddleTraversalS = Math.round(T * 100) / 100;
-        this.pongCrossTime = Math.min(5.5, Math.max(1.6, 1.4 * T + 0.45));
-        this._calibrated = !!this.opts.calibrate;
       }
       this.tut = null;
       this.ball = null; this.serving = null;
@@ -1166,6 +1195,42 @@ export class ArcPong extends GameBase {
       return;
     }
     t.step = step; t.n = 0; t.tries = 0; t.said = null; t.hold = false; t.serveAt = 0;
+    if (step === "sweep") t.sweep = { target: "top", legs: [], lastAt: null, start: now };
+  }
+  // THE SWEEP: two rings on the patient's rail, one near each end of the
+  // lane; the paddle goes to the lit one, then the other. Each leg's time is
+  // kept; after SWEEP_LEGS legs (or SWEEP_MAX_MS) the median sets the pace.
+  _sweepRings() {
+    const span = this.wallBottom - this.wallTop - this.paddleH;
+    return { top: this.wallTop + this.paddleH / 2 + span * SWEEP_RING, bottom: this.wallBottom - this.paddleH / 2 - span * SWEEP_RING };
+  }
+  _sweep(now) {
+    const t = this.tut, S = t.sweep;
+    if (!S || t.hold) return;
+    const pad = this.patientRight ? this.pads?.rightY : this.pads?.leftY;
+    const rings = this._sweepRings();
+    if (pad != null) {
+      const py = pad + this.paddleH / 2;
+      if (Math.abs(py - rings[S.target]) < this.paddleH * 0.5) {
+        if (S.lastAt != null) { S.legs.push((now - S.lastAt) / 1000); t.n = S.legs.length; audio.note(Math.min(7, 2 + t.n)); }
+        else audio.note(2);
+        S.lastAt = now;
+        S.target = S.target === "top" ? "bottom" : "top";
+      }
+    }
+    const timeUp = now - S.start > SWEEP_MAX_MS;
+    if (S.legs.length >= SWEEP_LEGS || (timeUp && S.legs.length)) {
+      const T = [...S.legs].sort((a, b) => a - b)[S.legs.length >> 1];
+      this.sweepT = Math.round(T * 100) / 100;
+      this.pongCrossTime = Math.min(PACE_MAX, Math.max(PACE_MIN, PACE_K * (T + PACE_REACT)));
+      if (this.opts.calibrate) { this._calibrated = true; this.pace = this.pongCrossTime; this.paceStart = this.pace; }
+      this.say("Lovely, that's your pace");
+      t.hold = true;
+      setTimeout(() => { if (this.active && this.tut) this._tutGo("meet", performance.now()); }, 1800);
+    } else if (timeUp) {
+      t.hold = true;
+      setTimeout(() => { if (this.active && this.tut) this._tutGo("meet", performance.now()); }, 600);
+    }
   }
   _pongTut(now) {
     const t = this.tut, c = this.canvas;
@@ -1177,7 +1242,7 @@ export class ArcPong extends GameBase {
       if (now - t.skipDwell > 1200) { this._tutGo("play", now); this.say("Alright, rally time!"); return; }
     } else t.skipDwell = null;
 
-    if (t.step == null) this._tutGo("meet", now);
+    if (t.step == null) this._tutGo(this._tutSteps()[0], now);
     // one line per step, spoken once and kept on screen the whole step
     const key = t.step;
     if (t.said !== key) {
@@ -1195,6 +1260,7 @@ export class ArcPong extends GameBase {
       const pad = this.patientRight ? this.pads?.rightY : this.pads?.leftY;
       if (pad != null && Math.abs(pad + this.paddleH / 2 - ay) < this.paddleH * 0.4) t.arrivedT = now;
     }
+    if (t.step === "sweep") { this._sweep(now); return; }   // no ball during the sweep
     // a ball whenever there is none, after a breath
     if (!t.hold && !this.ball && !this.serving) {
       if (!t.serveAt) t.serveAt = now + 1400;
@@ -1260,7 +1326,7 @@ export class ArcPong extends GameBase {
     // the level this arm has played its way to (quicker after a won game,
     // slower after a lost one, main.js#onRoundEnd). On the first game ever
     // on this arm the tutorial's measured paddle speed sets it instead.
-    const vx0 = this.speedK * (this.court.right - this.court.left) / ((this._calibrated && this.pongCrossTime) || this.params.lifetime);
+    const vx0 = this.speedK * (this.court.right - this.court.left) / this.pace;
     this.fullVx = vx0;
     this.baseVx = vx0 * PONG_SPEED_START;   // every rally starts slow and builds (see PONG_SPEED_GAIN)
     const x0 = (this.court.left + this.court.right) / 2;
@@ -1397,19 +1463,57 @@ export class ArcPong extends GameBase {
     const p2 = this.opts.p2Name || "player two";
     const scored = this.hasAI || this.isDuo;
     this.titles = this._titles();
-    if (!scored) { audio.fanfare(); this._announce(`Time! Lovely rallies, your best was ${this.bestRally}.`); return; }
-    if (us > them) {
+    if (!scored) { this.matchDone = true; audio.fanfare(); this._announce(`Time! Lovely rallies, your best was ${this.bestRally}.`); return; }
+    // the match: this game goes on the list, and the round ends only when a
+    // side has PONG_GAMES_TO_WIN or every game is played
+    const G = this.games;
+    G.list.push({ us, them, won: us > them ? true : us < them ? false : null, smash: !!trick, seconds: Math.round(this.gameT(now)), pace: Math.round(this.pace * 100) / 100 });
+    if (us > them) G.us++; else if (them > us) G.them++;
+    // a won game quickens the ball for the next, a lost one slows it; the
+    // pace the match ends on is saved for the next time (main.js)
+    if (us !== them) this.pace = Math.min(PACE_MAX, Math.max(PACE_MIN, this.pace * (us > them ? PACE_WIN : PACE_LOSE)));
+    this.paceLog.push({ game: G.list.length, won: us > them ? true : us < them ? false : null, pace: Math.round(this.pace * 100) / 100 });
+    this.matchDone = G.us >= PONG_GAMES_TO_WIN || G.them >= PONG_GAMES_TO_WIN || G.list.length >= PONG_BEST_OF;
+    const n = G.list.length, who = this.isDuo ? p2 : "the star";
+    if (!this.matchDone) {
+      if (us > them) { audio.fanfare(); this._announce(`${lead}Game ${n} to you, ${us} to ${them}.${G.us === PONG_GAMES_TO_WIN - 1 ? " One more wins it." : ""}`); }
+      else if (us === them) { audio.point(); this._announce(`Game ${n} drawn, ${us} all. On to the next.`); }
+      else { audio.pointLost(); this._announce(`Game ${n} to ${who}, ${them} to ${us}. Next game.`); }
+      return;
+    }
+    const won = this._matchWon();
+    if (won === true) {
       audio.fanfare();
-      this._announce(`${lead}Game! ${us} to ${them}. You won it!`);
-    } else if (us === them) {
+      this._announce(`${lead}That's the match! ${G.us} games to ${G.them}. You won it!`);
+    } else if (won == null) {
       audio.point();
-      this._announce(`${lead}Game! ${us} all. A draw, well played.`);
+      this._announce(`That's the match. All square. Well played.`);
     } else {
       audio.pointLost();
       this._announce(this.isDuo
-        ? `Game to ${p2}, ${them} to ${us}. Good rallies.`
-        : `${lead}Game! The star takes it, ${them} to ${us}. Great rallies, you will get it next time.`);
+        ? `Match to ${p2}, ${G.them} games to ${G.us}. Good rallies.`
+        : `That's the match. The star takes it, ${G.them} games to ${G.us}. Great rallies, you will get it next time.`);
     }
+  }
+  // the match on the games, then on the points over every game, else a draw
+  _matchWon() {
+    const G = this.games;
+    if (G.us !== G.them) return G.us > G.them;
+    const pu = G.list.reduce((a, g) => a + g.us, 0), pt = G.list.reduce((a, g) => a + g.them, 0);
+    return pu === pt ? null : pu > pt;
+  }
+  // the next game of the match: a fresh tally, a fresh clock, the same players
+  _nextGame(now) {
+    this.score = { us: 0, ai: 0 };
+    this.matchOver = null; this._finalTrick = null;
+    this._slipUsed = false; this._slip = null; this._tired = 0;
+    this.trick = null; this.trickAt = 0; this.nextTrick = TRICKS[0];
+    this.rally = 0; this.pointBreak = null; this.orb = null;
+    this.fx = { us: {}, them: {} };
+    this.challengeWon = null; this.titles = null;
+    this._updateUnderdog();
+    this._gameStart(now);
+    this._startServe(now);
   }
   // THE TITLES on the final board. Two people are compared (ties share);
   // alone, the patient earns each against TITLE_SOLO.
@@ -1453,7 +1557,9 @@ export class ArcPong extends GameBase {
     if (this.tut) { this._tutDone(now, "miss"); return; }
     this.pointsPlayed++;
     this._updateUnderdog();
-    this.orb = null;
+    // the orb stays where it is through the point break and into the next
+    // rally (Oct 2026, by request): it used to vanish with the point, so one
+    // that appeared late in a rally was never there to be collected
     // the smash landed (or, with two players, the smash point is decided): that is the game
     if (trick) { this._burstAt(bx, by, trick.cols[2]); this._gameOver(now, trick); return; }
     this.ball = null; this.serving = null; this._slip = null;
@@ -1714,7 +1820,7 @@ export class ArcPong extends GameBase {
     // the match is decided: hold the final board for a beat so the scoreline
     // is read, then finish the round on it rather than on the clock
     if (this.matchOver) {
-      if (now - this.matchOver > 6500) this._end();
+      if (now - this.matchOver > 6500) { if (this.matchDone) this._end(); else this._nextGame(now); }
       this.pads = this._paddles(now, dt);
       return;
     }
@@ -1953,10 +2059,15 @@ export class ArcPong extends GameBase {
       ctx.fillStyle = "rgba(244,236,221,0.7)";
       ctx.fillText("you", usX * c.width - 2, y + c.height * 0.038);
       ctx.fillText(this.isDuo ? (this.opts.p2Name || "player two") : "the star", aiX * c.width - 2, y + c.height * 0.038);
-      // the style under each tally (the star earns none)
-      ctx.fillStyle = "rgba(255,217,138,0.8)";
-      ctx.fillText(`✦ ${this.pl.us.style}`, usX * c.width + 50, y + c.height * 0.038);
-      if (this.isDuo) ctx.fillText(`✦ ${this.pl.them.style}`, aiX * c.width + 50, y + c.height * 0.038);
+      // the games won in the match, as dots beside each name (the style
+      // number went in Oct 2026: fewer things on the court)
+      const dots = (x, n) => {
+        for (let i = 0; i < PONG_GAMES_TO_WIN; i++) {
+          ctx.beginPath(); ctx.arc(x + 58 + i * 16, y + c.height * 0.038, 5, 0, TAU);
+          ctx.fillStyle = i < n ? "#ffd98a" : "rgba(244,236,221,0.25)"; ctx.fill();
+        }
+      };
+      dots(usX * c.width, this.games.us); dots(aiX * c.width, this.games.them);
       ctx.restore();
     }
     // the orb: a glowing, breathing light mid court, waiting for the ball
@@ -1981,7 +2092,10 @@ export class ArcPong extends GameBase {
     // the game clock: vs the star, the paddle catching fire over the game
     // (the smash loader, seconds left in its head); otherwise a plain
     // shrinking line along the top
-    if (PONG_TRICKS && (this.hasAI || this.isDuo) && !tut && !this.matchOver) this._drawRacket(ctx, c, now);
+    // one clock for every mode (Oct 2026, by request: the burning racket with
+    // its number, flames and "smash in N s" was too much to read at a glance);
+    // PONG_RACKET_CLOCK brings the racket back
+    if (PONG_RACKET_CLOCK && PONG_TRICKS && (this.hasAI || this.isDuo) && !tut && !this.matchOver) this._drawRacket(ctx, c, now);
     else if (!tut && !this.matchOver) this._drawGameClock(ctx, c, now);
 
     // rally streak stars, just inside the far rail; ON FIRE past ON_FIRE_AT
@@ -2185,6 +2299,21 @@ export class ArcPong extends GameBase {
       ctx.strokeStyle = `rgba(255,217,138,${0.5 + pulse * 0.4})`; ctx.lineWidth = 3;
       ctx.beginPath(); ctx.arc(q.x, q.y, 18 + pulse * 5, 0, TAU); ctx.stroke();
     }
+    if (t.step === "sweep" && t.sweep) {
+      const rings = this._sweepRings(), ex = this._edgeX(mine);
+      for (const k of ["top", "bottom"]) {
+        const q = P(ex, rings[k]), lit = t.sweep.target === k;
+        ctx.beginPath(); ctx.arc(q.x, q.y, lit ? 26 + pulse * 8 : 18, 0, TAU);
+        ctx.strokeStyle = lit ? `rgba(255,217,138,${0.6 + pulse * 0.4})` : "rgba(244,236,221,0.35)";
+        ctx.lineWidth = lit ? 5 : 3; ctx.stroke();
+      }
+      for (let i = 0; i < SWEEP_LEGS; i++) {
+        const x = c.width / 2 + (i - 1) * 30, y = c.height * 0.2;
+        ctx.beginPath(); ctx.arc(x, y, 8, 0, TAU);
+        if (i < t.n) { ctx.fillStyle = "#ffd98a"; ctx.fill(); }
+        else { ctx.strokeStyle = "rgba(255,217,138,0.5)"; ctx.lineWidth = 2; ctx.stroke(); }
+      }
+    }
     if (t.step === "meet") {
       for (let i = 0; i < 3; i++) {
         const x = c.width / 2 + (i - 1) * 30, y = c.height * 0.2;
@@ -2301,17 +2430,23 @@ export class ArcPong extends GameBase {
   // the game clock without a star to smash (bimanual, companion, duo): a
   // line along the top that shrinks from both ends over the game, with the
   // seconds left in the middle
+  // The game clock: a line that shrinks from both ends and the seconds left
+  // under it, nothing else. With the smash on, the last ten seconds turn
+  // amber, and once the time is up the number gives way to one word, SMASH,
+  // because the next return by a person ends the game.
   _drawGameClock(ctx, c, now) {
     const len = TRICK_AT;
     const left = Math.max(0, len - this.gameT(now));
     const f = left / len;
+    const smash = PONG_TRICKS && (this.hasAI || this.isDuo);
+    const soon = smash && left <= 10;
     ctx.save();
-    ctx.strokeStyle = "rgba(244,236,221,0.35)"; ctx.lineWidth = 4; ctx.lineCap = "round";
-    ctx.beginPath(); ctx.moveTo(c.width * (0.5 - 0.3 * f), c.height * 0.035); ctx.lineTo(c.width * (0.5 + 0.3 * f), c.height * 0.035); ctx.stroke();
-    ctx.fillStyle = "#fff6d8"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.strokeStyle = soon ? "rgba(232,168,106,0.8)" : "rgba(244,236,221,0.35)"; ctx.lineWidth = 4; ctx.lineCap = "round";
+    if (f > 0) { ctx.beginPath(); ctx.moveTo(c.width * (0.5 - 0.3 * f), c.height * 0.035); ctx.lineTo(c.width * (0.5 + 0.3 * f), c.height * 0.035); ctx.stroke(); }
+    ctx.fillStyle = soon ? "#e8a86a" : "#fff6d8"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
     ctx.shadowColor = "rgba(20,16,40,0.9)"; ctx.shadowBlur = 6;
     ctx.font = `800 ${Math.round(c.height * 0.034)}px Nunito, sans-serif`;
-    ctx.fillText(`${Math.ceil(left)} s`, c.width / 2, c.height * 0.075);
+    ctx.fillText(smash && left <= 0 ? "SMASH" : `${Math.ceil(left)} s`, c.width / 2, c.height * 0.075);
     ctx.restore();
   }
 
@@ -2479,28 +2614,27 @@ export class ArcPong extends GameBase {
     ctx.shadowColor = "rgba(20,16,40,0.85)"; ctx.shadowBlur = 16;
     const big = Math.round(c.height * 0.12);
     ctx.font = `800 ${big}px Nunito, sans-serif`;
-    ctx.fillStyle = won ? (this._finalTrick ? this._finalTrick.cols[1] : "#ffd98a") : "#c9c9d3";
-    ctx.fillText(this._finalTrick ? `${this._finalTrick.word} GAME!` : scored ? "GAME!" : "TIME!", 0, -big * 0.4);
+    // the match's result once it is decided, this game's until then
+    const G = this.games, done = scored && this.matchDone, mw = done ? this._matchWon() : null;
+    const headWon = done ? mw === true : won, headDraw = done ? mw == null : draw;
+    ctx.fillStyle = headWon ? (this._finalTrick ? this._finalTrick.cols[1] : "#ffd98a") : "#c9c9d3";
+    ctx.fillText(!scored ? "TIME!" : done ? (this._finalTrick ? `${this._finalTrick.word} MATCH!` : "MATCH!")
+      : this._finalTrick ? `${this._finalTrick.word} GAME!` : "GAME!", 0, -big * 0.4);
     ctx.font = `800 ${Math.round(c.height * 0.08)}px Nunito, sans-serif`;
     ctx.fillStyle = "#fff6d8";
     ctx.fillText(scored ? `${us}  –  ${them}` : `best rally ${this.bestRally}`, 0, big * 0.5);
     ctx.font = `700 ${Math.round(c.height * 0.026)}px Nunito, sans-serif`;
     ctx.fillStyle = "rgba(244,236,221,0.85)";
-    ctx.fillText(!scored ? "lovely rallies" : won ? "you won it!" : draw ? "a draw, well played" : "great rallies, next time it is yours", 0, big * 0.5 + c.height * 0.07);
-    // the summary: style, the longest rally, the titles
-    const T = this.titles || this._titles();
-    const p2 = this.isDuo ? (this.opts.p2Name || "player two") : "the star";
-    const two = this.isDuo || this.mode === "companion" || this.mode === "team-keys";
-    const lines = [
-      two ? `style  you ${this.pl.us.style} · ${p2} ${this.pl.them.style}` : `style ${this.pl.us.style}`,
-      `longest rally ${this.bestRally}` + (this.pl.us.orbs ? ` · ${this.pl.us.orbs} orb${this.pl.us.orbs === 1 ? "" : "s"}` : ""),
-    ];
-    if (T.us.length) lines.push(`🏅 you: ${T.us.join(" · ")}`);
-    if (two && T.them.length) lines.push(`🏅 ${p2}: ${T.them.join(" · ")}`);
-    if (this.challenge) lines.push(this.challengeWon ? `challenge done by ${this.challengeWon === "us" ? "you" : p2}` : `challenge not taken: ${this.challenge.text.toLowerCase()}`);
+    const line = !scored ? "lovely rallies"
+      : done ? (headWon ? `you won the match, ${G.us} games to ${G.them}` : headDraw ? "all square, well played" : `${G.them} games to ${G.us}, next time it is yours`)
+      : (won ? `game ${G.list.length} to you` : draw ? `game ${G.list.length} drawn` : `game ${G.list.length} to ${this.isDuo ? (this.opts.p2Name || "player two") : "the star"}`)
+        + ` · games ${G.us} – ${G.them}`;
+    ctx.fillText(line, 0, big * 0.5 + c.height * 0.07);
+    // one more line: the longest rally (the style, titles and challenge are
+    // gone from the board, Oct 2026, by request)
     ctx.font = `700 ${Math.round(c.height * 0.024)}px Nunito, sans-serif`;
     ctx.fillStyle = "rgba(244,236,221,0.8)";
-    lines.forEach((l, i) => ctx.fillText(l, 0, big * 0.5 + c.height * (0.12 + i * 0.038)));
+    ctx.fillText(`longest rally ${this.bestRally}`, 0, big * 0.5 + c.height * 0.12);
     ctx.restore();
   }
 }

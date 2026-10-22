@@ -1,0 +1,6 @@
+{
+  "_comment": "Which reference clip (in this folder) gives each coach its voice for tools/tts_bridge.py. A missing file means the model's built-in voice. Ten to twenty seconds of clean speech each; recordings of consenting people or synthetic voices, never a public figure. The sample_ivr_* clips are Resemble's own published Chatterbox demo prompts; sample_rom_narrator.wav is cut from the Shoulder Moves recording.",
+  "rook": "sample_ivr_male_01.wav",
+  "lumi": "sample_rom_narrator.wav",
+  "maple": "sample_ivr_female_02.wav"
+}

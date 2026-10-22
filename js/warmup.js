@@ -13,7 +13,7 @@
 // Captions are the video's own.
 import { drawBody, TAU } from "./engine.js";
 import { audio } from "./audio.js";
-import { A11Y, speakLine } from "./a11y.js";
+import { A11Y, speakLine, hushVoice } from "./a11y.js";
 
 export const WARMUP_SRCS = {
   left: "assets/music/Warmup_Stretches_LEFT_arm.mp4",
@@ -92,7 +92,7 @@ export class Warmup {
     this.active = false;
     this._prompt("");
     if (this.vid) { try { this.vid.pause(); this.vid.remove(); } catch {} this.vid = null; }
-    try { speechSynthesis.cancel(); } catch {}
+    hushVoice();
   }
 
   _prompt(main, sub = "") {

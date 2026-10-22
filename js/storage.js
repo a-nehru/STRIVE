@@ -273,6 +273,18 @@ export const store = {
     r.last = new Date().toISOString();
     save(db);
   },
+  // Pong's pace per participant and arm (Oct 2026, by request: the speed
+  // data saved): one entry per round with the sweep time, the pace the
+  // round started and ended on and each game's result; capped at 200
+  getPongSpeed(name, side) { return patient(load(), name).pongSpeed?.[side] || []; },
+  logPongSpeed(name, side, entry) {
+    const db = load(); const p = patient(db, name);
+    p.pongSpeed ??= {};
+    const l = p.pongSpeed[side] ??= [];
+    l.push({ ...entry, at: new Date().toISOString() });
+    if (l.length > 200) l.splice(0, l.length - 200);
+    save(db);
+  },
   resetRivalry(name, partner) {
     const db = load(); const p = patient(db, name);
     if (p.rivalry) delete p.rivalry[partner];

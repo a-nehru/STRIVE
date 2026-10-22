@@ -47,7 +47,7 @@
 import { Coach } from "./coach.js";
 import { audio } from "./audio.js";
 import { CENTER, drawBody, drawHand, drawVideoMirror } from "./engine.js";
-import { A11Y } from "./a11y.js";
+import { A11Y, hushVoice } from "./a11y.js";
 
 const BINS = 32;                         // 11.25° wedges (was 16): a finer outline, chord error under 1%
 const PAINT_SPREAD = 2;                  // neighbours each side credited with a reach's projection (±33.75°)
@@ -100,7 +100,8 @@ const TARGETS = [
 const TARGET_FRAC = 0.85;                // of the reach the circles measured in that direction: inside the shape
 const TARGET_MIN_SW = 0.5;               // never so close that resting there passes
 const TARGET_REACH_MS = 10000;           // to get there
-const GRASP_MS = 5000;                   // then, to squeeze and open
+const GRASP_MS = 7000;                   // then, to open, squeeze and open (Oct 2026: a step more when the hand arrives closed)
+const GRASP_HOLD_MS = 300;               // a hand state counts once it has held this long (no flicker)
 const TARGET_SETTLE = 1400;              // pause between targets
 const TARGET_CAP = 0.34;                 // capture radius at the target (SW) — generous
 const TARGET_CAP_FRAC = 0.42;            // ...as a fraction of the ask, TARGET_CAP the cap
@@ -140,6 +141,14 @@ const VIDEO_MIRROR = false;              // burnt-in titles and captions: never 
 // here while it still records the compensation events the profile stores.
 const ASSESS_COACH_CUES = true;
 const VIDEO_CAPTIONED = true;            // it carries its own captions, so the app draws none
+// THE ZOOM (Oct 2026, by request): with the camera a few metres back the
+// person is a small figure in a big picture and the targets are tiny. Every
+// figure-flow phase (settle, countdown, circles, lift, targets) is drawn
+// through one zoom about the body centre, sized to the arm's length plus a
+// margin, so the person, their shape, the targets and the cursor fill the
+// stage whatever the distance. Only in, never out (k >= 1), capped at
+// ZOOM_MAX, smoothed so a re-snap of the frame is a glide, not a jump.
+const ZOOM_PAD_SW = 0.5, ZOOM_MAX = 2.5, ZOOM_EASE = 0.08;
 const VIDEO_CROP_HALF_W = 2.3;           // patient panel: half-width about the body centre, SW
 const VIDEO_CROP_UP = 2.0, VIDEO_CROP_DOWN = 2.2;   // ...and above / below the shoulder line, SW
 // The picture is drawn in this window (fractions of the frame width, full
@@ -268,7 +277,7 @@ export class Assessment {
     this.active = false;
     this._prompt("");
     if (this.vid) { try { this.vid.pause(); this.vid.remove(); } catch {} this.vid = null; }
-    try { speechSynthesis.cancel(); } catch {}
+    hushVoice();
   }
 
   _promptSettle() {
@@ -283,7 +292,7 @@ export class Assessment {
 
   _speak(text) {
     try {
-      speechSynthesis.cancel();
+      hushVoice();
       const u = new SpeechSynthesisUtterance(text);
       u.rate = 0.9;   // unhurried, for an older audience
       speechSynthesis.speak(u);
@@ -327,6 +336,12 @@ export class Assessment {
     if (this.state === "video") {
       this._drawVideoStage(ctx, c, now);
     } else {
+      // everything on the stage goes through the zoom about the body centre
+      // (ZOOM_*): the picture and the skeleton here, the shape, targets and
+      // cursor in _draw, which applies the same transform
+      ctx.fillStyle = "#161636"; ctx.fillRect(0, 0, c.width, c.height);
+      const Z = this.state === "demo" ? { k: 1, tx: 0, ty: 0 } : this._zoomOf(c);
+      ctx.save(); ctx.translate(Z.tx, Z.ty); ctx.scale(Z.k, Z.k);
       if (!drawVideoMirror(ctx, c, this.t)) {
         const g = ctx.createRadialGradient(c.width / 2, c.height * 0.42, 60, c.width / 2, c.height * 0.42, c.height);
         g.addColorStop(0, "#3a3168"); g.addColorStop(0.55, "#20204a"); g.addColorStop(1, "#161636");
@@ -335,6 +350,7 @@ export class Assessment {
       // hands: false — the skeleton's own glowing palm discs would put a
       // second circle on the hand; the one cursor here is the WRIST (Sep 2026)
       drawBody(ctx, c, this.t, { framed: !this.coach.dimming, hands: false });
+      ctx.restore();
     }
 
     // sustained-loss pause only — brief blips never interrupt, and every
@@ -550,8 +566,16 @@ export class Assessment {
             e.since = now; e.graspAt = now;
             e.preClosed = e.preClosedAtArrival = this.t.handClosed(this.side);
             audio.note(5);
-            this._prompt("Hold it there", "Now squeeze, then open your hand");
-            this._speak("Good. Now squeeze your hand, then open it.");
+            // THE GRASP CHECK (Oct 2026, by request): one short ask at a
+            // time, each spoken once, each counted only when the hand has
+            // held the state for GRASP_HOLD_MS. A hand that arrives open is
+            // asked to squeeze, then open. A hand that arrives closed is
+            // asked to open first, then squeeze, then open, so the check
+            // always sees both states change.
+            e.gstep = e.preClosed ? "open-first" : "close";
+            e.gState = null; e.gAt = now;
+            this._prompt("Hold it there", e.preClosed ? "Open your hand" : "Squeeze your hand");
+            this._speak(e.preClosed ? "Good. Now open your hand." : "Good. Now squeeze your hand.");
           } else if (now - e.start > TARGET_REACH_MS) {
             audio.note(2);
             this._speak(e.best > 0.6 ? "Close! That's a good stretch." : "That's fine. Let's try the next one.");
@@ -560,16 +584,23 @@ export class Assessment {
           break;
         }
 
-        // the grasp window: a close then an open, one thing at a time
+        // the grasp window: open (if it arrived closed), squeeze, open; one
+        // ask at a time, a state counted once it has held GRASP_HOLD_MS
         e.samples.push(d);
-        const closed = this.t.handClosed(this.side);
-        if (e.preClosed && !closed) e.preClosed = false;
-        if (closed && !e.squeeze && !e.preClosed) {
-          e.squeeze = true; audio.note(4);
+        const closedNow = this.t.handClosed(this.side);
+        if (closedNow !== e.gState) { e.gState = closedNow; e.gAt = now; }
+        const held = now - e.gAt >= GRASP_HOLD_MS;
+        if (held && e.gstep === "open-first" && !closedNow) {
+          e.preClosed = false; e.gstep = "close"; audio.note(3);
+          this._prompt("Hold it there", "Now squeeze your hand");
+          this._speak("Now squeeze.");
+        } else if (held && e.gstep === "close" && closedNow) {
+          e.squeeze = true; e.gstep = "open"; audio.note(4);
           this._prompt("Hold it there", "Now open your hand");
-          this._speak("And now open it.");
+          this._speak("And open.");
+        } else if (held && e.gstep === "open" && !closedNow) {
+          e.release = true; e.gstep = "done"; audio.note(6);
         }
-        if (!closed && e.squeeze && !e.release) { e.release = true; audio.note(6); }
         const cycled = e.squeeze && e.release;
         if (cycled || now - e.graspAt > GRASP_MS) {
           e.done = true;
@@ -589,7 +620,7 @@ export class Assessment {
     this.vIdx = -1; this.vm = null;       // the move being measured (none before the first)
     this.caption = VIDEO_LEAD;
     this._prompt("");                     // the instruction box on the stage carries the words
-    try { speechSynthesis.cancel(); } catch {}
+    hushVoice();
     const v = this.vid || this._makeVideo();   // preloaded at start(), normally
     v.muted = !VIDEO_HAS_VOICE;           // a silent track stays muted, so autoplay is never refused for it
     this.vidSound = VIDEO_HAS_VOICE;      // false once the browser refuses sound (then the app speaks instead)
@@ -939,6 +970,27 @@ export class Assessment {
   // The largest radius (SW) along direction th from CENTER that still lands on
   // the stage. relToPx is affine, so the ray is a straight line in pixels and
   // this is just the nearest edge crossing.
+  _zoomOf(c) {
+    const one = { k: 1, tx: 0, ty: 0 };
+    if (!this.t.frame) return this._zoom || one;
+    const o = this.t.relToPx(CENTER, c);
+    const ux = this.t.relToPx({ x: CENTER.x + 1, y: CENTER.y }, c);
+    const uy = this.t.relToPx({ x: CENTER.x, y: CENTER.y + 1 }, c);
+    const R = (this.armLen || 1.3) + ZOOM_PAD_SW;
+    const hx = R * Math.abs(ux.x - o.x), hy = R * Math.abs(uy.y - o.y);
+    if (!(hx > 1) || !(hy > 1) || !isFinite(o.x) || !isFinite(o.y)) return this._zoom || one;
+    const k = Math.max(1, Math.min(ZOOM_MAX, c.width / (2 * hx), c.height / (2 * hy)));
+    const want = { k, tx: c.width / 2 - k * o.x, ty: c.height / 2 - k * o.y };
+    const z = this._zoom || want;
+    this._zoom = { k: z.k + (want.k - z.k) * ZOOM_EASE, tx: z.tx + (want.tx - z.tx) * ZOOM_EASE, ty: z.ty + (want.ty - z.ty) * ZOOM_EASE };
+    return this._zoom;
+  }
+  // the part of the (unzoomed) stage that is on screen under the zoom
+  _viewRect(c) {
+    const Z = this._zoom || { k: 1, tx: 0, ty: 0 };
+    return { x0: -Z.tx / Z.k, y0: -Z.ty / Z.k, x1: (c.width - Z.tx) / Z.k, y1: (c.height - Z.ty) / Z.k, k: Z.k };
+  }
+
   _screenR(th, c) {
     const o = this.t.relToPx(CENTER, c);
     // The basis is taken from relToPx itself rather than from pxPerSW: a
@@ -951,13 +1003,14 @@ export class Assessment {
     const dx = (ux.x - o.x) * co + (uy.x - o.x) * si;
     const dy = (ux.y - o.y) * co + (uy.y - o.y) * si;
     if (!isFinite(dx) || !isFinite(dy) || (dx === 0 && dy === 0)) return Infinity;
-    const m = Math.min(c.width, c.height) * STAGE_MARGIN;
+    const V = this._viewRect(c);
+    const m = Math.min(c.width, c.height) * STAGE_MARGIN / V.k;
     const edge = (p, d, lo, hi) => {
       if (Math.abs(d) < 1e-6) return (p >= lo && p <= hi) ? Infinity : 0;
       return (d > 0 ? hi - p : lo - p) / d;
     };
-    return Math.max(0, Math.min(edge(o.x, dx, m, c.width - m),
-                                edge(o.y, dy, m, c.height - m)));
+    return Math.max(0, Math.min(edge(o.x, dx, V.x0 + m, V.x1 - m),
+                                edge(o.y, dy, V.y0 + m, V.y1 - m)));
   }
 
   // What this arm has actually shown in direction th: the best of the bin and
@@ -1532,6 +1585,9 @@ export class Assessment {
     // the coach's dock and dim still go over it, so a cue is seen there too
     if (this.state === "video") { this._drawCoach(ctx, c, now); return; }
 
+    const Z = this._zoom || { k: 1, tx: 0, ty: 0 };
+    const fs = n => n / Z.k;                       // text keeps its size on screen under the zoom
+    ctx.save(); ctx.translate(Z.tx, Z.ty); ctx.scale(Z.k, Z.k);
     if (this.state !== "settle") {
       // the body centre, marked with a soft dot — everything else is drawn by
       // the patient
@@ -1547,7 +1603,7 @@ export class Assessment {
         ctx.save();
         ctx.fillStyle = "rgba(244,236,221,0.95)";
         ctx.shadowColor = "rgba(232,168,106,0.8)"; ctx.shadowBlur = 30;
-        ctx.font = `800 ${Math.round(c.height * 0.16)}px Nunito, sans-serif`;
+        ctx.font = `800 ${Math.round(fs(c.height * 0.16))}px Nunito, sans-serif`;
         ctx.textAlign = "center"; ctx.textBaseline = "middle";
         ctx.fillText(left, gp.x, gp.y);
         ctx.restore();
@@ -1638,11 +1694,23 @@ export class Assessment {
             const f = Math.min(1, (now - e.graspAt) / GRASP_MS);
             ctx.strokeStyle = "#9fc08a"; ctx.lineWidth = 7;
             ctx.beginPath(); ctx.arc(tp.x, tp.y, rad + 9, -Math.PI / 2, -Math.PI / 2 + TAU * f); ctx.stroke();
-            const gy = tp.y - rad - 26;
-            ctx.fillStyle = e.release ? "#9fc08a" : e.squeeze ? "#e8a86a" : "rgba(244,236,221,0.75)";
-            ctx.font = `800 ${Math.round(c.height * 0.028)}px Nunito, sans-serif`;
-            ctx.textAlign = "center";
-            ctx.fillText(e.release ? "✓ that's it" : e.squeeze ? "now open ✋" : "squeeze ✊", tp.x, gy);
+            // the ask, as one big hand above the target (Oct 2026, by request:
+            // bigger), and under it what the camera sees right now, so a
+            // squeeze that is not being detected is visible rather than guessed
+            const want = e.gstep === "close" ? "✊" : e.gstep === "done" ? "✓" : "✋";
+            const seen = this.t.handClosed(this.side);
+            const matches = e.gstep === "done" || (e.gstep === "close") === !!seen;
+            const big = Math.round(fs(c.height * 0.085));
+            ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+            ctx.font = `${big}px "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif`;
+            ctx.fillStyle = e.gstep === "done" ? "#9fc08a" : "#f4ecdd";
+            ctx.fillText(want, tp.x, tp.y - rad - 30);
+            ctx.font = `800 ${Math.round(fs(c.height * 0.026))}px Nunito, sans-serif`;
+            ctx.fillStyle = matches ? "#9fc08a" : "rgba(244,236,221,0.8)";
+            ctx.fillText(e.gstep === "done" ? "that's it" : e.gstep === "close" ? "squeeze" : "open", tp.x, tp.y - rad - big - 38);
+            ctx.font = `700 ${Math.round(fs(c.height * 0.02))}px Nunito, sans-serif`;
+            ctx.fillStyle = seen ? "rgba(232,168,106,0.9)" : "rgba(159,192,138,0.9)";
+            ctx.fillText(seen ? "we see: closed" : "we see: open", tp.x, tp.y + rad + 34);
           }
         }
       }
@@ -1734,6 +1802,7 @@ export class Assessment {
       ctx.restore();
     }
 
+    ctx.restore();
     this._drawCoach(ctx, c, now);
   }
 

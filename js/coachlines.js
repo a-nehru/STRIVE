@@ -286,4 +286,38 @@ function numbersOnly(d) {
   return out;
 }
 
+// Every fixed line the phrasebook can say for a coach (the variants that
+// need no number, the posture cues, the coach's sample), for the voice
+// bridge to render ahead of time (js/tts.js prerenderVoice). Lines that
+// carry a number are rendered when first said and cached from then on.
+// The variants that carry a number are rendered too, for the values a
+// session actually produces (a streak of two to ten, and so on), so most of
+// what is said in a game is on disk before the game; a value outside these
+// is rendered when first said and cached from then on.
+const PRERENDER_VALUES = {
+  streak: [2, 3, 4, 5, 6, 7, 8, 9, 10], longest_streak: [3, 4, 5, 6, 7, 8, 9, 10, 12],
+  hits: [5, 8, 10, 12, 15, 18, 20, 25, 30], hit_pct: [50, 60, 70, 80, 90, 100],
+  reach_cm: [10, 15, 20, 25, 30, 35, 40, 45, 50], delta_cm: [1, 2, 3, 4, 5], delta_pct: [5, 10, 15, 20],
+};
+export function phrasebookLines(coach = A11Y.coach) {
+  const book = BOOK[coach] || BOOK.lumi;
+  const out = new Set([coachInfo(coach).sample, coachInfo(coach).intro]);
+  for (const [event, list] of Object.entries(book)) {
+    if (event === "compensation") { for (const arr of Object.values(list)) for (const t of arr) out.add(t); continue; }
+    for (const v of list) {
+      if (!v.needs) { try { out.add(v.text({})); } catch {} continue; }
+      // one number per line in practice; a variant needing two gets the
+      // values paired up by index
+      const n = Math.max(...v.needs.map(k => (PRERENDER_VALUES[k] || []).length));
+      for (let i = 0; i < n; i++) {
+        const d = {};
+        for (const k of v.needs) { const vals = PRERENDER_VALUES[k] || []; if (!vals.length) { d[k] = null; break; } d[k] = vals[Math.min(i, vals.length - 1)]; }
+        if (Object.values(d).some(x => x == null)) break;
+        try { out.add(v.text(d)); } catch {}
+      }
+    }
+  }
+  return [...out].filter(Boolean);
+}
+
 export { coachInfo };

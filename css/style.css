@@ -78,7 +78,7 @@ button { font-family: inherit; cursor: pointer; }
 #handcursor.grasping { transform: translate(-50%, -50%) scale(0.7); filter: brightness(1.3); }
 
 /* welcome live-tracking mirror */
-#welcome-canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+#welcome-canvas, #login-canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 .track-status {
   position: absolute; bottom: 10vh; left: 0; right: 0;
   text-align: center; font-weight: 700; font-size: 15px;
@@ -101,6 +101,8 @@ button { font-family: inherit; cursor: pointer; }
 
 /* ---------- P0 participant login ---------- */
 #screen-login { background: linear-gradient(165deg, #1b1b3a 0%, #3a3168 46%, #8f76b0 100%); }
+#screen-login .login-card { background: rgba(27, 27, 58, 0.62); }
+#login-track { bottom: 7vh; }
 .login-card {
   position: relative; z-index: 2;
   width: min(620px, 90vw);
@@ -153,8 +155,8 @@ button { font-family: inherit; cursor: pointer; }
 @media (max-width: 760px) { .coaches { grid-template-columns: 1fr; } .coach { flex-direction: row; text-align: left; }
   .coach svg { width: 84px; flex: none; } .coach .txt { align-items: flex-start; } .coach .line { min-height: 0; } }
 body.calm .coach, body.calm .coach .tick { transition: none; } body.calm .coach:hover, body.calm .coach[aria-checked="true"] { transform: none; }
-#coachstate { font-size: 13px; font-weight: 700; color: rgba(244,236,221,0.7); margin: 4px 0 8px; }
-#coachstate.ok { color: var(--green); }
+#coachstate, #voicestate { font-size: 13px; font-weight: 700; color: rgba(244,236,221,0.7); margin: 4px 0 8px; }
+#coachstate.ok, #voicestate.ok { color: var(--green); }
 .login-skip {
   margin-top: 3vh; background: none; border: none;
   font-weight: 700; font-size: 15px; color: rgba(244, 236, 221, 0.55);

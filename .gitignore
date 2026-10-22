@@ -23,3 +23,8 @@ tools/*.log
 pong_score.png
 assess_test.html
 mockups/*.zip
+# Chatterbox voice bridge (tools/tts_bridge.py): its venv, rendered lines, and the reference voice clips (people's voices)
+tools/.venv-tts/
+tools/tts_cache/
+tools/voices/*.wav
+tools/voices/*.mp3

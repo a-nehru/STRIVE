@@ -8,9 +8,10 @@ import { drawBody, drawVideoMirror } from "./engine.js";
 import { store } from "./storage.js";
 import { drawVillage, villageLine, villageCounts } from "./village.js";
 import { audio } from "./audio.js";
-import { A11Y, applySettings, speakLine, showCaption, COACHES } from "./a11y.js";
-import { coachLine } from "./coachlines.js";
+import { A11Y, applySettings, speakLine, showCaption, hushVoice, COACHES } from "./a11y.js";
+import { coachLine, phrasebookLines } from "./coachlines.js";
 import { probeCoach, coachRelayReady, coachRelayInfo } from "./coachline.js";
+import { probeTts, ttsReady, ttsInfo, prerenderVoice } from "./tts.js";
 import { probeMail, sendMail, mailTarget, mailReady, diagnostics, progressReport, setReminder, pushSnapshot } from "./mail.js";
 
 // "12 min" / "1 h 05 min"
@@ -64,6 +65,7 @@ function show(id) {
 
 function resize() { const c = $("canvas"); c.width = innerWidth; c.height = innerHeight; }
 addEventListener("resize", resize); resize();
+addEventListener("resize", () => { if (state.screen === "screen-romcompare") romLiveLoop(); });
 
 // spoken guidance outside game/assessment classes (welcome, menus) — the
 // suite speaks everything important (RGS auto audio instructions), with an
@@ -76,6 +78,38 @@ function loadSettings(name) {
   applySettings(s);
   audio.setVolumes({ music: s.volMusic, fx: s.volFx });
   syncComfortControls();
+  warmVoice();
+}
+
+// The voice bridge (tools/tts_bridge.py): Chatterbox renders every line in
+// the chosen coach's own voice when it is up; the browser's voice otherwise,
+// so like the other relays this is a status line and never a dependency.
+// warmVoice hands it the coach's phrasebook (and the three chooser samples)
+// to render in the background, so the cues are on disk before one is needed.
+let voiceWarmed = "";
+function warmVoice() {
+  if (!ttsReady()) return;
+  const coach = A11Y.coach;
+  if (voiceWarmed === coach) return;
+  voiceWarmed = coach;
+  prerenderVoice(coach, phrasebookLines(coach)).then(() => voiceState());
+  for (const id of Object.keys(COACHES)) if (id !== coach) prerenderVoice(id, [COACHES[id].sample, COACHES[id].intro]);
+}
+function voiceState() {
+  const el = $("voicestate");
+  if (!el) return;
+  const info = ttsInfo();
+  if (ttsReady()) {
+    const v = info.voices?.[A11Y.coach] || "built-in";
+    el.textContent = `Voice: Chatterbox on the ${info.device} (${COACHES[A11Y.coach]?.name || A11Y.coach}: ${v.replace(/^sample_|\.wav$/g, "")}, ${info.cached} lines on disk)`;
+    el.className = "ok";
+  } else if (info && info.loading) {
+    el.textContent = "Voice: Chatterbox loading, browser voice meanwhile";
+    el.className = "";
+  } else {
+    el.textContent = "Voice: browser speech engine (voice bridge offline)";
+    el.className = "";
+  }
 }
 function saveSetting(patch) {
   store.saveSettings(state.patient, patch);
@@ -124,7 +158,7 @@ setInterval(() => {
     : `webcam ${t.srcW || t.video?.videoWidth || "?"}×${t.srcH || t.video?.videoHeight || "?"}`;
   box.textContent = `${cam}  ·  ${n} fps tracking  ·  ${_fpsScreen} fps screen`;
   box.classList.toggle("stale", n === 0);
-  box.classList.remove("hidden");
+  box.classList.toggle("hidden", state.screen === "screen-romcompare");
   _fpsScreen = 0;
 }, 1000);
 $("btn-loading-retry").addEventListener("click", () => location.reload());
@@ -162,11 +196,15 @@ function renderCoachPick() {
   $("btn-login-coach").textContent = `Start with ${c.name}`;
   $("btn-login-coach").dataset.coach = coachPick;
 }
-function selectCoach(id, focus) {
+// `say`: the coach introduces themselves in their own voice (COACHES.intro)
+// when a card is chosen by click or arrow key; the step's opening render
+// passes false so the screen does not start talking on its own
+function selectCoach(id, focus, say = true) {
   if (!COACHES[id]) return;
   coachPick = id;
   renderCoachPick();
   if (focus) document.querySelector(`#login-coach .coach[data-coach="${id}"]`)?.focus();
+  if (say) speakLine(COACHES[id].intro, 0.9, true, null, id);
 }
 {
   const cards = [...document.querySelectorAll("#login-coach .coach")];
@@ -314,8 +352,9 @@ function createLogin() {
   if (store.hasPatient(name)) { loginAs(name, false); return; }   // existing name just logs in
   // a new participant: the coach comes next, then the arm
   pendingCreate = name;
-  selectCoach("lumi", false);
+  selectCoach("lumi", false, false);
   loginStep("login-coach");
+  speak("Choose your coach. Click one to hear them.");
 }
 
 // the progress snapshot the relay answers update-by-email from: pushed at
@@ -350,13 +389,15 @@ $("login-name").addEventListener("keydown", e => { if (e.key === "Enter") create
 // that the tracker can see them at all: only a shoulder width too small for
 // any landmark to be trusted (about 0.03 of the frame, roughly 5 m on the
 // ZED's wide lens) asks them to come closer, and gently.
+// What the picture needs, in one line, or null when the whole person is in
+// it (Oct 2026, by request: the only asks are to be seen whole, so "move
+// back" when any of them is cut off, never how to sit)
 function framingMessage(t) {
   if (!t.trackingOk) return "Take a seat facing the camera";
-  if (t.shoulderWFast > 0.42) return "Sit back a little, so we can see your whole upper body";
+  const cut = t.shoulderWFast > 0.42 || !t.rawVis?.hips || t.anchorFast.y < 0.08 || t.anchorFast.y > 0.75;
+  if (cut) return "Move back a little, so we can see all of you";
   if (t.shoulderWFast < 0.03) return "If you can, come a little closer to the camera";
-  if (!t.rawVis?.hips) return "Sit back a little, we want to see down to your hips";
-  if (t.anchorFast.x < 0.15 || t.anchorFast.x > 0.85) return "Scoot toward the middle of the picture";
-  if (t.anchorFast.y < 0.08 || t.anchorFast.y > 0.75) return "Adjust the camera so your shoulders sit near the middle";
+  if (t.anchorFast.x < 0.15 || t.anchorFast.x > 0.85) return "Move toward the middle of the picture";
   return null;
 }
 
@@ -367,7 +408,7 @@ function framingMessage(t) {
 // over the camera picture.
 function drawPeopleMarkers(ctx, c, t) {
   const people = t.people || [];
-  if (t.source !== "zed" || people.length < 2) return [];
+  if (people.length < 2) return [];
   const boxes = [];
   for (const p of people) {
     const px = t._videoToPx(1 - p.x, p.y, c);
@@ -389,7 +430,7 @@ function drawPeopleMarkers(ctx, c, t) {
     ctx.fillStyle = followed ? "#9fc08a" : "#e8a86a";
     ctx.fillText(label, px.x, px.y - r - 14);
     ctx.restore();
-    boxes.push({ id: p.id, x: px.x, y: px.y, r });
+    boxes.push({ id: p.id, x: px.x, y: px.y, r, at: { x: p.x, y: p.y } });
   }
   return boxes;
 }
@@ -398,6 +439,13 @@ const TAU2 = Math.PI * 2;
 // (the live-mirror body drawing moved to engine.js drawBody — shared with the
 // assessment's camera view)
 
+// The camera screens (Oct 2026, by request: the camera is on and SHOWN from
+// the first screen, not from the welcome screen after the name). One loop
+// draws whichever of the two is up: the live mirror full screen, the tracked
+// skeleton on the person being followed, a ring on everyone else to click,
+// and one line about the picture. The login screen says it under the card;
+// the welcome screen carries it in its headline and waits to be settled.
+const CAMERA_SCREENS = { "screen-login": "login-canvas", "screen-welcome": "welcome-canvas" };
 function watchWelcome() {
   let framedSince = null, squeezeSeen = false;
   let lastSpoken = "", lastSpokenAt = 0, inviteSaid = false;
@@ -410,57 +458,30 @@ function watchWelcome() {
   const head = document.querySelector("#screen-welcome .headline");
   const sub = document.querySelector("#screen-welcome .subline");
   const trackEl = $("welcome-track");
-  const setText = (el, s) => { if (el.textContent !== s) el.textContent = s; };
-  // person markers drawn this frame (ZED, 2+ people): a click on one tells
-  // the bridge to follow that person. The canvas itself takes no pointer
-  // events (buttons sit above it), so the screen listens and hit-tests.
+  const loginEl = $("login-track");
+  const setText = (el, s) => { if (el && el.textContent !== s) el.textContent = s; };
+  // person markers drawn this frame (2+ people): a click on one makes the
+  // tracker follow that person, on the ZED through the bridge's seat pin, on
+  // a webcam through the tracker's own lock; either way they stay followed
+  // through the login and the whole session. The canvases take no pointer
+  // events (buttons sit above them), so the screens listen and hit-test.
   let personBoxes = [], pickedAt = 0;
-  $("screen-welcome").addEventListener("click", e => {
-    if (e.target.closest("button, a, select, input")) return;
-    const hit = personBoxes.find(b => Math.hypot(e.clientX - b.x, e.clientY - b.y) <= b.r + 12);
-    if (!hit) return;
-    pickedAt = performance.now();
-    state.tracker?.selectPerson(hit.id);
-  });
-
-  // Fixed-size mini mirror: the skeleton is drawn into a small frame in the
-  // lower-right corner at a constant scale (shoulders span a fixed fraction
-  // of the frame), so sitting closer or farther never changes its drawn size.
-  let mirK = null;
-  const mirrorBox = c => {
-    const h = Math.round(c.height * 0.28), w = Math.round(h * 0.92);
-    return { x: c.width - w - 24, y: c.height - h - 24, w, h };
-  };
-  const mirrorMap = (t, c, box) => {
-    const p = t.pts;
-    const A = t._videoToPx(p.shL.x, p.shL.y, c), B = t._videoToPx(p.shR.x, p.shR.y, c);
-    const shw = Math.max(1, Math.hypot(A.x - B.x, A.y - B.y));
-    const kNow = (box.w * 0.42) / shw;
-    mirK = mirK == null ? kNow : mirK + (kNow - mirK) * 0.15;   // gentle, no size jumps
-    const mid = { x: (A.x + B.x) / 2, y: (A.y + B.y) / 2 };
-    const ax = box.x + box.w / 2, ay = box.y + box.h * 0.34;
-    const k = mirK;
-    return { k, map: px => ({ x: ax + (px.x - mid.x) * k, y: ay + (px.y - mid.y) * k }) };
-  };
-  const frameMirror = (ctx, box, framed) => {
-    ctx.save();
-    ctx.beginPath(); ctx.roundRect(box.x, box.y, box.w, box.h, 18);
-    ctx.fillStyle = "rgba(16,16,40,0.5)"; ctx.fill();
-    ctx.strokeStyle = framed ? "rgba(159,192,138,0.6)" : "rgba(232,168,106,0.55)";
-    ctx.lineWidth = 3;
-    if (!framed) ctx.setLineDash([10, 8]);   // dash mirrors the skeleton's state
-    ctx.stroke();
-    ctx.restore();
-  };
-  const clipMirror = (ctx, box) => {
-    ctx.beginPath(); ctx.roundRect(box.x, box.y, box.w, box.h, 18);
-    ctx.clip();
-  };
+  for (const id of Object.keys(CAMERA_SCREENS)) {
+    $(id).addEventListener("click", e => {
+      if (e.target.closest("button, a, select, input, .login-card")) return;
+      const hit = personBoxes.find(b => Math.hypot(e.clientX - b.x, e.clientY - b.y) <= b.r + 12);
+      if (!hit) return;
+      pickedAt = performance.now();
+      state.tracker?.selectPerson(hit.id, 0, hit.at);
+    });
+  }
 
   function loop() {
     requestAnimationFrame(loop);
-    if (state.screen !== "screen-welcome") return;
-    const c = $("welcome-canvas");
+    const canvasId = CAMERA_SCREENS[state.screen];
+    if (!canvasId) return;
+    const onLogin = state.screen === "screen-login";
+    const c = $(canvasId);
     if (c.width !== innerWidth || c.height !== innerHeight) { c.width = innerWidth; c.height = innerHeight; }
     const ctx = c.getContext("2d");
     ctx.clearRect(0, 0, c.width, c.height);
@@ -471,24 +492,31 @@ function watchWelcome() {
     // tracking + feature status (so staff can see the whole chain is alive)
     if (t.handClosed("left") || t.handClosed("right")) squeezeSeen = true;
     const handFresh = t._handPts("left") != null || t._handPts("right") != null;
-    const crowd = t.source === "zed" && (t.people?.length ?? 0) > 1;
-    setText(trackEl, crowd && now - pickedAt < 4000
+    const crowd = (t.people?.length ?? 0) > 1;
+    const crowdLine = crowd && now - pickedAt < 4000
       ? "Following the person you clicked"
-      : crowd
-        ? `${t.people.length} people in view. Staff: click the patient to follow them`
-      : t.trackingOk
+      : crowd ? `${t.people.length} people in view. Staff: click the patient to follow them` : "";
+    setText(trackEl, crowdLine
+      || (t.trackingOk
         ? `Tracking: body ✓ · hand ${handFresh ? "✓" : "…"} · squeeze ${squeezeSeen ? "✓" : "… try closing your fist"}`
-        : "Tracking: looking for you …");
+        : "Tracking: looking for you …"));
 
     const msg = framingMessage(t);
     const framed = !msg;
     // the real mirror, full screen: the camera picture with the tracked
     // skeleton over the patient's own body (amber until framed, then sage),
-    // so "sit a little to the left" can be checked against the picture
-    // rather than against a small abstract figure in a corner
-    drawVideoMirror(ctx, c, t, 0.30);
+    // so "move back a little" can be checked against the picture
+    drawVideoMirror(ctx, c, t, onLogin ? 0.42 : 0.30);
     if (t.trackingOk) drawBody(ctx, c, t, { framed });
     personBoxes = drawPeopleMarkers(ctx, c, t);
+
+    if (onLogin) {
+      // under the card: who we see and what the picture needs; spoken only
+      // when somebody is there and part of them is missing
+      setText(loginEl, crowdLine || msg || "We can see all of you");
+      if (msg && t.trackingOk) guide(msg, now);
+      return;
+    }
 
     if (msg) {
       framedSince = null;
@@ -502,7 +530,7 @@ function watchWelcome() {
     // to flip to "press Start" after 1.4 s, which read as being rushed
     if (now - framedSince < 4500) {
       setText(head, "That's it");
-      setText(sub, "Sit comfortably, just like that");
+      setText(sub, "We can see all of you");
       return;
     }
     setText(head, "Ready when you are");
@@ -591,7 +619,7 @@ function playIntro(then = null) {
     if (done || run !== introRun) return;
     done = true; introRun++;
     cancelAnimationFrame(raf);
-    try { speechSynthesis.cancel(); } catch {}
+    hushVoice();
     try { v.pause(); } catch {}
     removeEventListener("keydown", onKey, true);
     $("btn-intro-skip").onclick = null;
@@ -1499,6 +1527,7 @@ function startAssessment(opts = {}) {
       renderRomCompare([arm]);
       show("screen-romcompare");
       romLiveLoop();
+      requestAnimationFrame(romLiveLoop);   // once the layout has settled
       focusHint($("btn-rom-done"));
     };
     // the arm's first measurement: the therapist chooses the session plan
@@ -1534,83 +1563,83 @@ function envPath(env, scale, cx, cy) {
 // (same envelope, same body centre, same relToPx), last time's shape dashed
 // under it, and a dotted circle of the arm's own length around the assessed
 // shoulder as the "what would full reach look like" reference.
+// FIXED since Oct 2026 (by request: it used to go through the tracker's live
+// frame, so the picture slid and rescaled as the patient moved or stood up):
+// the shape is drawn in its own frame, the body centre in the middle of the
+// canvas and the scale chosen so the full circle of the arm's length fits,
+// whoever is or is not in front of the camera. The schematic figure says
+// where the shape is measured from.
 function romLiveLoop() {
   if (state.screen !== "screen-romcompare") return;
-  requestAnimationFrame(romLiveLoop);
-  const c = $("rom-live"), t = state.tracker;
-  if (!c || !t) return;
+  const c = $("rom-live");
+  if (!c) return;
   const box = c.getBoundingClientRect();
   const W = Math.max(2, Math.round(box.width)), H = Math.max(2, Math.round(box.height));
   if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
   const ctx = c.getContext("2d");
-  // No camera picture here (Sep 2026, by request): the room behind the
-  // patient said nothing about their reach. A plain dark stage, and a
-  // schematic figure at the body centre so it is clear WHERE the shape is
-  // measured from: the middle of the shoulders, the assessed arm's own
-  // shoulder marked.
   ctx.fillStyle = "#161636"; ctx.fillRect(0, 0, W, H);
   const arm = state.side;
   const prof = store.getProfile(state.patient, arm);
   if (!prof?.envelope) return;
-  if (!t.frame) t.setBaseline?.();
-  if (!t.frame) return;
-  romFigure(ctx, c, t, arm, prof);
   const prev = (store.getPatient(state.patient).history[arm] || []).slice(-1)[0] || null;
   const TAU = Math.PI * 2;
   const cen = prof.center || { x: 0, y: 0 };
-  // through the real corner points when the profile has them (Sep 2026 on),
-  // else through the wedge radii at their centres (older profiles)
+  // the frame: px per shoulder width so the biggest thing drawn (the full
+  // circle about the shoulder, or the widest reach) sits inside the canvas
+  const reach = Math.max(prof.armLenSW ? prof.armLenSW + 0.5 : 0, ...prof.envelope, ...(prev?.envelope || []), 1);
+  const k = Math.min(W, H) * 0.46 / reach;
+  const cx = W / 2, cy = H * 0.52;
+  const P = rel => ({ x: cx + (rel.x - cen.x) * k, y: cy - (rel.y - cen.y) * k });
+  romFigure(ctx, P, arm, prof);
   const shape = (env, pts, style) => {
     const n = env.length;
     ctx.beginPath();
     for (let i = 0; i <= n; i++) {
-      const k = i % n, p = pts?.[k];
-      const th = (k + 0.5) / n * TAU, r = env[k];
+      const kk = i % n, p = pts?.[kk];
+      const th = (kk + 0.5) / n * TAU, r = env[kk];
       const rel = p ? { x: cen.x + p.x, y: cen.y + p.y } : { x: cen.x + Math.cos(th) * r, y: cen.y + Math.sin(th) * r };
-      const q = t.relToPx(rel, c);
+      const q = P(rel);
       i === 0 ? ctx.moveTo(q.x, q.y) : ctx.lineTo(q.x, q.y);
     }
     ctx.closePath(); style();
   };
   ctx.save();
-  // full arm length around the assessed shoulder: the reference, the
-  // "ideal" the big number is a percentage of. Drawn from the schematic
-  // shoulder (half a shoulder width from the centre), not the live one, so
-  // it stays put whether or not anyone is in front of the camera.
+  // the full circle of the arm's own length about the assessed shoulder:
+  // what the big number is a percentage of
   if (prof.armLenSW) {
     const sr = { x: cen.x + (arm === "right" ? 0.5 : -0.5), y: cen.y };
     ctx.beginPath();
     for (let i = 0; i <= 48; i++) {
       const th = i / 48 * TAU;
-      const q = t.relToPx({ x: sr.x + Math.cos(th) * prof.armLenSW, y: sr.y + Math.sin(th) * prof.armLenSW }, c);
+      const q = P({ x: sr.x + Math.cos(th) * prof.armLenSW, y: sr.y + Math.sin(th) * prof.armLenSW });
       i === 0 ? ctx.moveTo(q.x, q.y) : ctx.lineTo(q.x, q.y);
     }
-    ctx.strokeStyle = "rgba(244,236,221,0.6)"; ctx.lineWidth = 2.5; ctx.setLineDash([3, 8]); ctx.stroke();
+    ctx.strokeStyle = "rgba(244,236,221,0.5)"; ctx.lineWidth = 2; ctx.setLineDash([3, 8]); ctx.stroke();
     ctx.setLineDash([]);
   }
   if (prev?.envelope) shape(prev.envelope, prev.envPts, () => {
-    ctx.strokeStyle = "rgba(244,236,221,0.5)"; ctx.lineWidth = 2.5; ctx.setLineDash([8, 8]); ctx.stroke(); ctx.setLineDash([]);
+    ctx.strokeStyle = "rgba(244,236,221,0.45)"; ctx.lineWidth = 2; ctx.setLineDash([8, 8]); ctx.stroke(); ctx.setLineDash([]);
   });
   shape(prof.envelope, prof.envPts, () => {
     ctx.fillStyle = "rgba(232,168,106,0.16)"; ctx.fill();
     ctx.strokeStyle = "rgba(232,168,106,0.85)"; ctx.lineWidth = 4;
     ctx.shadowColor = "rgba(232,168,106,0.35)"; ctx.shadowBlur = 10; ctx.stroke();
   });
-  // the body centre everything is measured from
-  const o = t.relToPx(cen, c);
+  const o = P(cen);
   ctx.shadowBlur = 0; ctx.fillStyle = "rgba(244,236,221,0.7)";
   ctx.beginPath(); ctx.arc(o.x, o.y, 5, 0, TAU); ctx.fill();
   ctx.restore();
 }
 
-// The schematic figure under the workspace shape: head, shoulders, trunk
-// and hips in shoulder-width units about the body centre, the assessed
-// arm's shoulder marked. It is a drawing, not the patient; its job is to
-// say where the shape is measured from.
-function romFigure(ctx, c, t, arm, prof) {
+// The schematic figure under the shape: head, shoulders and trunk in
+// shoulder-width units about the body centre, the assessed shoulder marked
+// in amber. A drawing, not the patient; its job is to say where the shape
+// is measured from. (The resting other arm and the shoulder label went in
+// Oct 2026: fewer things on the screen.)
+function romFigure(ctx, P0, arm, prof) {
   const TAU = Math.PI * 2;
   const cen = prof.center || { x: 0, y: 0 };
-  const P = (x, y) => t.relToPx({ x: cen.x + x, y: cen.y + y }, c);
+  const P = (x, y) => P0({ x: cen.x + x, y: cen.y + y });
   const torso = prof.torsoSW || 1.05;
   ctx.save();
   ctx.strokeStyle = "rgba(244,236,221,0.28)"; ctx.lineWidth = 3; ctx.lineCap = "round"; ctx.lineJoin = "round";
@@ -1620,16 +1649,9 @@ function romFigure(ctx, c, t, arm, prof) {
   ctx.beginPath(); ctx.moveTo(P(0, 0).x, P(0, 0).y); ctx.lineTo(neck.x, neck.y); ctx.stroke();
   const hr = Math.abs(P(0.22, 0).x - P(0, 0).x);
   ctx.beginPath(); ctx.arc(head.x, head.y, hr, 0, TAU); ctx.stroke();
-  // the other arm, resting; the assessed shoulder gets a marker and a label
-  const other = arm === "right" ? shL : shR, ox = arm === "right" ? -1 : 1;
-  const el = P(ox * 0.62, -0.55), wr = P(ox * 0.6, -1.05);
-  ctx.beginPath(); ctx.moveTo(other.x, other.y); ctx.lineTo(el.x, el.y); ctx.lineTo(wr.x, wr.y); ctx.stroke();
   const mine = arm === "right" ? shR : shL;
   ctx.fillStyle = "#e8a86a";
   ctx.beginPath(); ctx.arc(mine.x, mine.y, 7, 0, TAU); ctx.fill();
-  ctx.fillStyle = "rgba(244,236,221,0.75)"; ctx.font = "700 14px Nunito, sans-serif";
-  ctx.textAlign = arm === "right" ? "left" : "right";
-  ctx.fillText(`${arm} shoulder`, mine.x + (arm === "right" ? 12 : -12), mine.y - 12);
   ctx.restore();
 }
 
@@ -1648,8 +1670,7 @@ function renderRomCompare(arms) {
   const cur = p.profiles[arm];
   const hist = p.history[arm] || [];
   const prev = hist.slice(-1)[0] || null;
-  $("rom-sub").textContent = `${arm === "left" ? "Left" : "Right"} arm${
-    cur?.style === "video" ? ", measured with the video" : ""}${prev ? `. Last time was ${fmtDay(prev.date)}.` : ". This is your first measurement, the one we compare to from now on."}`;
+  $("rom-sub").textContent = `${arm === "left" ? "Left" : "Right"} arm${prev ? ` · last time ${fmtDay(prev.date)}` : " · your first measurement"}`;
   if (!cur) { $("rom-big").innerHTML = ""; $("rom-tiles").innerHTML = ""; $("rom-plot").innerHTML = ""; return; }
 
   const pct = v => v == null ? null : Math.round(v * 100);
@@ -1666,8 +1687,7 @@ function renderRomCompare(arms) {
   $("rom-big").innerHTML = `
     <div class="pct">${nowPct}%</div>
     <div class="of">of the full circle your arm could reach</div>
-    ${chip}
-    <div class="say">${word}</div>`;
+    ${chip}`;
 
   // three tiles, one sentence each
   const tile = (lab, val, unit, was, now, fmt, say) => {
@@ -1679,7 +1699,7 @@ function renderRomCompare(arms) {
     } else d = `<span class="dlt sm">baseline</span>`;
     return `<div class="rom-tile"><div class="lab">${lab}</div>
       <div class="val">${now == null ? "–" : fmt(now)}${unit ? ` <small>${unit}</small>` : ""}</div>
-      ${d}<div class="say">${say}</div></div>`;
+      ${d}</div>`;
   };
   const tiles = [];
   const liftNow = cur.lift?.peakDeg ?? cur.arcMaxDeg, liftWas = prev?.lift?.peakDeg ?? prev?.arcMaxDeg;
@@ -1903,17 +1923,23 @@ function onRoundEnd(round) {
   // what was measured). Later tutorials are warm-ups only (Oct 2026, by
   // request): re-seeding every session threw away the level the patient
   // had played their way to.
-  if (round.game === "pong" && round.pongCrossTime && round.calibrated) result.params.lifetime = round.pongCrossTime;
-  // Pong: the ball's pace follows the GAME, not the hit rate (Sep 2026, by
-  // request). A won game (more points than the star over the 90 s) makes
-  // the next game's ball quicker (a shorter crossing time), a lost game
-  // makes it slower, both within the DDA's limits; and the star climbs or
-  // drops a rank with it (STAR_RANKS in games.js: colours, glow, sparkle
-  // and sharper reactions), stored per patient as "starRank". A draw, or a
-  // game with no points, changes nothing.
-  if (round.game === "pong" && round.matchWon != null) {
+  // Pong: the ball's pace follows the GAMES, not the hit rate. Since Oct 2026
+  // the game itself moves it (games.js: the sweep sets it on the first game
+  // on an arm, then every won game quickens it and every lost game slows
+  // it) and the pace the match ended on is what is saved, with the speed
+  // data logged per participant and arm (store.logPongSpeed) for the
+  // export. The star climbs or drops a rank on the match (STAR_RANKS in
+  // games.js), stored per patient as "starRank". A draw changes nothing.
+  if (round.game === "pong" && round.pace) {
     const [lo, hi] = LIMITS.lifetime;
-    result.params.lifetime = Math.max(lo, Math.min(hi, result.params.lifetime * (round.matchWon ? 0.88 : 1.15)));
+    result.params.lifetime = Math.max(lo, Math.min(hi, round.pace));
+    store.logPongSpeed(state.patient, state.side, {
+      axis: round.axis || "fe", mode: round.pongMode || "solo", calibrated: !!round.calibrated, sweepT: round.sweepT ?? null,
+      paceStart: round.paceStart ?? null, pace: round.pace, games: round.paceByGame || [], matchWon: round.matchWon ?? null,
+      gamesWon: round.gamesWon ?? null, gamesLost: round.gamesLost ?? null, bestRally: round.bestRally ?? null,
+    });
+  }
+  if (round.game === "pong" && round.matchWon != null) {
     if (round.pongMode === "duo") {
       // two players: the ball follows the result, the star's rank is not in it
       result.note = round.matchWon ? "You won! A quicker ball next game." : "A slower ball next game.";
@@ -2012,10 +2038,13 @@ function roundSummary(round) {
     }
     case "pong": {
       const duo = r.pongMode === "duo", them = duo ? (r.p2Name || "player two") : "the star";
-      head = r.matchWon === true ? "You won the game!" : r.matchWon === false ? "A good game!"
+      const match = (r.games?.length || 0) > 1 || r.gamesWon != null;
+      head = r.matchWon === true ? (match ? "You won the match!" : "You won the game!") : r.matchWon === false ? (match ? "A good match!" : "A good game!")
         : r.pointsPlayed > 0 ? "A draw!" : "Great rally!";
       const rally = r.bestRally ?? r.hits ?? 0;
-      text = r.points != null && (r.points > 0 || r.aiPoints > 0)
+      text = match && r.games?.length
+        ? `${r.gamesWon} games to ${r.gamesLost} against ${them}, ${r.points} points to ${r.aiPoints}. Your longest rally was ${rally}.`
+        : r.points != null && (r.points > 0 || r.aiPoints > 0)
         ? `You scored ${r.points} to ${r.aiPoints} against ${them} and your longest rally was ${rally}.`
         : `Your longest rally was ${plural(rally, "return")}.`;
       if (r.smashEnded) text += " You finished it with the smash.";
@@ -2533,6 +2562,17 @@ probeMail().then(() => mailState(
 // the coach relay (tools/coach_bridge.py): Claude writes the between-rep
 // lines when it is up; the phrasebook speaks otherwise, so this is a status
 // line and never a dependency
+probeTts().then(async info => {
+  voiceState();
+  // the model takes a few seconds to load after the bridge starts: ask again
+  // until it is ready, then the drawer says so and the phrasebook is warmed
+  for (let i = 0; i < 30 && info && info.loading && !ttsReady(); i++) {
+    await new Promise(r => setTimeout(r, 2000));
+    info = await probeTts();
+    voiceState();
+  }
+  warmVoice();
+});
 probeCoach().then(() => {
   const el = $("coachstate");
   const info = coachRelayInfo();
@@ -2652,6 +2692,7 @@ function syncComfortControls() {
 }
 $("in-coach-pick").addEventListener("change", e => {
   saveSetting({ coach: e.target.value });
+  warmVoice(); voiceState();
   speakLine(COACHES[A11Y.coach].sample, 0.9, false);   // hear the change at once
 });
 $("in-captions").addEventListener("change", e => saveSetting({ captions: e.target.value === "on" }));
