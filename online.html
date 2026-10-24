@@ -26,6 +26,8 @@
   #status { margin-top: 14px; min-height: 1.4em; color: var(--amber); }
   .hint { font-size: 13px; opacity: .7; font-weight: 700; }
   code { background: rgba(0,0,0,.25); padding: 1px 6px; border-radius: 6px; }
+  .bigcode { font-size: 64px; font-weight: 900; letter-spacing: .35em; text-align: center; color: var(--amber); padding: 10px 0 4px; }
+  .codein { font-size: 32px; letter-spacing: .35em; text-transform: uppercase; text-align: center; }
   #hud { position: fixed; inset: 0; pointer-events: none; display: none; }
   #hud.on { display: block; }
   video.cam { position: fixed; bottom: 14px; width: 220px; height: 165px; object-fit: cover; border-radius: 14px; border: 2px solid rgba(244,236,221,.35); background: #000; }
@@ -49,7 +51,6 @@
     <div class="row">
       <div><label>Your name</label><input id="name" maxlength="20" placeholder="e.g. Nehru"></div>
       <div><label>Playing arm</label><select id="arm"><option value="right">Right arm</option><option value="left">Left arm</option></select></div>
-      <div><label>Relay (optional, same network)</label><input id="relay" placeholder="http://192.168.1.10:8327"></div>
     </div>
     <div class="btns">
       <button class="btn" id="btn-host">Create a game</button>
@@ -57,23 +58,12 @@
       <button class="btn ghost" id="btn-solo">Practice alone</button>
     </div>
     <div class="step" id="step-host">
-      <div class="hint">1. Send this code to your friend (any chat). 2. Paste the code they send back, then Connect.</div>
-      <label>Your code</label><textarea id="offer" readonly></textarea>
-      <div class="btns"><button class="btn ghost" id="btn-copy-offer">Copy code</button></div>
-      <label>Your friend's reply</label><textarea id="answer-in" placeholder="paste it here"></textarea>
-      <div class="btns"><button class="btn" id="btn-connect">Connect</button></div>
+      <div class="hint">Tell your friend this code. The game starts when they join.</div>
+      <div id="mycode" class="bigcode">····</div>
     </div>
     <div class="step" id="step-join">
-      <div class="hint">1. Paste the code your friend sent. 2. Send them the reply this makes. The game starts when they connect.</div>
-      <label>Your friend's code</label><textarea id="offer-in" placeholder="paste it here"></textarea>
-      <div class="btns"><button class="btn" id="btn-reply">Make my reply</button></div>
-      <label>Your reply</label><textarea id="answer" readonly></textarea>
-      <div class="btns"><button class="btn ghost" id="btn-copy-answer">Copy reply</button></div>
-    </div>
-    <div class="step" id="step-relay">
-      <div class="hint">Through the relay: both type the same room code.</div>
-      <div class="row"><div><label>Room code</label><input id="room" maxlength="6" placeholder="ABCD" style="text-transform:uppercase;letter-spacing:.3em"></div>
-      <div><button class="btn" id="btn-relay-go">Go</button></div></div>
+      <div class="hint">Type the code your friend gave you.</div>
+      <div class="row"><div><input id="code-in" class="codein" maxlength="4" placeholder="ABCD" autocomplete="off" autocapitalize="characters"></div><div><button class="btn" id="btn-join-go">Join</button></div></div>
     </div>
     <div id="status"></div>
     <div class="hint" style="margin-top:10px">Camera and mic are asked for once you create or join. Works in Chrome or Edge. Nothing is recorded.</div>
@@ -85,6 +75,7 @@
   <div id="chips"><div class="chip" id="chip-mic">🎙 mic on</div><div class="chip" id="chip-cam">📷 cam on</div><div class="chip" id="chip-link">● connecting</div></div>
   <div id="over"><h2 id="over-title">Game over</h2><div id="over-sub"></div><button class="btn" id="btn-again">Play again</button></div>
 </div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
 <script type="module" src="js/online.js"></script>
 </body>
 </html>

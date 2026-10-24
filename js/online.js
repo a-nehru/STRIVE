@@ -4,8 +4,9 @@
 // = the top, over a lane that widens to whatever the arm reaches), the two
 // browsers talk WebRTC directly (voice always on, video small, the game on
 // a data channel) and the only thing that passes between them beforehand is
-// a connection code, copied through any chat, or a room code through
-// tools/pong_relay.py on one network. The HOST runs the physics; the guest
+// a four-letter room code: PeerJS (the public PeerServer, cdnjs) carries
+// the WebRTC signalling, so the host shows a code and the friend types it,
+// nothing longer to copy. The HOST runs the physics; the guest
 // sends its paddle and draws the host's state. The ball gains speed on every
 // hit and with time and never slows until a point is lost; first to WIN_AT
 // points takes the game.
@@ -206,117 +207,87 @@ async function startCamera() {
 }
 function status(s) { $("status").textContent = s; }
 
-// ---------- WebRTC: voice, video and the game channel ----------
-function makePeer() {
-  const pc = new RTCPeerConnection({ iceServers: STUN });
-  G.pc = pc;
-  if (media) for (const tr of media.getAudioTracks()) pc.addTrack(tr, media);
-  const camStream = $("me").srcObject;
-  if (camStream) for (const tr of camStream.getVideoTracks()) pc.addTrack(tr, camStream);
-  const remote = new MediaStream();
-  pc.ontrack = ev => { remote.addTrack(ev.track); $("friend").srcObject = remote; };
-  pc.onconnectionstatechange = () => {
-    const st = pc.connectionState;
-    $("chip-link").textContent = st === "connected" ? "● connected" : st === "failed" ? "● failed" : "● " + st;
-    if (st === "connected") { G.connected = true; $("lobby").style.display = "none"; }
-    if (st === "failed" || st === "disconnected") { G.connected = false; status("The connection dropped."); }
-  };
-  return pc;
+// ---------- PeerJS: a room code, then voice, video and the game channel ----------
+const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+const roomCode = () => Array.from({ length: 4 }, () => CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)]).join("");
+const peerId = code => "strive-armpong-" + code.toUpperCase();
+function localStream() {
+  const cam = $("me").srcObject;
+  return new MediaStream([...(media ? media.getAudioTracks() : []), ...(cam ? cam.getVideoTracks() : [])]);
 }
-function wireChannel(dc) {
-  G.dc = dc;
-  dc.onopen = () => { dc.send(JSON.stringify({ t: "hi", name: G.name, arm: G.arm })); G.connected = true; $("lobby").style.display = "none"; };
-  dc.onmessage = ev => {
-    const m = JSON.parse(ev.data);
+function makePeer(id) {
+  const peer = new Peer(id, { config: { iceServers: STUN }, debug: 0 });
+  G.peer_ = peer;
+  peer.on("error", e => {
+    if (e.type === "unavailable-id") status("That code is in use. Try Create again.");
+    else if (e.type === "peer-unavailable") status("No game with that code. Check it with your friend.");
+    else status("Connection problem: " + (e.type || e.message));
+  });
+  peer.on("call", call => { call.answer(localStream()); call.on("stream", st => { $("friend").srcObject = st; }); });
+  return peer;
+}
+function wireChannel(conn) {
+  G.dc = { send: s => { if (conn.open) conn.send(s); }, get readyState() { return conn.open ? "open" : "closed"; } };
+  const hello = () => { conn.send(JSON.stringify({ t: "hi", name: G.name, arm: G.arm })); G.connected = true; $("lobby").style.display = "none"; $("chip-link").textContent = "● connected"; };
+  if (conn.open) hello(); else conn.on("open", hello);
+  conn.on("data", d => {
+    const m = typeof d === "string" ? JSON.parse(d) : d;
     if (m.t === "hi") { G.peer = { name: m.name || "Friend", arm: m.arm }; $("friendtag").textContent = G.peer.name; }
     else if (m.t === "s") { G.remote = m; G.remoteAt = performance.now(); }
     else if (m.t === "p") { G.remote = { y: m.y }; G.remoteAt = performance.now(); }
-  };
+  });
+  conn.on("close", () => { G.connected = false; $("chip-link").textContent = "● friend left"; status("Your friend left."); });
 }
-const gathered = pc => new Promise(res => {
-  if (pc.iceGatheringState === "complete") return res();
-  const t = setTimeout(res, 4000);                   // whatever candidates we have by then
-  pc.onicegatheringstatechange = () => { if (pc.iceGatheringState === "complete") { clearTimeout(t); res(); } };
-});
-const enc = d => btoa(unescape(encodeURIComponent(JSON.stringify({ type: d.type, sdp: d.sdp }))));
-const dec = s => JSON.parse(decodeURIComponent(escape(atob(s.trim()))));
-
-async function hostOffer() {
-  const pc = makePeer();
-  wireChannel(pc.createDataChannel("game", { ordered: false, maxRetransmits: 0 }));
-  await pc.setLocalDescription(await pc.createOffer());
-  await gathered(pc);
-  return enc(pc.localDescription);
+async function hostGame() {
+  const code = roomCode();
+  $("mycode").textContent = code;
+  const peer = makePeer(peerId(code));
+  await new Promise((res, rej) => { peer.on("open", res); peer.on("error", rej); });
+  status("Waiting for your friend to join with " + code + "…");
+  peer.on("connection", conn => { wireChannel(conn); status(""); });
 }
-async function hostAccept(answerCode) { await G.pc.setRemoteDescription(dec(answerCode)); }
-async function guestAnswer(offerCode) {
-  const pc = makePeer();
-  pc.ondatachannel = ev => wireChannel(ev.channel);
-  await pc.setRemoteDescription(dec(offerCode));
-  await pc.setLocalDescription(await pc.createAnswer());
-  await gathered(pc);
-  return enc(pc.localDescription);
-}
-
-// ---------- the relay path: the same codes, carried by tools/pong_relay.py ----------
-async function relaySignal(relay, room) {
-  const post = (path, body) => fetch(`${relay}${path}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then(r => r.json());
-  const j = await post("/join", { room, name: G.name });
-  if (!j.ok) throw new Error(j.error);
-  G.role = j.role;
-  status(`In room ${room} as the ${G.role}. Waiting for the other player…`);
-  const poll = async () => (await (await fetch(`${relay}/sig?room=${room}&role=${G.role}`, { cache: "no-store" })).json()).msgs || [];
-  if (G.role === "host") {
-    const code = await hostOffer();
-    await post("/sig", { room, role: G.role, msg: { offer: code } });
-    for (;;) { const ms = await poll(); const a = ms.find(m => m.answer); if (a) { await hostAccept(a.answer); return; } await new Promise(r => setTimeout(r, 700)); }
-  } else {
-    for (;;) {
-      const ms = await poll(); const o = ms.find(m => m.offer);
-      if (o) { const code = await guestAnswer(o.offer); await post("/sig", { room, role: G.role, msg: { answer: code } }); return; }
-      await new Promise(r => setTimeout(r, 700));
-    }
-  }
+async function joinGame(code) {
+  const peer = makePeer();
+  await new Promise((res, rej) => { peer.on("open", res); peer.on("error", rej); });
+  status("Connecting to " + code + "…");
+  const conn = peer.connect(peerId(code), { reliable: false, serialization: "json" });
+  wireChannel(conn);
+  const call = peer.call(peerId(code), localStream());
+  call?.on("stream", st => { $("friend").srcObject = st; });
 }
 
 // ---------- the lobby ----------
 function readForm() {
-  G.name = $("name").value.trim().slice(0, 20) || "You"; G.arm = $("arm").value; G.relay = $("relay").value.trim().replace(/\/$/, "");
-  localStorage.setItem("armpong", JSON.stringify({ name: G.name, arm: G.arm, relay: G.relay }));
+  G.name = $("name").value.trim().slice(0, 20) || "You"; G.arm = $("arm").value;
+  localStorage.setItem("armpong", JSON.stringify({ name: G.name, arm: G.arm }));
   $("metag").textContent = G.name + " · " + G.arm + " arm";
 }
-try { const s = JSON.parse(localStorage.getItem("armpong") || "{}"); if (s.name) $("name").value = s.name; if (s.arm) $("arm").value = s.arm; if (s.relay) $("relay").value = s.relay; } catch {}
+try { const s = JSON.parse(localStorage.getItem("armpong") || "{}"); if (s.name) $("name").value = s.name; if (s.arm) $("arm").value = s.arm; } catch {}
 const show = id => { for (const s of document.querySelectorAll(".step")) s.classList.toggle("on", s.id === id); };
 $("btn-host").onclick = async () => {
-  readForm();
-  if (G.relay) { show("step-relay"); G.pendingRole = "host"; return; }
-  G.role = "host";
-  try { await startCamera(); $("offer").value = await hostOffer(); show("step-host"); status("Send your code, then paste the reply."); } catch (e) { status("Could not start: " + e.message); }
+  readForm(); G.role = "host";
+  try { await startCamera(); show("step-host"); await hostGame(); } catch (e) { status("Could not start: " + (e.message || e.type || e)); }
 };
 $("btn-join").onclick = async () => {
-  readForm();
-  if (G.relay) { show("step-relay"); G.pendingRole = "guest"; return; }
-  G.role = "guest";
-  try { await startCamera(); show("step-join"); status("Paste your friend's code."); } catch (e) { status("Could not start: " + e.message); }
+  readForm(); G.role = "guest";
+  try { await startCamera(); show("step-join"); status("Type the code."); setTimeout(() => $("code-in").focus(), 50); } catch (e) { status("Could not start: " + (e.message || e)); }
 };
+$("btn-join-go").onclick = async () => {
+  const code = $("code-in").value.trim().toUpperCase();
+  if (code.length < 4) { status("The code is four letters."); return; }
+  try { await joinGame(code); } catch (e) { status("Could not join: " + (e.message || e.type || e)); }
+};
+$("code-in").addEventListener("keydown", e => { if (e.key === "Enter") $("btn-join-go").click(); });
 $("btn-solo").onclick = async () => {
   readForm(); G.role = "host"; G.solo = true;
   try { await startCamera(); $("lobby").style.display = "none"; $("friendtag").textContent = "The wall"; $("chip-link").textContent = "● practice"; } catch (e) { status("Could not start: " + e.message); }
 };
-$("btn-relay-go").onclick = async () => {
-  const room = $("room").value.trim().toUpperCase(); if (!room) { status("Type a room code."); return; }
-  try { await startCamera(); await relaySignal(G.relay, room); } catch (e) { status("Relay: " + e.message); }
-};
-$("btn-copy-offer").onclick = () => navigator.clipboard?.writeText($("offer").value).then(() => status("Code copied."));
-$("btn-copy-answer").onclick = () => navigator.clipboard?.writeText($("answer").value).then(() => status("Reply copied."));
-$("btn-connect").onclick = async () => { try { await hostAccept($("answer-in").value); status("Connecting…"); } catch (e) { status("That reply did not work: " + e.message); } };
-$("btn-reply").onclick = async () => { try { $("answer").value = await guestAnswer($("offer-in").value); status("Send your reply to your friend. The game starts when they connect."); } catch (e) { status("That code did not work: " + e.message); } };
 $("btn-again").onclick = () => { if (G.role !== "host") return; G.score = [0, 0]; G.speed = SPEED0; G.winner = null; G.hits = 0; serve(1); $("over").classList.remove("on"); };
 $("chip-mic").onclick = () => { const on = $("chip-mic").classList.toggle("off"); media?.getAudioTracks().forEach(t => t.enabled = !on); $("chip-mic").textContent = on ? "🎙 mic off" : "🎙 mic on"; };
 $("chip-cam").onclick = () => { const on = $("chip-cam").classList.toggle("off"); $("me").srcObject?.getVideoTracks().forEach(t => t.enabled = !on); $("chip-cam").textContent = on ? "📷 cam off" : "📷 cam on"; };
-// ?relay=&room=&role= skips the form
+// ?code=ABCD joins straight away once the camera is up
 {
   const q = new URLSearchParams(location.search);
-  if (q.get("room")) { $("room").value = q.get("room"); if (q.get("relay")) $("relay").value = q.get("relay"); }
+  if (q.get("code")) { $("code-in").value = q.get("code").toUpperCase(); $("btn-join").click(); }
 }
 requestAnimationFrame(loop);
