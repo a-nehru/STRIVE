@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Arm Pong Online</title>
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@700;800;900&display=swap" rel="stylesheet">
+<style>
+  :root { --night:#1b1b3a; --cream:#f4ecdd; --amber:#e8a86a; --sage:#9fc08a; --teal:#5fb8b0; --red:#d97b6c; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--night); color: var(--cream); font: 700 16px/1.45 Nunito, system-ui, sans-serif; overflow: hidden; }
+  #court { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; }
+  #lobby { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: radial-gradient(ellipse at 50% 30%, #2a2a55, var(--night) 70%); overflow: auto; }
+  .card { background: rgba(244,236,221,.06); border: 1px solid rgba(244,236,221,.16); border-radius: 22px; padding: 26px 30px; width: min(94vw, 760px); }
+  h1 { margin: 0 0 4px; font-weight: 900; font-size: 34px; } .sub { opacity: .75; margin-bottom: 18px; }
+  label { display: block; margin: 10px 0 4px; font-size: 14px; opacity: .8; }
+  input, select, textarea { width: 100%; font: 700 16px Nunito, sans-serif; color: var(--night); background: var(--cream); border: 0; border-radius: 12px; padding: 10px 12px; }
+  textarea { height: 86px; font: 600 11px ui-monospace, monospace; resize: vertical; }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; } .row > * { flex: 1; min-width: 140px; }
+  .btn { display: inline-block; font: 800 17px Nunito, sans-serif; color: var(--night); background: var(--amber); border: 0; border-radius: 14px; padding: 12px 20px; cursor: pointer; }
+  .btn.ghost { background: transparent; color: var(--cream); border: 2px solid rgba(244,236,221,.4); }
+  .btn:disabled { opacity: .45; cursor: default; }
+  .btns { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 16px; }
+  .step { display: none; margin-top: 16px; padding-top: 16px; border-top: 1px solid rgba(244,236,221,.14); }
+  .step.on { display: block; }
+  #status { margin-top: 14px; min-height: 1.4em; color: var(--amber); }
+  .hint { font-size: 13px; opacity: .7; font-weight: 700; }
+  code { background: rgba(0,0,0,.25); padding: 1px 6px; border-radius: 6px; }
+  #hud { position: fixed; inset: 0; pointer-events: none; display: none; }
+  #hud.on { display: block; }
+  video.cam { position: fixed; bottom: 14px; width: 220px; height: 165px; object-fit: cover; border-radius: 14px; border: 2px solid rgba(244,236,221,.35); background: #000; }
+  #me { left: 14px; transform: scaleX(-1); } #friend { right: 14px; }
+  .tag { position: fixed; bottom: 184px; font-size: 14px; background: rgba(27,27,58,.7); padding: 3px 10px; border-radius: 999px; }
+  #metag { left: 14px; } #friendtag { right: 14px; }
+  #chips { position: fixed; top: 12px; right: 14px; display: flex; gap: 8px; pointer-events: auto; }
+  .chip { font-size: 13px; background: rgba(244,236,221,.12); border: 1px solid rgba(244,236,221,.25); padding: 4px 10px; border-radius: 999px; cursor: pointer; }
+  .chip.off { opacity: .5; text-decoration: line-through; }
+  #over { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; flex-direction: column; gap: 14px; background: rgba(27,27,58,.55); pointer-events: auto; }
+  #over.on { display: flex; }
+  #over h2 { font-size: 46px; margin: 0; font-weight: 900; }
+</style>
+</head>
+<body>
+<canvas id="court"></canvas>
+<div id="lobby">
+  <div class="card">
+    <h1>Arm Pong Online</h1>
+    <div class="sub">Two people, two cameras, one ball that keeps getting faster. Raise and lower your arm to move your paddle. Your mic stays on so you can talk.</div>
+    <div class="row">
+      <div><label>Your name</label><input id="name" maxlength="20" placeholder="e.g. Nehru"></div>
+      <div><label>Playing arm</label><select id="arm"><option value="right">Right arm</option><option value="left">Left arm</option></select></div>
+      <div><label>Relay (optional, same network)</label><input id="relay" placeholder="http://192.168.1.10:8327"></div>
+    </div>
+    <div class="btns">
+      <button class="btn" id="btn-host">Create a game</button>
+      <button class="btn ghost" id="btn-join">Join a game</button>
+      <button class="btn ghost" id="btn-solo">Practice alone</button>
+    </div>
+    <div class="step" id="step-host">
+      <div class="hint">1. Send this code to your friend (any chat). 2. Paste the code they send back, then Connect.</div>
+      <label>Your code</label><textarea id="offer" readonly></textarea>
+      <div class="btns"><button class="btn ghost" id="btn-copy-offer">Copy code</button></div>
+      <label>Your friend's reply</label><textarea id="answer-in" placeholder="paste it here"></textarea>
+      <div class="btns"><button class="btn" id="btn-connect">Connect</button></div>
+    </div>
+    <div class="step" id="step-join">
+      <div class="hint">1. Paste the code your friend sent. 2. Send them the reply this makes. The game starts when they connect.</div>
+      <label>Your friend's code</label><textarea id="offer-in" placeholder="paste it here"></textarea>
+      <div class="btns"><button class="btn" id="btn-reply">Make my reply</button></div>
+      <label>Your reply</label><textarea id="answer" readonly></textarea>
+      <div class="btns"><button class="btn ghost" id="btn-copy-answer">Copy reply</button></div>
+    </div>
+    <div class="step" id="step-relay">
+      <div class="hint">Through the relay: both type the same room code.</div>
+      <div class="row"><div><label>Room code</label><input id="room" maxlength="6" placeholder="ABCD" style="text-transform:uppercase;letter-spacing:.3em"></div>
+      <div><button class="btn" id="btn-relay-go">Go</button></div></div>
+    </div>
+    <div id="status"></div>
+    <div class="hint" style="margin-top:10px">Camera and mic are asked for once you create or join. Works in Chrome or Edge. Nothing is recorded.</div>
+  </div>
+</div>
+<div id="hud">
+  <video id="me" class="cam" autoplay muted playsinline></video><div class="tag" id="metag">You</div>
+  <video id="friend" class="cam" autoplay playsinline></video><div class="tag" id="friendtag">Friend</div>
+  <div id="chips"><div class="chip" id="chip-mic">🎙 mic on</div><div class="chip" id="chip-cam">📷 cam on</div><div class="chip" id="chip-link">● connecting</div></div>
+  <div id="over"><h2 id="over-title">Game over</h2><div id="over-sub"></div><button class="btn" id="btn-again">Play again</button></div>
+</div>
+<script type="module" src="js/online.js"></script>
+</body>
+</html>
