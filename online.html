@@ -6,48 +6,57 @@
 <title>Arm Pong Online</title>
 <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@700;800;900&display=swap" rel="stylesheet">
 <style>
-  :root { --night:#1b1b3a; --cream:#f4ecdd; --amber:#e8a86a; --sage:#9fc08a; --teal:#5fb8b0; --red:#d97b6c; }
+  :root { --night:#15152e; --night2:#242452; --cream:#f4ecdd; --amber:#e8a86a; --sage:#9fc08a; --teal:#5fb8b0; --red:#d97b6c; --gold:#ffd98a; }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; background: var(--night); color: var(--cream); font: 700 16px/1.45 Nunito, system-ui, sans-serif; overflow: hidden; }
   #court { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; }
-  #lobby { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: radial-gradient(ellipse at 50% 30%, #2a2a55, var(--night) 70%); overflow: auto; }
-  .card { background: rgba(244,236,221,.06); border: 1px solid rgba(244,236,221,.16); border-radius: 22px; padding: 26px 30px; width: min(94vw, 760px); }
-  h1 { margin: 0 0 4px; font-weight: 900; font-size: 34px; } .sub { opacity: .75; margin-bottom: 18px; }
-  label { display: block; margin: 10px 0 4px; font-size: 14px; opacity: .8; }
-  input, select, textarea { width: 100%; font: 700 16px Nunito, sans-serif; color: var(--night); background: var(--cream); border: 0; border-radius: 12px; padding: 10px 12px; }
-  textarea { height: 86px; font: 600 11px ui-monospace, monospace; resize: vertical; }
+  #lobby { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: radial-gradient(ellipse at 50% 20%, #2e2e62, var(--night) 70%); overflow: auto; }
+  .card { background: rgba(244,236,221,.05); border: 1px solid rgba(244,236,221,.14); border-radius: 26px; padding: 30px 34px 26px; width: min(94vw, 640px); box-shadow: 0 30px 80px rgba(0,0,0,.45); }
+  .logo { display: flex; align-items: center; gap: 14px; margin-bottom: 4px; }
+  .logo svg { width: 54px; height: 54px; }
+  h1 { margin: 0; font-weight: 900; font-size: 32px; letter-spacing: -.01em; } .sub { opacity: .72; margin: 6px 0 20px; font-weight: 700; }
+  label { display: block; margin: 10px 0 4px; font-size: 13px; opacity: .75; text-transform: uppercase; letter-spacing: .08em; }
+  input, select { width: 100%; font: 800 17px Nunito, sans-serif; color: var(--night); background: var(--cream); border: 0; border-radius: 12px; padding: 11px 13px; }
   .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; } .row > * { flex: 1; min-width: 140px; }
-  .btn { display: inline-block; font: 800 17px Nunito, sans-serif; color: var(--night); background: var(--amber); border: 0; border-radius: 14px; padding: 12px 20px; cursor: pointer; }
-  .btn.ghost { background: transparent; color: var(--cream); border: 2px solid rgba(244,236,221,.4); }
+  .btn { display: inline-block; font: 900 17px Nunito, sans-serif; color: var(--night); background: var(--amber); border: 0; border-radius: 14px; padding: 13px 22px; cursor: pointer; transition: transform .08s; }
+  .btn:hover { transform: translateY(-1px); }
+  .btn.ghost { background: transparent; color: var(--cream); border: 2px solid rgba(244,236,221,.35); }
+  .btn.small { padding: 8px 14px; font-size: 14px; }
   .btn:disabled { opacity: .45; cursor: default; }
-  .btns { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 16px; }
-  .step { display: none; margin-top: 16px; padding-top: 16px; border-top: 1px solid rgba(244,236,221,.14); }
+  .btns { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 18px; }
+  .step { display: none; margin-top: 18px; padding-top: 18px; border-top: 1px solid rgba(244,236,221,.14); }
   .step.on { display: block; }
-  #status { margin-top: 14px; min-height: 1.4em; color: var(--amber); }
-  .hint { font-size: 13px; opacity: .7; font-weight: 700; }
-  code { background: rgba(0,0,0,.25); padding: 1px 6px; border-radius: 6px; }
-  .bigcode { font-size: 64px; font-weight: 900; letter-spacing: .35em; text-align: center; color: var(--amber); padding: 10px 0 4px; }
-  .codein { font-size: 32px; letter-spacing: .35em; text-transform: uppercase; text-align: center; }
+  #status { margin-top: 12px; min-height: 1.4em; color: var(--amber); font-weight: 800; }
+  .hint { font-size: 13px; opacity: .65; font-weight: 700; }
+  .bigcode { font-size: 72px; font-weight: 900; letter-spacing: .32em; text-align: center; color: var(--gold); padding: 8px 0 0 .32em; text-shadow: 0 0 30px rgba(255,217,138,.35); }
+  .codein { font-size: 34px; letter-spacing: .35em; text-transform: uppercase; text-align: center; padding-left: .35em; }
   #hud { position: fixed; inset: 0; pointer-events: none; display: none; }
   #hud.on { display: block; }
-  video.cam { position: fixed; bottom: 14px; width: 220px; height: 165px; object-fit: cover; border-radius: 14px; border: 2px solid rgba(244,236,221,.35); background: #000; }
-  #me { left: 14px; transform: scaleX(-1); } #friend { right: 14px; }
-  .tag { position: fixed; bottom: 184px; font-size: 14px; background: rgba(27,27,58,.7); padding: 3px 10px; border-radius: 999px; }
-  #metag { left: 14px; } #friendtag { right: 14px; }
-  #chips { position: fixed; top: 12px; right: 14px; display: flex; gap: 8px; pointer-events: auto; }
-  .chip { font-size: 13px; background: rgba(244,236,221,.12); border: 1px solid rgba(244,236,221,.25); padding: 4px 10px; border-radius: 999px; cursor: pointer; }
+  .camwrap { position: fixed; bottom: 16px; width: 200px; height: 150px; border-radius: 16px; overflow: hidden; border: 2px solid rgba(244,236,221,.22); background: #0b0b1c; box-shadow: 0 12px 30px rgba(0,0,0,.45); }
+  .camwrap video { width: 100%; height: 100%; object-fit: cover; display: block; }
+  #mewrap { left: 16px; } #mewrap video { transform: scaleX(-1); }
+  #friendwrap { right: 16px; }
+  .tag { position: absolute; left: 8px; bottom: 8px; font-size: 12px; font-weight: 800; background: rgba(21,21,46,.72); padding: 3px 9px; border-radius: 999px; }
+  #chips { position: fixed; top: 14px; right: 16px; display: flex; gap: 8px; pointer-events: auto; }
+  .chip { font-size: 13px; font-weight: 800; background: rgba(244,236,221,.1); border: 1px solid rgba(244,236,221,.22); padding: 5px 11px; border-radius: 999px; cursor: pointer; backdrop-filter: blur(6px); }
   .chip.off { opacity: .5; text-decoration: line-through; }
-  #over { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; flex-direction: column; gap: 14px; background: rgba(27,27,58,.55); pointer-events: auto; }
+  #chip-link { cursor: default; }
+  #over { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(21,21,46,.6); pointer-events: auto; backdrop-filter: blur(3px); }
   #over.on { display: flex; }
-  #over h2 { font-size: 46px; margin: 0; font-weight: 900; }
+  #over .panel { text-align: center; background: rgba(244,236,221,.06); border: 1px solid rgba(244,236,221,.16); border-radius: 26px; padding: 34px 44px; box-shadow: 0 30px 80px rgba(0,0,0,.5); }
+  #over h2 { font-size: 48px; margin: 0 0 6px; font-weight: 900; }
+  #over-sub { opacity: .8; margin-bottom: 18px; }
+  #meskel { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  #track { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); font-size: 13px; font-weight: 800; color: var(--amber); background: rgba(21,21,46,.7); padding: 6px 14px; border-radius: 999px; display: none; }
+  #track.on { display: block; }
 </style>
 </head>
 <body>
 <canvas id="court"></canvas>
 <div id="lobby">
   <div class="card">
-    <h1>Arm Pong Online</h1>
-    <div class="sub">Two people, two cameras, one ball that keeps getting faster. Raise and lower your arm to move your paddle. Your mic stays on so you can talk.</div>
+    <div class="logo"><svg viewBox="0 0 54 54" fill="none"><circle cx="27" cy="27" r="26" fill="#242452"/><rect x="9" y="15" width="6" height="24" rx="3" fill="#e8a86a"/><rect x="39" y="15" width="6" height="24" rx="3" fill="#5fb8b0"/><circle cx="27" cy="27" r="4.5" fill="#fff6d8"/></svg><h1>Arm Pong</h1></div>
+    <div class="sub">Two players, two cameras, one ball that only gets faster. Raise and lower your arm to move your paddle. Talk as you play.</div>
     <div class="row">
       <div><label>Your name</label><input id="name" maxlength="20" placeholder="e.g. Nehru"></div>
       <div><label>Playing arm</label><select id="arm"><option value="right">Right arm</option><option value="left">Left arm</option></select></div>
@@ -60,6 +69,7 @@
     <div class="step" id="step-host">
       <div class="hint">Tell your friend this code. The game starts when they join.</div>
       <div id="mycode" class="bigcode">····</div>
+      <div class="btns" style="justify-content:center;margin-top:8px"><button class="btn ghost small" id="btn-copy-link">Copy an invite link</button></div>
     </div>
     <div class="step" id="step-join">
       <div class="hint">Type the code your friend gave you.</div>
@@ -70,10 +80,11 @@
   </div>
 </div>
 <div id="hud">
-  <video id="me" class="cam" autoplay muted playsinline></video><div class="tag" id="metag">You</div>
-  <video id="friend" class="cam" autoplay playsinline></video><div class="tag" id="friendtag">Friend</div>
-  <div id="chips"><div class="chip" id="chip-mic">🎙 mic on</div><div class="chip" id="chip-cam">📷 cam on</div><div class="chip" id="chip-link">● connecting</div></div>
-  <div id="over"><h2 id="over-title">Game over</h2><div id="over-sub"></div><button class="btn" id="btn-again">Play again</button></div>
+  <div class="camwrap" id="mewrap"><video id="me" autoplay muted playsinline></video><canvas id="meskel"></canvas><div class="tag" id="metag">You</div></div>
+  <div class="camwrap" id="friendwrap"><video id="friend" autoplay playsinline></video><div class="tag" id="friendtag">Friend</div></div>
+  <div id="chips"><div class="chip" id="chip-mic">🎙 mic</div><div class="chip" id="chip-cam">📷 cam</div><div class="chip" id="chip-link">● connecting</div></div>
+  <div id="track">Step back so the camera sees your shoulders and arm</div>
+  <div id="over"><div class="panel"><h2 id="over-title">Game over</h2><div id="over-sub"></div><button class="btn" id="btn-again">Play again</button></div></div>
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
 <script type="module" src="js/online.js"></script>
