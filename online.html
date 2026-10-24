@@ -34,7 +34,12 @@
   #hud.on { display: block; }
   .camwrap { position: fixed; bottom: 16px; width: 200px; height: 150px; border-radius: 16px; overflow: hidden; border: 2px solid rgba(244,236,221,.22); background: #0b0b1c; box-shadow: 0 12px 30px rgba(0,0,0,.45); }
   .camwrap video { width: 100%; height: 100%; object-fit: cover; display: block; }
-  #mewrap { left: 16px; } #mewrap video { transform: scaleX(-1); }
+  #mewrap { left: 16px; }
+  /* the camera element only feeds the tracker; what you see is #meview, the
+     left eye alone when the camera is a ZED plugged in as a webcam (one
+     double-wide left|right frame), mirrored like a mirror */
+  #me { position: absolute; width: 2px; height: 2px; opacity: 0.01; pointer-events: none; }
+  #meview { position: absolute; inset: 0; width: 100%; height: 100%; transform: scaleX(-1); }
   #friendwrap { right: 16px; }
   .tag { position: absolute; left: 8px; bottom: 8px; font-size: 12px; font-weight: 800; background: rgba(21,21,46,.72); padding: 3px 9px; border-radius: 999px; }
   #chips { position: fixed; top: 14px; right: 16px; display: flex; gap: 8px; pointer-events: auto; }
@@ -80,7 +85,7 @@
   </div>
 </div>
 <div id="hud">
-  <div class="camwrap" id="mewrap"><video id="me" autoplay muted playsinline></video><canvas id="meskel"></canvas><div class="tag" id="metag">You</div></div>
+  <div class="camwrap" id="mewrap"><video id="me" autoplay muted playsinline></video><canvas id="meview"></canvas><canvas id="meskel"></canvas><div class="tag" id="metag">You</div></div>
   <div class="camwrap" id="friendwrap"><video id="friend" autoplay playsinline></video><div class="tag" id="friendtag">Friend</div></div>
   <div id="chips"><div class="chip" id="chip-mic">🎙 mic</div><div class="chip" id="chip-cam">📷 cam</div><div class="chip" id="chip-link">● connecting</div></div>
   <div id="track">Step back so the camera sees your shoulders and arm</div>

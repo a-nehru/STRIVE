@@ -233,7 +233,7 @@ function drawSkeleton() {
   if (cvs.width !== Math.round(box.width) || cvs.height !== Math.round(box.height)) { cvs.width = Math.round(box.width); cvs.height = Math.round(box.height); }
   const c2 = cvs.getContext("2d"), W = cvs.width, H = cvs.height;
   c2.clearRect(0, 0, W, H);
-  const vw = t.srcW || vid.videoWidth || 640, vh = t.srcH || vid.videoHeight || 480;
+  const r = cropRect(), vw = r.sw, vh = r.sh;
   const sc = Math.max(W / vw, H / vh), dw = vw * sc, dh = vh * sc, ox = (W - dw) / 2, oy = (H - dh) / 2;
   const P = p => ({ x: ox + p.x * dw, y: oy + p.y * dh });
   const side = G.arm === "left" ? "L" : "R", pts = t.pts || {};
@@ -261,6 +261,7 @@ function loop(now) {
   const dt = Math.min(50, now - (last || now)); last = now;
   if (G.role === "host") hostTick(now, dt); else if (G.role === "guest") guestTick(now, dt);
   draw(now, dt);
+  drawSelf();
   drawSkeleton();
   if (G.state === "over" && !$("over").classList.contains("on")) {
     const me = G.role === "guest" ? 1 : 0, won = G.winner === me;
@@ -293,9 +294,32 @@ function status(s) { $("status").textContent = s; }
 const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const roomCode = () => Array.from({ length: 4 }, () => CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)]).join("");
 const peerId = code => "strive-armpong-" + code.toUpperCase();
+// what the friend receives: a small picture drawn from the same one-eye crop
+// as your own view (sendCv, drawn in drawSelf), never the raw double-wide frame
+let sendCv = null;
 function localStream() {
-  const cam = $("me").srcObject;
-  return new MediaStream([...(media ? media.getAudioTracks() : []), ...(cam ? cam.getVideoTracks() : [])]);
+  sendCv ??= Object.assign(document.createElement("canvas"), { width: 320, height: 240 });
+  const vt = sendCv.captureStream(20).getVideoTracks();
+  return new MediaStream([...(media ? media.getAudioTracks() : []), ...vt]);
+}
+// your own picture: the camera frame, or its LEFT EYE when the tracker says
+// the camera is a stereo pair, covering the box
+function cropRect() {
+  const t = G.tracker, vid = $("me");
+  const fw = vid.videoWidth || 640, fh = vid.videoHeight || 480;
+  return t?.isStereo ? { sx: 0, sy: 0, sw: fw / 2, sh: fh } : { sx: 0, sy: 0, sw: fw, sh: fh };
+}
+function drawCover(c2, W, H) {
+  const vid = $("me"); if (!vid.videoWidth) return;
+  const r = cropRect(), sc = Math.max(W / r.sw, H / r.sh), dw = r.sw * sc, dh = r.sh * sc;
+  c2.drawImage(vid, r.sx, r.sy, r.sw, r.sh, (W - dw) / 2, (H - dh) / 2, dw, dh);
+}
+function drawSelf() {
+  const cvs = $("meview"); if (!cvs) return;
+  const box = cvs.getBoundingClientRect();
+  if (cvs.width !== Math.round(box.width) || cvs.height !== Math.round(box.height)) { cvs.width = Math.round(box.width); cvs.height = Math.round(box.height); }
+  drawCover(cvs.getContext("2d"), cvs.width, cvs.height);
+  if (sendCv && $("chip-cam") && !$("chip-cam").classList.contains("off")) drawCover(sendCv.getContext("2d"), sendCv.width, sendCv.height);
 }
 function makePeer(id) {
   const peer = new Peer(id, { config: { iceServers: STUN }, debug: 0 });
@@ -367,7 +391,7 @@ $("btn-solo").onclick = async () => {
 };
 $("btn-again").onclick = () => { if (G.role !== "host") return; G.score = [0, 0]; G.speed = SPEED0; G.winner = null; G.hits = 0; serve(1); $("over").classList.remove("on"); };
 $("chip-mic").onclick = () => { const on = $("chip-mic").classList.toggle("off"); media?.getAudioTracks().forEach(t => t.enabled = !on); $("chip-mic").textContent = on ? "🎙 muted" : "🎙 mic"; };
-$("chip-cam").onclick = () => { const on = $("chip-cam").classList.toggle("off"); $("me").srcObject?.getVideoTracks().forEach(t => t.enabled = !on); $("chip-cam").textContent = on ? "📷 off" : "📷 cam"; };
+$("chip-cam").onclick = () => { const on = $("chip-cam").classList.toggle("off"); if (on && sendCv) { const c2 = sendCv.getContext("2d"); c2.fillStyle = "#0b0b1c"; c2.fillRect(0, 0, sendCv.width, sendCv.height); } $("chip-cam").textContent = on ? "📷 off" : "📷 cam"; };
 // ?code=ABCD joins straight away once the camera is up
 {
   const q = new URLSearchParams(location.search);
