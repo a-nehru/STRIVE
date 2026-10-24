@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tracking Lab - compare tracking models</title>
+<style>
+  :root { --bg:#14141f; --panel:#1d1d2c; --panel2:#242438; --ink:#e8e8f0; --dim:#9a9ab0; --accent:#e8a86a; --good:#9fc08a; --bad:#d08a8a; --line:#34344c; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.45 system-ui,sans-serif; }
+  header { display:flex; align-items:baseline; gap:14px; padding:10px 16px; border-bottom:1px solid var(--line); }
+  header h1 { font-size:16px; margin:0; } header .sub { color:var(--dim); font-size:12px; } header a { color:var(--accent); margin-left:auto; font-size:12px; }
+  #layout { display:grid; grid-template-columns:1fr 400px; height:calc(100vh - 45px); }
+  #stage { position:relative; background:#000; overflow:hidden; display:flex; align-items:center; justify-content:center; }
+  #video { max-width:100%; max-height:100%; display:block; }
+  #offline { position:absolute; inset:0; display:none; align-items:center; justify-content:center; flex-direction:column; gap:10px; color:var(--dim); text-align:center; padding:30px; }
+  #offline code { color:var(--ink); background:var(--panel2); padding:2px 6px; border-radius:4px; }
+  #panel { overflow-y:auto; background:var(--panel); border-left:1px solid var(--line); padding:12px; display:flex; flex-direction:column; gap:12px; }
+  .card { background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:10px 12px; }
+  .card h2 { font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:var(--dim); margin:0 0 8px; }
+  label { display:flex; justify-content:space-between; align-items:center; gap:8px; margin:4px 0; font-size:13px; }
+  .models label { justify-content:flex-start; }
+  select, input[type=number] { background:var(--bg); color:var(--ink); border:1px solid var(--line); border-radius:5px; padding:4px 6px; font:inherit; max-width:120px; }
+  button { background:var(--accent); color:#201408; border:0; border-radius:6px; padding:6px 12px; font:600 13px system-ui; cursor:pointer; }
+  button.ghost { background:transparent; color:var(--accent); border:1px solid var(--accent); }
+  button.rec { background:#d04a4a; color:#fff; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  td, th { padding:3px 4px; text-align:left; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--dim); font-weight:500; } td.num { font-family:ui-monospace,monospace; text-align:right; white-space:nowrap; }
+  .ok { color:var(--good); } .no { color:var(--bad); } .warn { color:var(--accent); }
+  .sw { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:6px; vertical-align:-1px; }
+  #log { font:11px ui-monospace,monospace; color:var(--dim); white-space:pre-wrap; max-height:120px; overflow-y:auto; }
+  .hint { font-size:11px; color:var(--dim); margin-top:6px; }
+  details summary { cursor:pointer; color:var(--dim); font-size:12px; }
+  pre.report { font-size:11px; white-space:pre-wrap; background:var(--bg); padding:8px; border-radius:6px; max-height:260px; overflow:auto; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Tracking Lab</h1>
+  <div class="sub">every ticked model runs on the same frames &middot; not patient-facing</div>
+  <a href="model-lab.html">browser-side Model Lab &rarr;</a>
+</header>
+<div id="layout">
+  <div id="stage">
+    <canvas id="video"></canvas>
+    <div id="stall" style="position:absolute;left:0;right:0;bottom:0;padding:10px 16px;background:rgba(20,20,31,.85);color:var(--accent);font-size:14px;display:none"></div>
+    <div id="offline">
+      <div><b>The lab server is not running.</b></div>
+      <div>In a Windows terminal, with the ZED bridge stopped:</div>
+      <div><code>py -3.12 tools\model_lab.py</code> &nbsp;(the ZED) &nbsp;&middot;&nbsp; <code>--source cam:0</code> (a webcam) &nbsp;&middot;&nbsp; <code>--source file:clip.mp4</code> &nbsp;&middot;&nbsp; <code>--source rec:tools\recordings\&lt;dir&gt;</code></div>
+      <div class="hint">WiLoR, YOLO and ViTPose need <code>tools\setup_hands_env.cmd</code> run once (CUDA venv).</div>
+    </div>
+  </div>
+  <div id="panel">
+    <div class="card">
+      <h2>Source</h2>
+      <div id="src" class="hint">connecting to localhost:8326&hellip;</div>
+    </div>
+    <div class="card" id="zedcard" style="display:none">
+      <h2>ZED settings (switch live)</h2>
+      <label>Body model <select id="zed-model"></select></label>
+      <label>Depth mode <select id="zed-depth"></select></label>
+      <label>Picture <select id="zed-res"></select> <select id="zed-fps"></select></label>
+      <div class="row" style="margin-top:8px"><button id="zed-apply">Switch the ZED</button><span id="zed-state" class="hint"></span></div>
+      <div class="hint">FAST / MEDIUM / ACCURATE are the SDK's own body models (BODY_38, body fitting on). A model's first use optimises it for the GPU, which takes minutes; the picture freezes meanwhile. HD2K (2208x1242) only runs at 15 fps.</div>
+    </div>
+    <div class="card models">
+      <h2>Hand models (on a crop about each wrist)</h2>
+      <label><input type="checkbox" data-kind="hands" value="mediapipe"><span class="sw" style="background:#e8a86a"></span>MediaPipe Hand Landmarker <span class="hint">&nbsp;CPU, what the game ships with</span></label>
+      <label><input type="checkbox" data-kind="hands" value="wilor"><span class="sw" style="background:#ff6e96"></span>WiLoR <span class="hint">&nbsp;ViT hand mesh, CUDA</span></label>
+      <h2 style="margin-top:10px">Body models (the whole frame)</h2>
+      <label><input type="checkbox" data-kind="body" value="zed" id="chk-zed" disabled><span class="sw" style="background:#9fc08a"></span>ZED BODY_38 <span class="hint">&nbsp;depth, metres; comes with the ZED frames</span></label>
+      <label><input type="checkbox" data-kind="body" value="yolo"><span class="sw" style="background:#5aaae6"></span>YOLO11 pose <span class="hint">&nbsp;17 keypoints, CUDA</span></label>
+      <label><input type="checkbox" data-kind="body" value="vitpose"><span class="sw" style="background:#e678c8"></span>ViTPose++ <span class="hint">&nbsp;top-down ViT, CUDA</span></label>
+      <label>Run models every <select id="every"><option>1</option><option>2</option><option>3</option></select> frame(s)</label>
+      <label>Wrist crop scale <input type="number" id="cropk" min="0.5" max="3" step="0.1" value="1.0"></label>
+      <label>Mirror view <input type="checkbox" id="mirror" checked></label>
+      <div class="row" style="margin-top:8px"><button id="apply">Apply</button><span id="applied" class="hint"></span></div>
+    </div>
+    <div class="card">
+      <h2>Live numbers (3 s window)</h2>
+      <table id="hands"><thead><tr><th>hand model</th><th>side</th><th>fps</th><th>ms</th><th>seen</th><th>jitter px</th><th>curl</th><th>aperture</th></tr></thead><tbody></tbody></table>
+      <table id="bodies" style="margin-top:8px"><thead><tr><th>body model</th><th>fps</th><th>ms</th><th>seen</th><th>joints</th><th>wrist jitter L/R</th><th>forearm CoV L/R</th></tr></thead><tbody></tbody></table>
+      <div class="hint">seen = frames with a detection. jitter = mean frame-to-frame move (lower is steadier; a still hand should read near 0). curl: about 2 open, 1 fist. CoV = bone length spread in % (a constant bone reads 0; for the ZED it is the 3D length in metres).</div>
+    </div>
+    <div class="card">
+      <h2>Use for the game</h2>
+      <label><input type="radio" name="usehand" value="mediapipe" checked> MediaPipe hand model (CPU, no venv needed)</label>
+      <label><input type="radio" name="usehand" value="wilor"> WiLoR hand model (CUDA, tools\.venv-hands)</label>
+      <div class="row" style="margin-top:8px"><button id="use">Save this for the game</button><span id="usestate" class="hint"></span></div>
+      <div class="hint">Saves the ZED settings shown above and the hand model to <code>tools/tracking_config.json</code>. The ZED bridge reads it when it starts, so restart <code>py -3.12 tools\zed_bridge.py</code> after saving. Flags on the bridge's command line still win.</div>
+      <div id="useconfig" class="hint"></div>
+    </div>
+    <div class="card">
+      <h2>Record for offline scoring</h2>
+      <div class="row"><button id="rec" class="ghost">Start recording</button><button id="snap" class="ghost">Snapshot</button><span id="recstate" class="hint"></span></div>
+      <div class="hint">Full-resolution frames and every model's result go to <code>tools/recordings/&lt;stamp&gt;/</code>. Score one with <code>py -3.12 tools\compare_models.py tools\recordings\&lt;stamp&gt; --hands mediapipe,wilor --body yolo,vitpose</code>; replay it in the lab with <code>--source rec:&lt;dir&gt;</code>.</div>
+      <div id="recs" style="margin-top:8px"></div>
+    </div>
+    <div class="card"><h2>Log</h2><div id="log"></div></div>
+  </div>
+</div>
+<script>
+const BASE = "http://localhost:8326";
+const $ = s => document.querySelector(s);
+const logEl = $("#log");
+function log(s) { logEl.textContent = (new Date().toLocaleTimeString() + "  " + s + "\n" + logEl.textContent).slice(0, 4000); }
+const fmt = (v, d = 1) => (v == null || v === undefined) ? "" : (typeof v === "number" ? v.toFixed(d) : v);
+let status = null, es = null, streaming = false, lastFrame = 0;
+
+// The picture: read the MJPEG stream ourselves and draw each complete JPEG
+// on the canvas. An <img src=video.mjpg> gives up for good when the server
+// pauses for a model switch (minutes on a first use) and then stays black;
+// this loop just reconnects.
+async function streamVideo() {
+  streaming = true;
+  const canvas = $("#video"), ctx = canvas.getContext("2d");
+  const td = new TextDecoder("latin1");
+  while (true) {
+    try {
+      const res = await fetch(BASE + "/video.mjpg?" + Date.now(), { cache: "no-store" });
+      const reader = res.body.getReader();
+      let buf = new Uint8Array(0);
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        const nb = new Uint8Array(buf.length + value.length); nb.set(buf); nb.set(value, buf.length); buf = nb;
+        for (;;) {
+          const head = td.decode(buf.subarray(0, Math.min(buf.length, 200)));
+          const he = head.indexOf("\r\n\r\n");
+          if (he < 0) break;
+          const m = /Content-Length:\s*(\d+)/i.exec(head.slice(0, he));
+          if (!m) { buf = buf.subarray(he + 4); continue; }
+          const len = +m[1], start = he + 4;
+          if (buf.length < start + len) break;
+          const jpg = buf.slice(start, start + len);
+          buf = buf.subarray(start + len);
+          try {
+            const bmp = await createImageBitmap(new Blob([jpg], { type: "image/jpeg" }));
+            if (canvas.width !== bmp.width || canvas.height !== bmp.height) { canvas.width = bmp.width; canvas.height = bmp.height; }
+            ctx.drawImage(bmp, 0, 0); bmp.close(); lastFrame = Date.now();
+          } catch (e) {}
+        }
+      }
+    } catch (e) {}
+    await new Promise(r => setTimeout(r, 1000));
+  }
+}
+setInterval(() => {
+  const src = (status && status.source) || {};
+  const stalled = Date.now() - lastFrame > 2000;
+  const st = $("#stall");
+  if (stalled && status) { st.style.display = ""; st.textContent = src.state && src.state !== "ok" ? "ZED: " + src.state : "no frames for a moment (camera reopening, or the lab stopped)"; }
+  else st.style.display = "none";
+}, 500);
+
+async function getStatus() {
+  try {
+    const r = await fetch(BASE + "/status", { cache: "no-store" });
+    status = await r.json();
+    $("#offline").style.display = "none";
+    if (!streaming) streamVideo();
+    renderStatus();
+    if (!es) openStream();
+    return true;
+  } catch (e) {
+    $("#offline").style.display = "flex";
+    $("#src").textContent = "no lab server on localhost:8326";
+    return false;
+  }
+}
+function renderStatus() {
+  const s = status, src = s.source || {};
+  $("#src").innerHTML = `<b>${src.source || "?"}</b> ${src.w || ""}x${src.h || ""} ${src.res ? src.res + "@" + src.fps + " " + src.model : ""} &middot; ${s.fps} fps` +
+    (s.venv ? "" : ` <span class="no">(no CUDA venv: run tools\\setup_hands_env.cmd)</span>`) +
+    (src.dir ? `<br>${src.dir} (${src.frames} frames)` : "");
+  for (const cb of document.querySelectorAll("input[data-kind]")) {
+    const set = cb.dataset.kind === "hands" ? s.cfg.hands : s.cfg.body;
+    if (cb.value === "zed") { cb.checked = s.available.body.includes("zed"); cb.disabled = true; continue; }
+    if (!cb.dataset.touched) cb.checked = set.includes(cb.value);
+  }
+  $("#every").value = s.cfg.every; $("#cropk").value = s.cfg.cropk; $("#mirror").checked = s.cfg.mirror;
+  if (src.source === "zed" && src.choices) {
+    $("#zedcard").style.display = "";
+    const fill = (sel, items, cur) => { if (sel.dataset.filled !== items.join()) { sel.innerHTML = items.map(x => `<option>${x}</option>`).join(""); sel.dataset.filled = items.join(); } if (!sel.dataset.touched) sel.value = cur; };
+    fill($("#zed-model"), src.choices.model, src.model);
+    fill($("#zed-depth"), src.choices.depth, src.depth);
+    fill($("#zed-res"), src.choices.res, src.res);
+    const fpsFor = src.choices.fps[$("#zed-res").value] || [15];
+    fill($("#zed-fps"), fpsFor.map(String), String(src.fps));
+    $("#zed-state").textContent = src.state === "ok" ? `running ${src.model} · ${src.depth} · ${src.res}@${src.fps}` : src.state;
+    $("#zed-state").className = src.state === "ok" ? "hint ok" : (src.state.startsWith("failed") ? "hint no" : "hint warn");
+  }
+  const r = s.recording;
+  $("#rec").textContent = r ? "Stop recording" : "Start recording";
+  $("#rec").className = r ? "rec" : "ghost";
+  $("#recstate").textContent = r ? `recording ${r.frames} frames, ${r.seconds} s` : "";
+}
+function openStream() {
+  es = new EventSource(BASE + "/stream");
+  es.onmessage = ev => {
+    const m = JSON.parse(ev.data);
+    status = m.status; renderStatus();
+    const hb = $("#hands tbody"), bb = $("#bodies tbody");
+    hb.innerHTML = ""; bb.innerHTML = "";
+    for (const r of m.models) {
+      const state = r.loading ? `<span class="warn">loading…</span>` : (r.error ? `<span class="no" title="${r.error}">error</span>` : "");
+      if (r.kind === "hand") {
+        for (const side of ["left", "right"]) {
+          const s = r[side] || {};
+          const seen = s.detect_pct == null ? "" : `${s.detect_pct}% (${s.found}/${s.tried})`;
+          hb.insertAdjacentHTML("beforeend", `<tr><td>${r.model} ${state}</td><td>${side}</td><td class="num">${fmt(r.fps)}</td><td class="num">${fmt(r.model_ms, 0)}</td><td class="num">${seen}</td><td class="num">${fmt(s.jitter_px, 2)}</td><td class="num">${fmt(s.curl, 2)}${s.curl_sd != null ? " ±" + fmt(s.curl_sd, 2) : ""}</td><td class="num">${fmt(s.aperture, 2)}${s.aperture_sd != null ? " ±" + fmt(s.aperture_sd, 2) : ""}</td></tr>`);
+        }
+      } else {
+        const cov = r.bone3d_fore_l_cov != null || r.bone3d_fore_r_cov != null
+          ? `${fmt(r.bone3d_fore_l_cov)} / ${fmt(r.bone3d_fore_r_cov)} (3D)` : `${fmt(r.bone_fore_l_cov)} / ${fmt(r.bone_fore_r_cov)}`;
+        bb.insertAdjacentHTML("beforeend", `<tr><td>${r.model} ${state}</td><td class="num">${fmt(r.fps)}</td><td class="num">${r.model === "zed" ? "-" : fmt(r.model_ms, 0)}</td><td class="num">${fmt(r.detect_pct)}%</td><td class="num">${fmt(r.joints)}</td><td class="num">${fmt(r.wrist_l_jitter_px, 2)} / ${fmt(r.wrist_r_jitter_px, 2)}</td><td class="num">${cov}</td></tr>`);
+      }
+    }
+  };
+  es.onerror = () => { es.close(); es = null; setTimeout(getStatus, 2000); };
+}
+for (const cb of document.querySelectorAll("input[data-kind]")) cb.addEventListener("change", () => cb.dataset.touched = "1");
+$("#apply").onclick = async () => {
+  const pick = kind => [...document.querySelectorAll(`input[data-kind=${kind}]`)].filter(c => c.checked && c.value !== "zed").map(c => c.value).join(",");
+  const q = `hands=${pick("hands")}&body=${pick("body")}&every=${$("#every").value}&cropk=${$("#cropk").value}&mirror=${$("#mirror").checked ? 1 : 0}`;
+  const r = await fetch(BASE + "/set?" + q); status = await r.json();
+  for (const cb of document.querySelectorAll("input[data-kind]")) delete cb.dataset.touched;
+  renderStatus(); $("#applied").textContent = "applied"; setTimeout(() => $("#applied").textContent = "", 1500);
+  log("set " + q);
+};
+for (const id of ["zed-model", "zed-depth", "zed-res", "zed-fps"]) $("#" + id).addEventListener("change", e => { e.target.dataset.touched = "1"; if (id === "zed-res") { delete $("#zed-fps").dataset.touched; } });
+$("#zed-apply").onclick = async () => {
+  const q = `model=${$("#zed-model").value}&depth=${$("#zed-depth").value}&res=${$("#zed-res").value}&fps=${$("#zed-fps").value}`;
+  const r = await (await fetch(BASE + "/zed?" + q)).json();
+  for (const id of ["zed-model", "zed-depth", "zed-res", "zed-fps"]) delete $("#" + id).dataset.touched;
+  log("zed " + q + (r.ok ? "" : " -> " + r.error)); $("#zed-state").textContent = r.state || r.error;
+};
+$("#use").onclick = async () => {
+  const hand = document.querySelector("input[name=usehand]:checked").value;
+  const r = await (await fetch(BASE + "/use?hand=" + hand)).json();
+  $("#usestate").textContent = "saved"; setTimeout(() => $("#usestate").textContent = "", 2000);
+  showConfig(r.config); log("saved for the game: " + JSON.stringify(r.config));
+};
+function showConfig(c) {
+  if (!c || !c.saved) { $("#useconfig").textContent = "nothing saved yet: the bridge uses its built-in defaults (HD2K@15, NEURAL_LIGHT, MEDIUM, MediaPipe)"; return; }
+  const z = c.zed || {};
+  $("#useconfig").innerHTML = `The game will use: <b>${z.res || "?"}@${z.fps || "?"} · ${z.depth || "?"} · ${z.model || "?"}</b> with the <b>${c.hand_model || "mediapipe"}</b> hand model (saved ${c.saved}).`;
+  const rb = document.querySelector(`input[name=usehand][value=${c.hand_model || "mediapipe"}]`); if (rb) rb.checked = true;
+}
+async function loadConfig() { try { showConfig((await (await fetch(BASE + "/config")).json()).config); } catch (e) {} }
+$("#rec").onclick = async () => {
+  const start = !(status && status.recording);
+  const r = await (await fetch(BASE + "/record?" + (start ? "start=1" : "stop=1"))).json();
+  log(start ? "recording to " + r.dir : "stopped: " + r.dir); if (!start) loadRecs();
+};
+$("#snap").onclick = async () => { const r = await (await fetch(BASE + "/snapshot")).json(); log("snapshot " + r.file); };
+async function loadRecs() {
+  try {
+    const r = await (await fetch(BASE + "/recordings")).json();
+    $("#recs").innerHTML = r.recordings.slice(-8).reverse().map(x => `<details><summary>${x.dir} &middot; ${x.frames} frames ${x.report ? '<span class="ok">scored</span>' : ""}</summary>${x.report ? `<pre class="report">${x.report.replace(/</g, "&lt;")}</pre>` : '<div class="hint">not scored yet</div>'}</details>`).join("") || '<div class="hint">no recordings yet</div>';
+  } catch (e) {}
+}
+getStatus().then(ok => { if (ok) { loadRecs(); loadConfig(); } });
+setInterval(() => { if (!es) getStatus(); }, 3000);
+</script>
+</body>
+</html>

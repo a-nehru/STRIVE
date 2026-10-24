@@ -181,6 +181,12 @@ const VIDEO_DONE = "Well done. All six moves done. Five targets next.";
 const VIDEO_BACK = 0.18;                // a move "returned" if the wrist ends within this of where it started (SW)
 const VIDEO_BASE_MS = 500;              // the first half second of a move gives the starting elevation
 const VIDEO_SLACK = 4000;               // a stalled recording still ends after its length + this
+// WAIT FOR THE MOVE TO FINISH (Oct 2026, by request: the recording ran on
+// while the patient was still mid-move). At each move boundary the recording
+// pauses until the wrist is back within VIDEO_WAIT_BACK of where the move
+// started and has stayed there VIDEO_WAIT_SETTLE_MS, or VIDEO_WAIT_MAX_MS
+// has passed; the wall-clock budget slides by the wait.
+const VIDEO_WAIT_BACK = 0.3, VIDEO_WAIT_SETTLE_MS = 500, VIDEO_WAIT_MAX_MS = 8000;
 
 // greedy word wrap for canvas text, in the font set on ctx
 function wrapLines(ctx, text, maxW) {
@@ -323,6 +329,7 @@ export class Assessment {
     }
     if (this.videoStart != null && this.state === "video") this.videoStart += gap;
     if (this.vm) this.vm.start += gap;
+    if (this.vWait) { this.vWait.since += gap; if (this.vWait.settled != null) this.vWait.settled += gap; }
     this.prev = null;   // don't let the gap read as a huge hand speed
   }
 
@@ -666,7 +673,7 @@ export class Assessment {
     if (!v) return;
     if (paused) { if (!v.paused) v.pause(); return; }
     if (v.currentTime >= VIDEO_END) { if (!v.paused) v.pause(); return; }
-    if (v.paused && !v.ended && !v.error && this.t.trackingOk) v.play().catch(() => {});
+    if (v.paused && !v.ended && !v.error && this.t.trackingOk && !this.vWait) v.play().catch(() => {});
   }
 
   // which move the recording is on at t seconds into it (-1 before the first)
@@ -681,8 +688,25 @@ export class Assessment {
     const v = this.vid;
     const failed = !v || !!v.error || (this.vidFailedAt && now - this.vidFailedAt > 4000);
     const t = v && v.duration > 0 ? v.currentTime : 0;
-    // a new move begins: close the one before, open this one
+    // a new move begins: first wait for the one before to be finished (the
+    // wrist back near its start), the recording held meanwhile; then close
+    // it and open this one
     const idx = this._videoMoveAt(t);
+    if (idx !== this.vIdx && this.vm && !failed) {
+      const M = this.vm;
+      const d = Math.hypot(hand.x - M.startPos.x, hand.y - M.startPos.y);
+      const W = this.vWait ??= { since: now, settled: null };
+      if (!v.paused) v.pause();
+      if (d <= VIDEO_WAIT_BACK) W.settled ??= now; else W.settled = null;
+      const done = (W.settled != null && now - W.settled >= VIDEO_WAIT_SETTLE_MS) || now - W.since >= VIDEO_WAIT_MAX_MS;
+      if (!done) {
+        M.peakSW = Math.max(M.peakSW, d);
+        return;
+      }
+      this.videoStart += now - W.since;        // the wait costs the recording's budget nothing
+      this.vWait = null;
+      if (this.t.trackingOk) v.play().catch(() => {});
+    }
     if (idx !== this.vIdx) {
       if (this.vm) this._finishMove(now, hand);
       this.vIdx = idx;
@@ -981,6 +1005,16 @@ export class Assessment {
     if (!(hx > 1) || !(hy > 1) || !isFinite(o.x) || !isFinite(o.y)) return this._zoom || one;
     const k = Math.max(1, Math.min(ZOOM_MAX, c.width / (2 * hx), c.height / (2 * hy)));
     const want = { k, tx: c.width / 2 - k * o.x, ty: c.height / 2 - k * o.y };
+    // never past the picture's edge: the zoomed camera picture must still
+    // cover the whole stage (a body centre low in the picture used to leave
+    // a dark band along the bottom), so the window slides instead
+    const sw = this.t.srcW, sh = this.t.srcH;
+    if (sw > 0 && sh > 0) {
+      const sc = Math.max(c.width / sw, c.height / sh);
+      const dw = sw * sc, dh = sh * sc, dx = (c.width - dw) / 2, dy = (c.height - dh) / 2;
+      want.tx = Math.min(-k * dx, Math.max(c.width - k * (dx + dw), want.tx));
+      want.ty = Math.min(-k * dy, Math.max(c.height - k * (dy + dh), want.ty));
+    }
     const z = this._zoom || want;
     this._zoom = { k: z.k + (want.k - z.k) * ZOOM_EASE, tx: z.tx + (want.tx - z.tx) * ZOOM_EASE, ty: z.ty + (want.ty - z.ty) * ZOOM_EASE };
     return this._zoom;
@@ -1405,7 +1439,7 @@ export class Assessment {
     const titleF = Math.round(H * 0.034);
     ctx.font = `800 ${titleF}px Nunito, sans-serif`;
     const done = this.vIdx >= VIDEO_PARTS.length;
-    ctx.fillText(done ? "Well done!" : part ? `Follow along: ${part.name.toLowerCase()}` : "Follow along", left + 18, top + boxH * 0.3);
+    ctx.fillText(done ? "Well done!" : this.vWait ? "Finish the move, then we carry on" : part ? `Follow along: ${part.name.toLowerCase()}` : "Follow along", left + 18, top + boxH * 0.3);
     ctx.textAlign = "right"; ctx.fillStyle = "rgba(244,236,221,0.6)";
     ctx.font = `700 ${Math.round(H * 0.022)}px Nunito, sans-serif`;
     ctx.fillText(`${this.side} arm`, W - pad - 18, top + boxH * 0.3);

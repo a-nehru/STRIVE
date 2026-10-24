@@ -622,7 +622,13 @@ const PADDLE_MIN_CUT = 0.6, PADDLE_BETA = 5.0, PADDLE_D_CUT = 0.25;
 // Distinct samples, not frames: at 30 fps in a 60 fps loop the same angle
 // arrives twice, and a median over repeats would be a median over nothing.
 const PADDLE_MEDIAN = 5;
-const PONG_HAND_SCALE = 0.42, PONG_HAND_ALPHA = 0.38;
+const PONG_HAND_SCALE = 0.42, PONG_HAND_ALPHA = 0.38;   // PONG_HAND_SCALE is the fallback when the hand's size is unknown
+// the hand on the paddle is scaled so it is always as long as the paddle
+// (23 Oct 2026, by request: a fixed shrink left it tiny on a far camera and
+// spilling over the paddle on a near one); PONG_HAND_FIT is the share of the
+// paddle's length the hand spans, within PONG_HAND_K
+const PONG_HAND_FIT = 0.95, PONG_HAND_K = [0.15, 4];
+const PONG_HAND_PALM_K = 2.0;      // an open hand's length is about twice the wrist-to-middle-knuckle palm
 // nudged OUTWARD from the court so the hand hugs the back of its paddle
 // rather than spilling into the play area (the paddle itself is only 16px)
 const PONG_HAND_OUT = 16;
@@ -762,10 +768,30 @@ const AI_SLIP_GAP = 0.3;       // how far past the paddle edge the ball slips, i
 // mechanism, the misread is.
 const AI_FADE_FROM = 55, AI_FADE_TO = 95, AI_FADE_MAX = 0.4;
 const PONG_RACKET_CLOCK = false;
+// Oct 2026, by request, after testing: no per-game challenge and no words
+// rising off the paddle (EDGE / CLUTCH / HEAT / ×n); the style points are
+// still counted for the record, just not shown. The amber clock at the top
+// stays, drawn as a loading bar that fills over the game (PONG_CLOCK_BAR).
+const PONG_CHALLENGE = false;
+const PONG_STYLE_TAGS = false;
+const PONG_CLOCK_BAR = true;
 // A ROUND IS A MATCH (Oct 2026, by request): best of PONG_BEST_OF games of
 // TRICK_AT seconds each, back to back with no card and no rest between them;
 // the first to PONG_GAMES_TO_WIN takes it
 const PONG_BEST_OF = 3, PONG_GAMES_TO_WIN = 2;
+// a game is won at PONG_POINTS points (24 Oct 2026, by request); the 90 s
+// clock and its smash remain as the backstop for a game that never gets there
+const PONG_POINTS = 3;
+// SPIN (24 Oct 2026, by request: a reason to turn the forearm). A return made
+// with the hand turned over, palm up (supinated) or knuckles up (pronated),
+// per tracker.palmFacing, bends the ball's flight by SPIN_K of its speed,
+// up for palm up and down for knuckles up. The star reads the ball's own
+// physics, so spin beats it only through its reaction limits: honest, not
+// a gift. Introduced out loud once, at the start of the second game.
+const PONG_SPIN = true, SPIN_K = 0.55, SPIN_COL = "#c9a7ff";
+// THE RALLY RECORD: the patient's longest rally ever on this arm (opts.bestRallyEver)
+// sits as a hollow star among the rally stars; passing it turns them gold once a round.
+const RECORD_COL = "#ffd54a";
 // THE PACE (Oct 2026, by request): `pace` is the seconds the ball takes to
 // cross the court at full speed. On the first game ever on an arm the
 // tutorial's SWEEP sets it: three paddle sweeps rail to rail as quick as is
@@ -869,6 +895,25 @@ export class ArcPong extends GameBase {
     return out.filter(h => h.y != null).map(h => ({ ...h, ...this._padOutPx(h.edge, h.y, h.out) }));
   }
 
+  // the scale that makes this hand span PONG_HAND_FIT of its paddle: the
+  // hand's own extent on screen (its 21 points' bounding box) against the
+  // paddle's length on screen (court units through _P, so it is right for
+  // the sideways game too)
+  _handFit(h, c) {
+    const pts = this.t._handPts(h.side);
+    if (!pts || pts.length < 10) return PONG_HAND_SCALE;
+    // the size to fit is the OPEN hand's length, estimated from the palm
+    // (wrist to the middle finger's knuckle, PONG_HAND_PALM_K times): the
+    // bounding box used before shrank when the hand closed, so the fit grew
+    // and a fist came out BIGGER than the open hand (24 Oct 2026, by request)
+    const w = this.t._videoToPx(pts[0].x, pts[0].y, c), m = this.t._videoToPx(pts[9].x, pts[9].y, c);
+    const ext = Math.hypot(m.x - w.x, m.y - w.y) * PONG_HAND_PALM_K;
+    if (!(ext > 2)) return PONG_HAND_SCALE;
+    const a = this._P(0.5, h.y), b = this._P(0.5, h.y + this._padH(h.edge));
+    const padPx = Math.hypot(b.x - a.x, b.y - a.y);
+    if (!(padPx > 2)) return PONG_HAND_SCALE;
+    return Math.max(PONG_HAND_K[0], Math.min(PONG_HAND_K[1], padPx * PONG_HAND_FIT / ext));
+  }
   _drawArmAndCursor(ctx, c, now) {
     if (!this.pads) return;
     for (const h of this._handPads()) {
@@ -879,9 +924,10 @@ export class ArcPong extends GameBase {
       // the hand's own landmarks, shrunk and re-centred onto the paddle: the
       // shape is still the patient's real hand, it has just been moved to
       // where the thing it controls is
-      const map = pm ? (q => ({ x: (q.x - pm.x) * PONG_HAND_SCALE + h.x,
-                                y: (q.y - pm.y) * PONG_HAND_SCALE + cy })) : null;
-      const drawn = map && drawHand(ctx, c, this.t, h.side, { map, scale: PONG_HAND_SCALE, fallback: false });
+      const k = this._handFit(h, c);
+      const map = pm ? (q => ({ x: (q.x - pm.x) * k + h.x,
+                                y: (q.y - pm.y) * k + cy })) : null;
+      const drawn = map && drawHand(ctx, c, this.t, h.side, { map, scale: k, fallback: false });
       if (!drawn) {
         // no hand model: a small disc stands in for the hand
         ctx.strokeStyle = "rgba(244,236,221,0.65)"; ctx.lineWidth = 2.5;
@@ -909,6 +955,7 @@ export class ArcPong extends GameBase {
     this.p2Profile = this.opts.p2Profile || null;
     this.p2Waiting = 0;
     this.rally = 0; this.bestRally = 0;
+    this.spins = 0; this.bestEver = this.opts.bestRallyEver || 0; this.recordBeat = false; this._spinSaid = false;
     this.score = { us: 0, ai: 0 };
     this.pace = Math.min(PACE_MAX, Math.max(PACE_MIN, this.params.lifetime || 3));
     this.paceStart = this.pace; this.paceLog = []; this.sweepT = null;
@@ -1011,7 +1058,12 @@ export class ArcPong extends GameBase {
     this.roundSeconds = this._gameT0 + TRICK_AT + tail;
     // the game's challenge, the same for both players, said once and kept
     // on the board; and the first orb a little way in
-    if (this.hasAI || this.isDuo || this.mode === "companion") {
+    if (PONG_SPIN && !this._spinSaid && this.games.list.length >= 1 && (this.hasAI || this.isDuo)) {
+      this._spinSaid = true;
+      setTimeout(() => { if (this.active && !this.tut) { this._prompt("Try a spin", "Turn your hand over as you hit: palm up, or knuckles up"); this._speak("Game two. Try a spin: turn your hand over as you hit, palm up or knuckles up, and watch the ball bend."); } }, 3600);
+      setTimeout(() => { if (this.active) this._prompt(""); }, 9600);
+    }
+    if (PONG_CHALLENGE && (this.hasAI || this.isDuo || this.mode === "companion")) {
       this.challenge = CHALLENGES[Math.floor(Math.random() * CHALLENGES.length)];
       setTimeout(() => { if (this.active && !this.tut) { this._prompt("Challenge", this.challenge.text); this._speak("Challenge: " + this.challenge.text); } }, 3600);
       setTimeout(() => { if (this.active) this._prompt(""); }, 7600);
@@ -1082,7 +1134,7 @@ export class ArcPong extends GameBase {
   }
   extra() {
     return {
-      pongMode: this.mode, axis: this.axis, bestRally: this.bestRally,
+      pongMode: this.mode, axis: this.axis, bestRally: this.bestRally, bestRallyEver: this.bestEver, recordBeat: this.recordBeat, spins: this.spins,
       // points over the whole match (every game's tally summed)
       points: this.games.list.reduce((a, g) => a + g.us, 0) + (this.matchDone ? 0 : this.score.us),
       aiPoints: this.games.list.reduce((a, g) => a + g.them, 0) + (this.matchDone ? 0 : this.score.ai),
@@ -1562,6 +1614,12 @@ export class ArcPong extends GameBase {
     // that appeared late in a rally was never there to be collected
     // the smash landed (or, with two players, the smash point is decided): that is the game
     if (trick) { this._burstAt(bx, by, trick.cols[2]); this._gameOver(now, trick); return; }
+    // the game is won at PONG_POINTS
+    if ((this.hasAI || this.isDuo) && (this.score.us >= PONG_POINTS || this.score.ai >= PONG_POINTS)) {
+      this._burstAt(bx, by, who === "us" ? "#ffd98a" : "#a8d8f0");
+      this._gameOver(now, null);
+      return;
+    }
     this.ball = null; this.serving = null; this._slip = null;
     this.pointBreak = { who, trick, at: now, until: now + POINT_BREAK_MS, lastBurst: 0 };
     const us = this.score.us, them = this.score.ai;
@@ -1908,8 +1966,10 @@ export class ArcPong extends GameBase {
         pl.style += pts; pl.hits++;
         pl.rallyBest = Math.max(pl.rallyBest, rallyN);
         const out = this._outward(edge);
-        for (const [i, t] of tags.entries()) this._floater(b.x - out.x * 0.04, b.y + (i - (tags.length - 1) / 2) * 0.07, t, who === "us" ? "#ffd98a" : "#a8d8f0");
-        if (mult > 1 && !tags.length) this._floater(b.x - out.x * 0.04, b.y, `×${mult}`, "rgba(244,236,221,0.8)");
+        if (PONG_STYLE_TAGS) {
+          for (const [i, t] of tags.entries()) this._floater(b.x - out.x * 0.04, b.y + (i - (tags.length - 1) / 2) * 0.07, t, who === "us" ? "#ffd98a" : "#a8d8f0");
+          if (mult > 1 && !tags.length) this._floater(b.x - out.x * 0.04, b.y, `×${mult}`, "rgba(244,236,221,0.8)");
+        }
         // the ghost shot power-up: this return fades out across the middle
         if (this.fx[who].ghostNext) {
           this.fx[who].ghostNext = false;
@@ -1921,6 +1981,7 @@ export class ArcPong extends GameBase {
         if (rallyN >= ON_FIRE_AT && !this.onFire) { this.onFire = true; this.flash = { text: "ON FIRE! 🔥", col: "#ff8a4a", until: now + 1500 }; }
         this._checkChallenge(who, now);
       }
+      b.curve = 0; b.spin = null;                 // whatever bend the last hit gave it ends at this paddle
       audio.paddle(isPlayerSide, this.rally);   // the "pock" of the return: brighter for the patient's own, rising with the rally
       // TWO PLAYERS: the clock is full, so this return, by either of them,
       // is the SMASH, and whoever takes this point takes the game
@@ -1940,7 +2001,23 @@ export class ArcPong extends GameBase {
         // THE TRICK: the clock is full, so this return is the one. The ball
         // flies as this point's trick says, and the star misreads it.
         if (!this.isDuo && this.trickReady(now) && !this._slip && !this._slipUsed) this._engageTrick(now);
-        else { this._burstAt(b.x, b.y, "#e8b98a"); this.flashUntil = now + 160; }
+        else {
+          this._burstAt(b.x, b.y, "#e8b98a"); this.flashUntil = now + 160;
+          // SPIN: the hand turned over as it hit
+          const facing = PONG_SPIN && !this.tut ? this.t.palmFacing?.(this.side) : null;
+          if (facing === "up" || facing === "down") {
+            b.curve = (facing === "up" ? -1 : 1) * SPIN_K * Math.abs(b.vx);
+            b.spin = facing; this.spins++;
+            this._floater(b.x, b.y - 0.08, "SPIN", SPIN_COL);
+            audio.bounce();
+          }
+        }
+        // THE RECORD: the longest rally ever on this arm, passed
+        if (!this.tut && this.bestEver > 0 && this.rally > this.bestEver && !this.recordBeat) {
+          this.recordBeat = true;
+          this.flash = { text: "Longest rally ever! ⭐", col: RECORD_COL, until: now + 1800 };
+          this.say("That's your longest rally ever!");
+        }
         // a teaching ball returned: counted, and the next one comes
         if (this.tut) { this._tutDone(now, "meet"); return; }
       } else {
@@ -2102,10 +2179,22 @@ export class ArcPong extends GameBase {
     if (!tut) {
       const n = Math.min(this.rally, 14);
       const sy = c.height * (abd ? 0.235 : 0.20);
+      const beating = this.bestEver > 0 && this.rally > this.bestEver;
+      // the record to beat: a hollow star in the row where the longest rally
+      // ever would end (or a word past the row when it is longer than it)
+      const rec = this.bestEver;
+      const row = Math.max(n, Math.min(rec, 14));
+      const fxOf = i => 0.5 + (i - (row - 1) / 2) * 0.035;
+      if (rec > 0 && !beating) {
+        ctx.save();
+        if (rec <= 14) { ctx.globalAlpha = 0.55; ctx.strokeStyle = RECORD_COL; ctx.lineWidth = 1.5; starShape(ctx, fxOf(rec - 1) * c.width, sy, 10, "rgba(0,0,0,0)"); ctx.stroke(); }
+        else { ctx.globalAlpha = 0.55; ctx.fillStyle = RECORD_COL; ctx.textAlign = "left"; ctx.textBaseline = "middle"; ctx.font = `700 ${Math.round(c.height * 0.018)}px Nunito, sans-serif`; ctx.fillText(`best ${rec}`, (fxOf(13) + 0.03) * c.width, sy); }
+        ctx.restore();
+      }
       for (let i = 0; i < n; i++) {
-        const fx = 0.5 + (i - (n - 1) / 2) * 0.035;
+        const fx = fxOf(i);
         ctx.globalAlpha = 0.6 + Math.sin(now / 300 + i) * 0.4;
-        starShape(ctx, fx * c.width, sy, i === n - 1 ? 11 : 8, this.onFire ? "#ff8a4a" : "#fff2c2");
+        starShape(ctx, fx * c.width, sy, i === n - 1 ? 11 : 8, this.onFire ? "#ff8a4a" : beating ? RECORD_COL : "#fff2c2");
         ctx.globalAlpha = 1;
       }
       if (this.onFire && this.rally >= ON_FIRE_AT) {
@@ -2441,8 +2530,19 @@ export class ArcPong extends GameBase {
     const smash = PONG_TRICKS && (this.hasAI || this.isDuo);
     const soon = smash && left <= 10;
     ctx.save();
-    ctx.strokeStyle = soon ? "rgba(232,168,106,0.8)" : "rgba(244,236,221,0.35)"; ctx.lineWidth = 4; ctx.lineCap = "round";
-    if (f > 0) { ctx.beginPath(); ctx.moveTo(c.width * (0.5 - 0.3 * f), c.height * 0.035); ctx.lineTo(c.width * (0.5 + 0.3 * f), c.height * 0.035); ctx.stroke(); }
+    if (PONG_CLOCK_BAR) {
+      // a loading bar: a rounded track across the top, filling from the left
+      // as the game runs, amber once the smash is ten seconds away
+      const w = c.width * 0.6, h = Math.max(8, c.height * 0.014), x = (c.width - w) / 2, y = c.height * 0.028, r = h / 2;
+      const track = (xx, ww) => { ctx.beginPath(); ctx.roundRect(xx, y, ww, h, r); };
+      track(x, w); ctx.fillStyle = "rgba(20,16,40,0.45)"; ctx.fill();
+      ctx.strokeStyle = "rgba(244,236,221,0.5)"; ctx.lineWidth = 1.5; ctx.stroke();
+      const done = Math.min(1, 1 - f);
+      if (done > 0) { track(x, Math.max(h, w * done)); ctx.fillStyle = soon ? "#e8a86a" : "rgba(244,236,221,0.85)"; ctx.fill(); }
+    } else {
+      ctx.strokeStyle = soon ? "rgba(232,168,106,0.8)" : "rgba(244,236,221,0.35)"; ctx.lineWidth = 4; ctx.lineCap = "round";
+      if (f > 0) { ctx.beginPath(); ctx.moveTo(c.width * (0.5 - 0.3 * f), c.height * 0.035); ctx.lineTo(c.width * (0.5 + 0.3 * f), c.height * 0.035); ctx.stroke(); }
+    }
     ctx.fillStyle = soon ? "#e8a86a" : "#fff6d8"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
     ctx.shadowColor = "rgba(20,16,40,0.9)"; ctx.shadowBlur = 6;
     ctx.font = `800 ${Math.round(c.height * 0.034)}px Nunito, sans-serif`;
@@ -4643,6 +4743,14 @@ const LUMEN_MOVE_PEAK = 2.2;         // a moving lantern's peak speed, disc unit
 const LUMEN_BASKET_R = 0.17;         // disc: hover radius at the basket
 const LUMEN_LANTERN_R = 0.16;        // disc: lantern capture radius at size 1 (× A11Y.radiusScale)
 const LUMEN_STAND = { x: 0.62, y: -0.55 };   // disc: the keeping hand's candle-stand, on its own side
+// THE HANDS BY COLOUR (23 Oct 2026, by request): the lighting hand is amber
+// and the other hand (the match, the keeping hand) is teal, each drawn as
+// the patient's real hand (drawHand, the way Pong puts the hand on its
+// paddle) in its own colour, and every place a hand goes carries that
+// hand's colour: the basket and the lantern amber, the fire and the stand
+// teal, so which hand goes where is read at a glance
+const LUMEN_HAND_COLS = { light: "#e8a86a", other: "#6fc3d0" };
+const LUMEN_HAND_FIT = 1.6;                   // the hand spans this many ring radii
 const LUMEN_HOLD_GRACE = 400;        // ms out of the lantern a hold survives (tremor)
 const LUMEN_SLOW_S = 10;             // a candle taking longer than this lets Pip slip
 const LUMEN_GOLDEN = 0.15;           // share of plain-reach lanterns that are golden (a chime and a star fragment)
@@ -5718,10 +5826,16 @@ export class Candles extends GameBase {
       ctx.strokeStyle = `rgba(255,236,190,${0.55 * (1 - rip)})`; ctx.lineWidth = 3;
       ctx.beginPath(); ctx.arc(T.x, T.y, tr * (1 + 0.9 * rip), 0, TAU); ctx.stroke();
     }
-    ctx.strokeStyle = tg.golden ? `rgba(255,230,120,${0.7 + 0.3 * pulse})` : `rgba(255,236,190,${0.65 + 0.3 * pulse})`;
+    ctx.strokeStyle = tg.golden ? `rgba(255,230,120,${0.7 + 0.3 * pulse})` : lumenHexA(LUMEN_HAND_COLS.light, 0.65 + 0.3 * pulse);
     ctx.lineWidth = 4;
     if (!hold) ctx.setLineDash([10, 7]);
     ctx.beginPath(); ctx.arc(T.x, T.y, tr, 0, TAU); ctx.stroke(); ctx.setLineDash([]);
+    // two hands: while the flame is to be fetched and brought, a second ring
+    // in the other hand's colour says the lantern wants that hand too
+    if (this.bimanual && this.cur && (this.cur.step === "fire" || this.cur.step === "bring")) {
+      ctx.strokeStyle = lumenHexA(LUMEN_HAND_COLS.other, this.cur.step === "bring" ? 0.5 + 0.4 * pulse : 0.3); ctx.lineWidth = 4; ctx.setLineDash([6, 8]);
+      ctx.beginPath(); ctx.arc(T.x, T.y, tr * 1.3, 0, TAU); ctx.stroke(); ctx.setLineDash([]);
+    }
     if (tg.golden) {
       for (let i = 0; i < 4; i++) {
         const a = this.clock * 2 + i * 1.57;
@@ -5760,7 +5874,7 @@ export class Candles extends GameBase {
     ctx.fillStyle = "#9a6634"; ctx.beginPath(); ctx.ellipse(x, y - r * 0.25, r, r * 0.12, 0, 0, TAU); ctx.fill();
     // what "on the basket" means, and the dwell filling
     if (waiting) {
-      ctx.strokeStyle = "rgba(255,210,122,0.45)"; ctx.lineWidth = 3; ctx.setLineDash([8, 9]);
+      ctx.strokeStyle = lumenHexA(LUMEN_HAND_COLS.other, 0.5); ctx.lineWidth = 3; ctx.setLineDash([8, 9]);
       ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.stroke(); ctx.setLineDash([]);
       const f = Math.min(1, (this._dwells?.basket?.acc ?? 0) / A11Y.dwellMs);
       if (f > 0) {
@@ -5802,10 +5916,10 @@ export class Candles extends GameBase {
     for (let i = -1; i <= 1; i++) this._drawFlame(ctx, p.x + i * w * 0.18, p.y - h * 0.45, Math.max(7, Rs * (0.028 - Math.abs(i) * 0.006)));
     if (turn) {
       const pulse = A11Y.calm ? 0.6 : Math.sin(this.clock * 3.3) * 0.5 + 0.5;
-      ctx.strokeStyle = `rgba(232,168,106,${0.4 + pulse * 0.45})`; ctx.lineWidth = 5; ctx.setLineDash([8, 9]);
+      ctx.strokeStyle = lumenHexA(LUMEN_HAND_COLS.other, 0.45 + pulse * 0.45); ctx.lineWidth = 5; ctx.setLineDash([8, 9]);
       ctx.beginPath(); ctx.arc(p.x, p.y, R, 0, TAU); ctx.stroke(); ctx.setLineDash([]);
     } else {
-      ctx.strokeStyle = "rgba(244,236,221,0.2)"; ctx.lineWidth = 2;
+      ctx.strokeStyle = lumenHexA(LUMEN_HAND_COLS.other, 0.35); ctx.lineWidth = 2.5;
       ctx.beginPath(); ctx.arc(p.x, p.y, R, 0, TAU); ctx.stroke();
     }
     ctx.restore();
@@ -5951,6 +6065,22 @@ export class Candles extends GameBase {
   // The hand on the disc, not the camera's arm: a glow with its capture
   // ring, and while carrying the candle itself riding on the lighting hand,
   // burning down as it travels. The keeping hand (modes) gets its own ring.
+  // the patient's real hand, fitted to the ring it carries, in that hand's colour
+  _drawRealHand(ctx, c, side, hp, ringR, tint) {
+    const pts = this.t._handPts(side);
+    if (!pts) return false;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const p of pts) { const q = this.t._videoToPx(p.x, p.y, c); x0 = Math.min(x0, q.x); y0 = Math.min(y0, q.y); x1 = Math.max(x1, q.x); y1 = Math.max(y1, q.y); }
+    const ext = Math.max(x1 - x0, y1 - y0);
+    const pm = this.t.palmPx(side, c);
+    if (!(ext > 2) || !pm) return false;
+    const k = Math.max(0.15, Math.min(4, ringR * LUMEN_HAND_FIT / ext));
+    const map = q => ({ x: (q.x - pm.x) * k + hp.x, y: (q.y - pm.y) * k + hp.y });
+    ctx.save(); ctx.globalAlpha = 0.55;
+    const drawn = drawHand(ctx, c, this.t, side, { map, scale: k, fallback: false, tint });
+    ctx.restore();
+    return drawn;
+  }
   _drawArmAndCursor(ctx, c, now) {
     const { Rs } = this._geo();
     const sides = this.holdSide ? [this.holdSide, this.lightSide] : this.bimanual ? [this.otherSide, this.lightSide] : [this.lightSide];
@@ -5959,6 +6089,9 @@ export class Candles extends GameBase {
       if (!d) continue;
       const hp = this._px(d);
       const lighting = side === this.lightSide;
+      const tint = lighting ? LUMEN_HAND_COLS.light : LUMEN_HAND_COLS.other;
+      const ringR = (lighting ? LUMEN_BASKET_R * 0.6 : CANDLE_BOX_R) * Rs;
+      this._drawRealHand(ctx, c, side, hp, ringR, tint);
       // stage two: the match in the other hand, once it is lit
       if (this.bimanual && !lighting && this.phase === "carrying" && this.matchLit) {
         const { U } = this._geo(), len = U * 0.045;
@@ -5975,10 +6108,10 @@ export class Candles extends GameBase {
         ctx.beginPath(); ctx.arc(hp.x, hp.y, this.target.r * Rs * 0.35, 0, TAU); ctx.stroke();
         continue;
       }
-      ctx.strokeStyle = lighting ? "rgba(244,236,221,0.22)" : "rgba(200,230,235,0.18)";
-      ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.arc(hp.x, hp.y, (lighting ? LUMEN_BASKET_R * 0.6 : CANDLE_BOX_R) * Rs, 0, TAU); ctx.stroke();
-      this.glow(ctx, hp.x, hp.y, lighting ? 13 : 11, "#fff2c2", lighting ? "#e8a86a" : "#9fc0c8", 22);
+      ctx.strokeStyle = lumenHexA(tint, 0.5);
+      ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.arc(hp.x, hp.y, ringR, 0, TAU); ctx.stroke();
+      this.glow(ctx, hp.x, hp.y, lighting ? 13 : 11, "#fff2c2", tint, 22);
     }
   }
   // Pip has the bottom-left corner, so the posture coach docks bottom-right
@@ -8227,7 +8360,7 @@ const PAIR_LEVELS = [
   { cols: 4, rows: 4, radius: 0.18, spread: 1.00 },
   { cols: 5, rows: 4, radius: 0.16, spread: 1.00 },
 ];
-const PAIR_MAX = PAIR_LEVELS.length;
+export const PAIR_MAX = PAIR_LEVELS.length;
 const PAIR_PEEK_MS = 2200;      // study time per pair when a board opens (plus a base)
 const PAIR_PEEK_BASE = 2500;
 const PAIR_SHOW_MS = 1800;      // a mismatched pair stays face up this long before turning back
@@ -8581,18 +8714,46 @@ const WINDY_LEVELS = [
   { speed: 2.6, gap: 0.61, mov: 0.075, wind: 0.16, drones: 0.6, slide: 0.55, note: "Stronger crosswind" },
   { speed: 3.0, gap: 0.58, mov: 0.086, wind: 0.16, drones: 0.6, slide: 0.6, note: "The finale: everything at once" },
 ];
-export const WINDY_MAX = 24;              // 12 on the ladder, then endless levels, a little tighter each
+// SUB-LEVELS (23 Oct 2026, by request): every stage above is played three
+// times, 1.1, 1.2, 1.3, each a little faster and a touch tighter than the
+// last, before the next stage adds its new element; a banked level number
+// is one of these steps (stage 2.1 is step 4). The time of day turns with
+// the sub-level (morning, evening, night) and the season with the stage.
+export const WINDY_SUBS = 3;
+export const WINDY_MAX = (WINDY_LEVELS.length + 4) * WINDY_SUBS;   // 12 stages on the ladder, then 4 endless stages
+export const windyStageOf = n => Math.ceil(n / WINDY_SUBS);
+export const windySubOf = n => (n - 1) % WINDY_SUBS + 1;
+export const windyLabel = n => `${windyStageOf(n)}.${windySubOf(n)}`;          // staff-facing (drawer, plan)
+export const windyPips = n => Array.from({ length: WINDY_SUBS }, (_, i) => i < windySubOf(n) ? "●" : "○").join(" ");   // patient-facing progress within the stage
 export function windyLevel(n) {
-  if (n <= WINDY_LEVELS.length) return WINDY_LEVELS[n - 1];
-  const k = n - WINDY_LEVELS.length;
-  return { speed: Math.min(4.6, 3.0 + k * 0.12), gap: Math.max(0.5, 0.58 - k * 0.008), mov: Math.min(0.124, 0.086 + k * 0.0054),
-    wind: Math.min(0.24, 0.16 + k * 0.008), drones: Math.min(0.8, 0.6 + k * 0.02), slide: Math.min(0.75, 0.6 + k * 0.01), note: "A little faster and tighter" };
+  const st = windyStageOf(n), sub = windySubOf(n), f = sub - 1;
+  let base;
+  if (st <= WINDY_LEVELS.length) base = WINDY_LEVELS[st - 1];
+  else {
+    const k = st - WINDY_LEVELS.length;
+    base = { speed: Math.min(4.6, 3.0 + k * 0.12), gap: Math.max(0.5, 0.58 - k * 0.008), mov: Math.min(0.124, 0.086 + k * 0.0054),
+      wind: Math.min(0.24, 0.16 + k * 0.008), drones: Math.min(0.8, 0.6 + k * 0.02), slide: Math.min(0.75, 0.6 + k * 0.01), note: "A little faster and tighter" };
+  }
+  return { ...base, stage: st, sub, label: `${st}.${sub}`,
+    speed: base.speed * (1 + 0.08 * f), gap: Math.max(0.5, base.gap - 0.015 * f), spacing: Math.round((base.spacing || 340) * (1 - 0.04 * f)),
+    note: f === 0 ? base.note : f === 1 ? "The same city, a little faster" : "Faster still. One more, then the next stage" };
 }
+// the sky by time of day (the sub-level) and the city by season (the stage)
+export const WINDY_SEASONS = ["spring", "summer", "autumn", "winter"];
+export const windySeasonOf = n => WINDY_SEASONS[(windyStageOf(n) - 1) % 4];
+export const windyTimeOf = n => ["morning", "evening", "night"][windySubOf(n) - 1];
 const WINDY_LEVEL_S = 90;                 // one level is one round of flying
 const WINDY_HEARTS = 3;
 const WINDY_REF_H = 640;                  // the mockup's logical height: its px constants scale by H / this
-const WINDY_LIFETIME_REF = 2.2;           // params.lifetime at which the city flies at the mockup's pace: a typical
-                                          // patient (lifetime about 2.8) flies about a quarter slower than the mockup
+const WINDY_LIFETIME_REF = 3.0;           // params.lifetime at which the city flies at the mockup's pace (3.0 since
+                                          // 23 Oct 2026, by request: at 2.2 a typical patient flew a quarter slower
+                                          // than the mockup and it felt slow; now a typical pace IS the mockup's)
+// Rook's slide (23 Oct 2026, by request: it was too quick in level 2): he
+// only starts to slide once the jet has been tilted past WINDY_SLIDE_DEG for
+// WINDY_SLIDE_DELAY_S, and then at WINDY_SLIDE_K of the mockup's rate
+const WINDY_SLIDE_DEG = 6, WINDY_SLIDE_DELAY_S = 1.0, WINDY_SLIDE_K = 0.55;
+const WINDY_CAT_SCALE = 1.35;             // Rook drawn bigger (23 Oct 2026, by request)
+const WINDY_FINISH_MS = 6500;             // the finish-line celebration before the card
 const WINDY_STEP_MAX = 0.55;              // consecutive gaps are never further apart than this share of the lane, so
                                           // no tower asks for a full-range swing of the arms in one interval
 const WINDY_LANE_TOP = 0.12, WINDY_LANE_BOT = 0.82, WINDY_GROUND = 0.88;   // fractions of the screen height
@@ -8617,6 +8778,18 @@ const WINDY_SKIES = [
   { g: ["#0c1230", "#24215a", "#4a2f6e", "#7a3f73"], moon: [0.85, 0.12, 16], cl: ["#2a2758", "#3e3570", "#5a4580"], shade: 0.55, night: 1, fire: 1 },
 ];
 const WINDY_TOWER_PAL = [["#f1dcc0", "#cdb499", "#8a6f5a"], ["#dfe6ee", "#b6c3d4", "#6b7f99"], ["#ecd1c6", "#c8a49a", "#9a6d63"]];
+// one sky per time of day and season: morning / evening / night rows, a
+// spring / summer / autumn / winter column each (the night skies carry the
+// season in their lake and lights rather than their colour)
+const WINDY_SKY_BY = {
+  morning: { spring: 0, summer: 2, autumn: 3, winter: 6 },
+  evening: { spring: 4, summer: 5, autumn: 7, winter: 10 },
+  night:   { spring: 8, summer: 9, autumn: 11, winter: 10 },
+};
+function windySkyFor(n) {
+  const S = WINDY_SKIES[WINDY_SKY_BY[windyTimeOf(n)][windySeasonOf(n)]];
+  return { ...S, season: windySeasonOf(n), time: windyTimeOf(n) };
+}
 const windyRnd = s => { const x = Math.sin(s * 127.1) * 43758.5; return x - Math.floor(x); };
 
 // the painted city, once per level, as an offscreen canvas (the mockup's
@@ -8665,37 +8838,73 @@ function windyPaintScene(S, W, H, k) {
   };
   cloud(W * 0.22, H * 0.2, H * 0.5, 3); cloud(W * 0.75, H * 0.38, H * 0.45, 11);
   if (S.clouds) { cloud(W * 0.55, H * 0.12, H * 0.55, 21); cloud(W * 0.05, H * 0.42, H * 0.4, 31); }
-  // the far skyline, then the near one with its windows
+  // CHICAGO (23 Oct 2026, by request): the far skyline is the city's own
+  // silhouette, Willis Tower with its two antennas, the Hancock's tapering
+  // black frame, the Aon Center's plain column, the slim spire, then a near
+  // row of blocks with lit windows, and Lake Michigan in front of it all
+  // with Navy Pier's wheel at the right. No bushes and no green dots.
+  const season = S.season || "summer";
+  // the season: winter whitens the lakefront and caps the roofs with snow,
+  // autumn warms the near city, spring softens it, summer leaves it bright
+  if (season === "winter" && !S.night) { x.fillStyle = "rgba(255,255,255,.18)"; x.fillRect(0, 0, W, H); }
+  if (season === "autumn" && !S.night) { x.fillStyle = "rgba(240,160,80,.12)"; x.fillRect(0, 0, W, H); }
+  const far = S.night ? "rgba(40,55,95,.85)" : "rgba(130,158,196,.5)";
+  x.fillStyle = far;
   let px = 0, i = 0;
-  x.fillStyle = S.night ? "rgba(40,55,95,.8)" : "rgba(130,158,196,.45)";
-  while (px < W) { const w = (24 + windyRnd(i) * 32) * k, h = (50 + windyRnd(i + 0.5) * 130) * k; x.fillRect(px, GROUND - 60 * k - h, w, h); if (windyRnd(i + 0.7) > 0.75) x.fillRect(px + w / 2 - k, GROUND - 60 * k - h - 20 * k, 2 * k, 20 * k); px += w + 3 * k; i++; }
+  while (px < W) { const w = (24 + windyRnd(i) * 32) * k, h = (40 + windyRnd(i + 0.5) * 110) * k; x.fillRect(px, GROUND - 60 * k - h, w, h); px += w + 3 * k; i++; }
+  const land = (fx, fw, fh, kind) => {
+    const bw = fw * k, bh = fh * k, bx = W * fx - bw / 2, by = GROUND - 60 * k - bh;
+    x.fillStyle = S.night ? "rgba(28,40,78,.95)" : "rgba(96,124,168,.75)";
+    if (kind === "willis") {            // nine stepped tubes, two antennas
+      x.fillRect(bx, by + bh * 0.3, bw, bh * 0.7); x.fillRect(bx + bw * 0.12, by + bh * 0.15, bw * 0.76, bh * 0.2); x.fillRect(bx + bw * 0.3, by, bw * 0.4, bh * 0.2);
+      x.fillRect(bx + bw * 0.36, by - bh * 0.16, 2.5 * k, bh * 0.16); x.fillRect(bx + bw * 0.6, by - bh * 0.13, 2.5 * k, bh * 0.13);
+    } else if (kind === "hancock") {    // tapering, cross braces, two antennas
+      x.beginPath(); x.moveTo(bx, by + bh); x.lineTo(bx + bw * 0.22, by); x.lineTo(bx + bw * 0.78, by); x.lineTo(bx + bw, by + bh); x.closePath(); x.fill();
+      x.strokeStyle = S.night ? "rgba(90,110,150,.6)" : "rgba(200,215,235,.5)"; x.lineWidth = 1.5 * k;
+      for (let q = 0; q < 4; q++) { const y0 = by + bh * (0.2 + q * 0.2), y1 = y0 + bh * 0.2; x.beginPath(); x.moveTo(bx + bw * 0.1, y0); x.lineTo(bx + bw * 0.9, y1); x.moveTo(bx + bw * 0.9, y0); x.lineTo(bx + bw * 0.1, y1); x.stroke(); }
+      x.fillRect(bx + bw * 0.33, by - bh * 0.2, 2.5 * k, bh * 0.2); x.fillRect(bx + bw * 0.64, by - bh * 0.2, 2.5 * k, bh * 0.2);
+    } else if (kind === "aon") {        // a plain pale column
+      x.fillStyle = S.night ? "rgba(60,75,110,.95)" : "rgba(214,222,232,.85)"; x.fillRect(bx, by, bw, bh);
+      x.fillStyle = S.night ? "rgba(40,52,84,.9)" : "rgba(150,165,190,.5)"; for (let q = 1; q < 6; q++) x.fillRect(bx + bw * q / 6 - 0.5 * k, by, 1.2 * k, bh);
+    } else {                            // a slim tower with a spire
+      x.fillRect(bx + bw * 0.2, by + bh * 0.25, bw * 0.6, bh * 0.75); x.fillRect(bx + bw * 0.32, by, bw * 0.36, bh * 0.25);
+      x.fillRect(bx + bw * 0.5 - k, by - bh * 0.3, 2 * k, bh * 0.3);
+    }
+  };
+  land(0.28, 60, 250, "willis"); land(0.44, 34, 190, "aon"); land(0.55, 26, 210, "spire"); land(0.74, 54, 230, "hancock");
+  // the near row: windows, no greenery on the roofs
   px = -10 * k; i = 40;
-  const pal = ["#ecd3b2", "#dcb59a", "#d4c6ae", "#e8dcc0"], wins = [];
+  const PALS = { spring: ["#e3d9cc", "#d6cbbb", "#dfe3e6", "#ece4d4"], summer: ["#d8cfc2", "#c9bfae", "#cfd6de", "#e2d9c8"],
+                 autumn: ["#d9bfa4", "#c9a98a", "#d8c3ab", "#e6cfae"], winter: ["#dfe3e8", "#cfd5dc", "#e6e9ee", "#d4d9e0"] };
+  const pal = S.night ? ["#2c3652", "#33405e", "#2a3a5a", "#3a4566"] : PALS[season], wins = [];
   while (px < W) {
-    const w = (40 + windyRnd(i) * 46) * k, h = (70 + windyRnd(i + 0.3) * 120) * k, y = GROUND - 40 * k - h;
+    const w = (40 + windyRnd(i) * 46) * k, h = (60 + windyRnd(i + 0.3) * 100) * k, y = GROUND - 40 * k - h;
     x.fillStyle = pal[Math.floor(windyRnd(i + 0.1) * pal.length)]; x.fillRect(px, y, w, h);
-    x.fillStyle = "rgba(80,95,130,.12)"; x.fillRect(px + w * 0.72, y, w * 0.28, h);
-    x.fillStyle = "#7aad62"; x.beginPath(); x.arc(px + w * 0.3, y, 6 * k, 0, TAU); x.arc(px + w * 0.65, y, 5 * k, 0, TAU); x.fill();
+    x.fillStyle = "rgba(80,95,130,.14)"; x.fillRect(px + w * 0.72, y, w * 0.28, h);
+    if (windyRnd(i + 0.8) > 0.6) { x.fillStyle = "rgba(60,70,95,.5)"; x.fillRect(px + w * 0.4, y - 10 * k, 3 * k, 10 * k); }
+    if (season === "winter") { x.fillStyle = S.night ? "rgba(220,228,240,.6)" : "#f7f9fc"; x.fillRect(px - k, y - 3 * k, w + 2 * k, 5 * k); }
     for (let wy = y + 12 * k; wy < GROUND - 48 * k; wy += 16 * k) for (let wx = px + 7 * k; wx < px + w - 10 * k; wx += 11 * k) if (windyRnd(wx * 0.13 + wy * 0.07) > 0.55) wins.push([wx, wy]);
     px += w + 6 * k; i++;
   }
-  const lg = x.createLinearGradient(0, GROUND - 40 * k, 0, GROUND);
-  lg.addColorStop(0, "#6dbccc"); lg.addColorStop(1, "#4795b1");
-  x.fillStyle = lg; x.fillRect(0, GROUND - 40 * k, W, 40 * k);
-  for (let q = -10 * k; q < W; q += 30 * k) {
-    const r = (15 + windyRnd(q) * 10) * k, cx = q + windyRnd(q + 1) * 8 * k, cy = GROUND - 10 * k;
-    x.fillStyle = "#57894b"; x.beginPath(); x.arc(cx, cy, r, 0, TAU); x.fill();
-    x.fillStyle = "#78ad5f"; x.beginPath(); x.arc(cx - r * 0.2, cy - r * 0.25, r * 0.7, 0, TAU); x.fill();
+  x.fillStyle = S.night ? "rgba(255,224,150,.85)" : "rgba(90,130,170,.35)"; for (const [wx, wy] of wins) x.fillRect(wx, wy, 4 * k, 6 * k);
+  // Lake Michigan: the lakefront path, then water to the bottom, with Navy
+  // Pier's wheel standing at the right edge
+  x.fillStyle = S.night ? "#4a4e5a" : season === "winter" ? "#f1f3f6" : season === "autumn" ? "#e0c9a2" : "#e6ddc6"; x.fillRect(0, GROUND - 40 * k, W, 12 * k);
+  const lg = x.createLinearGradient(0, GROUND - 28 * k, 0, H);
+  const lake = S.night ? ["#223a66", "#14244a"] : season === "winter" ? ["#9fbfd4", "#6f93ad"] : season === "autumn" ? ["#5e9fbc", "#2f6f90"] : season === "spring" ? ["#7cc0d6", "#3f8aaa"] : ["#5fb3cf", "#2f7fa6"];
+  lg.addColorStop(0, lake[0]); lg.addColorStop(1, lake[1]);
+  x.fillStyle = lg; x.fillRect(0, GROUND - 28 * k, W, H - GROUND + 28 * k);
+  x.strokeStyle = S.night ? "rgba(180,200,240,.18)" : "rgba(255,255,255,.35)"; x.lineWidth = 1.5 * k;
+  for (let q = 0; q < 14; q++) { const wy = GROUND - 20 * k + windyRnd(q + 5) * (H - GROUND + 16 * k), wx = windyRnd(q + 9) * W; x.beginPath(); x.moveTo(wx, wy); x.lineTo(wx + (20 + windyRnd(q) * 40) * k, wy); x.stroke(); }
+  { const cx = W * 0.92, cy = GROUND - 92 * k, r = 46 * k;
+    x.strokeStyle = S.night ? "rgba(255,210,150,.7)" : "rgba(90,100,130,.7)"; x.lineWidth = 2 * k;
+    x.beginPath(); x.arc(cx, cy, r, 0, TAU); x.stroke(); x.beginPath(); x.arc(cx, cy, r * 0.75, 0, TAU); x.stroke();
+    for (let q = 0; q < 12; q++) { const a = q / 12 * TAU; x.beginPath(); x.moveTo(cx, cy); x.lineTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r); x.stroke(); }
+    x.beginPath(); x.moveTo(cx - 18 * k, GROUND - 40 * k); x.lineTo(cx, cy); x.lineTo(cx + 18 * k, GROUND - 40 * k); x.stroke();
+    if (S.night) { x.fillStyle = "rgba(255,210,150,.9)"; for (let q = 0; q < 12; q++) { const a = q / 12 * TAU; x.beginPath(); x.arc(cx + Math.cos(a) * r, cy + Math.sin(a) * r, 2 * k, 0, TAU); x.fill(); } }
   }
-  const gg = x.createLinearGradient(0, GROUND, 0, H);
-  gg.addColorStop(0, "#82b862"); gg.addColorStop(1, "#5a8f4a");
-  x.fillStyle = gg; x.fillRect(0, GROUND, W, H - GROUND);
-  x.fillStyle = "#eadfc2"; x.fillRect(0, GROUND + 28 * k, W, 10 * k);
   if (S.shade) { x.fillStyle = `rgba(18,24,60,${S.shade})`; x.fillRect(0, GROUND - 260 * k, W, H); }
-  if (S.night) {
-    x.fillStyle = "rgba(255,224,150,.85)"; for (const [wx, wy] of wins) x.fillRect(wx, wy, 4 * k, 6 * k);
-    x.fillStyle = "rgba(255,224,150,.5)"; for (let q = 0; q < W; q += 60 * k) x.fillRect(q, GROUND - 6 * k + ((q / (60 * k)) % 2) * 3 * k, 22 * k, 2 * k);
-  }
+  if (S.night) { x.fillStyle = "rgba(255,224,150,.5)"; for (let q = 0; q < W; q += 60 * k) x.fillRect(q, GROUND - 34 * k, 18 * k, 2 * k); }
   return c;
 }
 
@@ -8721,6 +8930,18 @@ class WindyChannel {
   }
 }
 
+// 24 Oct 2026, by request: too cluttered. WINDY_CLEAN keeps the hearts, the
+// clock, the tilt gauge, the finish line and the celebration, and drops the
+// level chip, the feedback chip, the wind chip and the mid-screen toasts
+// (Bonk!, Steady!, Nearly there). What happened is still heard and felt: the
+// sounds, the sparks, the shake and the spoken lines stay.
+const WINDY_CLEAN = true;
+// The guided start, slower (24 Oct 2026, by request: it was too fast): a
+// ring must be held for 1.5 s (not half a second), the tilt and the level
+// for 2 s, and between steps there is a WINDY_TUT_PAUSE breath with nothing
+// asked before the next line is spoken and its ring appears.
+const WINDY_TUT_NEED_FIRST = [90, 90, 120, 120, 120], WINDY_TUT_NEED_LEVEL = [90, 90, 300];
+const WINDY_TUT_PAUSE = 120;      // frames at 60 Hz: two seconds
 export class WindyCity extends GameBase {
   id = "windy";
   setup() {
@@ -8731,8 +8952,8 @@ export class WindyCity extends GameBase {
     this._layout(c);
     // the city flies at the mockup's pace for a typical patient and slower
     // for a slower one: lifetime is the DDA's own "how fast can they go"
-    this.paceK = Math.max(0.8, Math.min(2.2, (this.params.lifetime || 2.8) / WINDY_LIFETIME_REF));
-    this.scene = windyPaintScene(WINDY_SKIES[(this.level - 1) % WINDY_SKIES.length], c.width, c.height, this.k);
+    this.paceK = Math.max(0.7, Math.min(2.2, (this.params.lifetime || 2.8) / WINDY_LIFETIME_REF));
+    this.scene = windyPaintScene(windySkyFor(this.level), c.width, c.height, this.k);
     this.sceneSize = `${c.width}x${c.height}`;
     this.board = { y: this.laneBot, ang: 0 };
     this.rider = { off: 0, v: 0 };
@@ -8752,20 +8973,35 @@ export class WindyCity extends GameBase {
     this.fHeight = 0; this.tiltDeg = 0; this.hL = null; this.hR = null; this.handsAt = 0; this.handsLost = false;
     this.laneLo = null; this.laneHi = null;
     this.over = null;
+    this.tiltHeld = 0;                          // seconds the jet has been tilted past WINDY_SLIDE_DEG (Rook's slide waits for it)
+    this.finishX = null;                        // the finish line, once the level's time is up
+    this.fbText = ""; this.fbAt = -1e9; this.fbCol = "#3b4a5a";   // the feedback chip, top right
     // the level's own backstop on the engine clock: the flight, the guided
     // first flight before it, the card after it
-    const tutorial = !!this.opts.tellStory && this.level === 1;
-    this.roundSeconds = WINDY_LEVEL_S + 25 + (tutorial ? 75 : 0);
-    this.tut = tutorial ? { step: 0, hold: 0, said: -1 } : null;
-    this.hadTutorial = tutorial;
+    // EVERY LEVEL OPENS WITH A SHORT GUIDED START (23 Oct 2026, by request):
+    // level 1 the full first flight (up, down, tilt, level); every other
+    // level a reach up into a ring, a reach down, then a look at what this
+    // level adds (drones, moving bridges, wind, Rook's slide) before the
+    // towers come. Enter or Escape skips it.
+    const first = this.level === 1 && !!this.opts.tellStory;
+    const tutorial = first || (this.level > 1 && this.lvl.sub === 1);   // a new stage gets the guided start; x.2 and x.3 just the note
+    this.roundSeconds = WINDY_LEVEL_S + 25 + WINDY_FINISH_MS / 1000 + (first ? 75 : tutorial ? 40 : 0);
+    this.tut = tutorial ? { step: 0, hold: 0, said: -1, mode: first ? "first" : "level" } : null;
+    this.hadTutorial = first;
     if (this.tut) {
-      this._prompt("First flight", "We will show you how to steer");
-      this._speak("Rook needs a co-pilot. Let's learn to fly. Lift both arms together to fly up into the ring.");
+      if (first) {
+        this._prompt("First flight", "We will show you how to steer");
+        this._speak("Rook needs a co-pilot. Let's learn to fly. Lift both arms together to fly up into the ring.");
+      } else {
+        this._prompt(`Level ${this.lvl.stage}  ${windyPips(this.level)}`, this.lvl.note);
+        this._speak(`Level ${this.lvl.stage}. ${this.lvl.note}. First, lift both arms together to fly up into the ring.`);
+      }
       this._tutKey = e => { if (e.key === "Enter" || e.key === "Escape") { e.preventDefault(); this._endTutorial(true); } };
       addEventListener("keydown", this._tutKey);
     } else {
       const wait = this.opts.tellStory ? this.tellStory(STORIES.windy) : 0;
-      setTimeout(() => { if (!this.active) return; this._prompt(`Level ${this.level}`, this.lvl.note); if (!wait) this._speak(`Level ${this.level}. ${this.lvl.note}`); setTimeout(() => { if (this.active) this._prompt(""); }, 3600); }, wait);
+      const when = `${this.lvl.sub === 1 ? "" : ""}${windyTimeOf(this.level)} in ${windySeasonOf(this.level)}`;
+      setTimeout(() => { if (!this.active) return; this._prompt(`Level ${this.lvl.stage}  ${windyPips(this.level)}`, `${this.lvl.note} · ${when}`); if (!wait) this._speak(`Level ${this.lvl.stage}, part ${this.lvl.sub}. ${this.lvl.note}`); setTimeout(() => { if (this.active) this._prompt(""); }, 3600); }, wait);
       this._takeOff();
     }
   }
@@ -8847,11 +9083,14 @@ export class WindyCity extends GameBase {
     if (lvl.drones && R() < lvl.drones) this.drones.push({ x: x + spc / 2 + o.w / 2, base: this.laneTop + this.laneH * (0.15 + R() * 0.7), ph: R() * 6 });
     else if (R() < 0.5) { this.items.push({ x: x + spc / 2 + o.w / 2, y: this.laneTop + this.laneH * (0.1 + R() * 0.8), ph: R() * 6 }); this.feathersSpawned++; }
   }
-  _toast(text, col) { this.toasts.push({ text, t: 0, col }); }
+  _toast(text, col) { if (WINDY_CLEAN) return; this.toasts.push({ text, t: 0, col }); }
   _sparks(x, y, col, n = 10, sp = 1) {
     const m = A11Y.calm ? Math.ceil(n / 3) : n;
     for (let i = 0; i < m; i++) { const a = Math.random() * TAU, s = sp * (1 + Math.random() * 3) * this.k * 0.8; this.particles.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 1, color: col }); }
   }
+  // the feedback chip at the top right: a word or two about the last thing
+  // that happened (a gap flown, a steady stretch, a bump), kept until the next
+  _feedback(text, col = "#3b4a5a") { if (WINDY_CLEAN) return; this.fbText = text; this.fbAt = this.frame; this.fbCol = col; }
   _riderPos() {
     const c = Math.cos(this.board.ang), s = Math.sin(this.board.ang), k = this.k;
     if (this.fallT > 0) { const q = 60 - this.fallT, dir = Math.sign(this.rider.off || 1); return { x: this.bx + c * this.rider.off + q * 1.2 * k * dir, y: this.board.y + s * this.rider.off - 16 * k + q * q * 0.12 * k }; }
@@ -8861,8 +9100,8 @@ export class WindyCity extends GameBase {
     if (this.invuln > 0 || this.fallT > 0 || this.over) return;
     this.fallT = 60; this.shake = A11Y.calm ? 0 : 10 * this.k;
     this.lives--; this.heartsLost++; this.combo = 1; this.steadyT = 0;
-    if (kind === "fall") { this.falls++; audio.windy("fall"); this._toast("Rook slid off!", "#d97b6c"); }
-    else { this.crashes++; this.crashBy[what] = (this.crashBy[what] || 0) + 1; audio.windy("hit"); this._toast("Bonk!", "#d97b6c"); }
+    if (kind === "fall") { this.falls++; audio.windy("fall"); this._toast("Rook slid off!", "#d97b6c"); this._feedback("Keep the arms level", "#d97b6c"); }
+    else { this.crashes++; this.crashBy[what] = (this.crashBy[what] || 0) + 1; audio.windy("hit"); this._toast("Bonk!", "#d97b6c"); this._feedback(what === "drone" ? "Mind the drones" : what === "ground" ? "Lift a little" : "Aim for the gap", "#d97b6c"); }
     const o = this._gapAhead();
     this.miss({ isFar: !!o && o.reach > 0.7 }, true);   // silent: the bonk or the fall is the sound
     if (this.lives > 0) this.say(kind === "fall" ? "Rook slipped off. Keep the arms level and he stays on." : "A soft bump. The towers are tricky. On we go.");
@@ -8888,11 +9127,16 @@ export class WindyCity extends GameBase {
     this.over = { completed, stars, at: performance.now() };
     this.flying = false;
     if (completed) {
+      // THE FINISH (23 Oct 2026, by request): confetti from the line, a big
+      // FINISH, a shake, the fanfare, Rook waving, and a word about the flight
       audio.windy("win");
       this.score += 50 * this.level + (this.heartsLost === 0 ? 25 * this.level : 0);
-      for (let i = 0; i < 5; i++) this._sparks(this.canvas.width * (0.2 + 0.15 * i), this.canvas.height * 0.3, ["#f3b562", "#d97b6c", "#6fa35a", "#5b9bd5", "#f19bb5"][i], 16, 1.6);
-      this._prompt(stars === 3 ? "Perfect flight!" : stars === 2 ? "Great flying!" : "Level done!", `Level ${this.level} flown`);
-      this.say(stars === 3 ? "A perfect flight. Rook is very impressed." : "Level done. Lovely flying.");
+      this.shake = A11Y.calm ? 0 : 14 * this.k;
+      const cols = ["#f3b562", "#d97b6c", "#6fa35a", "#5b9bd5", "#f19bb5", "#fff3c4"];
+      for (let i = 0; i < 12; i++) this._sparks(this.bx + (Math.random() - 0.3) * this.canvas.width * 0.5, this.canvas.height * (0.15 + Math.random() * 0.5), cols[i % cols.length], 18, 2.2);
+      this._prompt(stars === 3 ? "Perfect flight!" : stars === 2 ? "Great flying!" : "Level done!", `${this.passed} gaps flown · level ${this.lvl.stage} ${windyPips(this.level)}`);
+      this.say(stars === 3 ? `A perfect flight, ${this.passed} gaps. Rook is very impressed.` : `Level done. ${this.passed} gaps flown. Lovely flying.`);
+      this._feedback(`${this.passed} gaps flown`, "#6fa35a");
     } else {
       audio.windy("lose");
       this._prompt("The wind won that one", "Let's try again");
@@ -8905,13 +9149,19 @@ export class WindyCity extends GameBase {
     const c = this.canvas;
     if (this.sceneSize !== `${c.width}x${c.height}`) {
       this._layout(c);
-      this.scene = windyPaintScene(WINDY_SKIES[(this.level - 1) % WINDY_SKIES.length], c.width, c.height, this.k);
+      this.scene = windyPaintScene(windySkyFor(this.level), c.width, c.height, this.k);
       this.sceneSize = `${c.width}x${c.height}`;
     }
     this._readHands(now, dt);
     if (this.over) {
-      if (now - this.over.at > (this.over.completed ? 4500 : 3800)) this._end();
+      if (now - this.over.at > (this.over.completed ? WINDY_FINISH_MS : 3800)) this._end();
       for (const q of this.toasts) q.t++;
+      this.frame++;
+      if (this.over.completed && !A11Y.calm && this.frame % 9 === 0) {
+        const cols = ["#f3b562", "#d97b6c", "#6fa35a", "#5b9bd5", "#f19bb5", "#fff3c4"];
+        this._sparks(Math.random() * this.canvas.width, this.canvas.height * 0.1, cols[this.frame % cols.length], 6, 1.4);
+      }
+      if (this.shake > 0) { this.shake *= 0.9; if (this.shake < 0.5) this.shake = 0; }
       return;
     }
     if (this.handsLost) { this._prompt("Show both hands", "Rook holds the jet steady while he waits"); this._lostPrompt = true; return; }
@@ -8942,7 +9192,9 @@ export class WindyCity extends GameBase {
     if (this.fallT > 0) { this.fallT--; if (this.fallT === 0) this._respawn(); }
     else {
       if (lvl.slide) {
-        this.rider.v += Math.sin(this.board.ang) * lvl.slide * k; this.rider.v *= 0.9;
+        this.tiltHeld = tiltAbs > WINDY_SLIDE_DEG ? this.tiltHeld + 1 / 60 : Math.max(0, this.tiltHeld - 2 / 60);
+        if (this.tiltHeld > WINDY_SLIDE_DELAY_S) this.rider.v += Math.sin(this.board.ang) * lvl.slide * k * WINDY_SLIDE_K;
+        this.rider.v *= 0.9;
         if (tiltAbs < 4) this.rider.off *= 0.96;
         this.rider.off += this.rider.v;
         if (Math.abs(this.rider.off) > this.boardLen / 2 - k) this._loseLife("fall");
@@ -8950,7 +9202,7 @@ export class WindyCity extends GameBase {
       if (tiltAbs < WINDY_STEADY_DEG) {
         this.steadyT += 1 / 60;
         const nc = this.steadyT > 12 ? 5 : this.steadyT > 7 ? 4 : this.steadyT > 4 ? 3 : this.steadyT > 2 ? 2 : 1;
-        if (nc > this.combo) { this._toast(["", "", "Steady!", "Lovely and level", "Smooth flying", "Rock steady"][nc], "#f3b562"); this._sparks(this.bx, this.board.y, "#f3b562", 8); audio.windy("combo"); if (nc >= 4) this.say("Rock steady. Rook is loving this."); }
+        if (nc > this.combo) { this._toast(["", "", "Steady!", "Lovely and level", "Smooth flying", "Rock steady"][nc], "#f3b562"); this._feedback(["", "", "Steady!", "Level flying", "Smooth", "Rock steady"][nc], "#f3b562"); this._sparks(this.bx, this.board.y, "#f3b562", 8); audio.windy("combo"); if (nc >= 4) this.say("Rock steady. Rook is loving this."); }
         this.combo = nc;
       } else if (tiltAbs > WINDY_LOSE_DEG) { this.steadyT = 0; this.combo = 1; }
       else this.steadyT = Math.max(0, this.steadyT - 1 / 60);
@@ -8964,6 +9216,7 @@ export class WindyCity extends GameBase {
         o.passed = true; this.passed++; this.score += 10 * this.combo;
         const reach = 1 - (o.top + o.gap / 2 - this.laneTop) / this.laneH;
         this.hit({ reachFrac: Math.max(0.25, Math.min(1, reach)) });
+        this._feedback(["Through!", "Nice gap", "Lovely", "That's it", "Smooth"][this.passed % 5], "#6fa35a");
       }
     }
     for (const it of this.items) { it.x -= sp; if (it.follow) it.y = it.follow.top + it.follow.gap / 2; }
@@ -8971,10 +9224,15 @@ export class WindyCity extends GameBase {
     this.drones = this.drones.filter(d => !d.dead && d.x > -30 * k);
     if (this.obs.length && this.obs[0].x + this.obs[0].w < -20 * k) this.obs.shift();
     const spc = this._spacing();
-    if (!this.obs.length || this.obs[this.obs.length - 1].x < c.width + 170 * k - spc) this._spawn((this.obs.length ? this.obs[this.obs.length - 1].x : c.width) + spc);
+    const lastStretch = this.lvT >= this.lvFrames - 150;   // the last 2.5 s: no new towers, the finish line is coming
+    if (!lastStretch && (!this.obs.length || this.obs[this.obs.length - 1].x < c.width + 170 * k - spc)) this._spawn((this.obs.length ? this.obs[this.obs.length - 1].x : c.width) + spc);
     this.lvT++;
-    if (this.lvT >= this.lvFrames - 600 && this.lvT % 60 === 0) { audio.windy("tick"); if (this.lvT === this.lvFrames - 600) this._toast("Nearly there", "#f3b562"); }
-    if (this.lvT >= this.lvFrames && this.fallT === 0) { this._finish(true); return; }
+    if (this.lvT >= this.lvFrames - 600 && this.lvT % 60 === 0) { audio.windy("tick"); if (this.lvT === this.lvFrames - 600) { this._toast("Nearly there", "#f3b562"); this._feedback("Ten seconds to the line", "#f3b562"); } }
+    if (this.lvT >= this.lvFrames && this.finishX == null) { this.finishX = c.width + 60 * k; this._toast("The finish line!", "#6fa35a"); audio.windy("start"); }
+    if (this.finishX != null) {
+      this.finishX -= sp;
+      if (this.finishX <= this.bx && this.fallT === 0) { this._finish(true); return; }
+    }
     // collisions: the cat's head and the jet's two ends against towers,
     // bridges, the ground and the drones
     const cs = Math.cos(this.board.ang), sn = Math.sin(this.board.ang), B = this.boardLen / 2;
@@ -8992,28 +9250,62 @@ export class WindyCity extends GameBase {
     if (this.shake > 0) { this.shake *= 0.85; if (this.shake < 0.5) this.shake = 0; }
   }
   // the guided first flight: up into a ring, down into a ring, tilt, level
+  // what this level adds, for the intro's third step (the line said and shown)
+  _levelDynamic() {
+    const L = this.lvl, prev = L.stage > 1 ? windyLevel((L.stage - 2) * WINDY_SUBS + 1) : null;
+    const added = key => L[key] && (!prev || !prev[key]);
+    if (added("drones")) return { key: "drones", line: "Drones float across the lane. Fly around them" };
+    if (added("mov")) return { key: "mov", line: "Some bridges move up and down. Time your pass" };
+    if (added("wind")) return { key: "wind", line: "A crosswind tilts the jet. Lean the other way to stay level" };
+    if (added("slide")) return { key: "slide", line: "When the jet tilts, Rook slides. Keep the arms level and he stays on" };
+    if (prev && L.gap < prev.gap) return { key: "gap", line: "The gaps are narrower now. Aim for the middle" };
+    if (prev && L.speed > prev.speed) return { key: "speed", line: "The city flies a little faster. Small, early moves" };
+    return { key: "fly", line: L.note };
+  }
+  _tutSteps() { return this.tut?.mode === "first" ? 5 : 3; }
+  _tutNeed(step) { return (this.tut?.mode === "first" ? WINDY_TUT_NEED_FIRST : WINDY_TUT_NEED_LEVEL)[step] || 90; }
   _tutStep(tiltAbs) {
-    const tut = this.tut, H = this.canvas.height;
+    const tut = this.tut, H = this.canvas.height, first = tut.mode === "first";
     this.rider.v = 0; this.rider.off *= 0.85;
+    if (tut.pause > 0) { tut.pause--; return; }     // the breath between steps
     const goals = [this.laneTop + this.laneH * 0.25, this.laneTop + this.laneH * 0.78];
     let done = false;
     if (tut.step < 2) done = Math.abs(this.board.y - goals[tut.step]) < H * 0.05;
-    else if (tut.step === 2) done = tiltAbs > 8;
-    else if (tut.step === 3) done = tiltAbs < 5;
+    else if (first && tut.step === 2) done = tiltAbs > 8;
+    else if (first && tut.step === 3) done = tiltAbs < 5;
     else done = true;
     tut.hold = done ? tut.hold + 1 : Math.max(0, tut.hold - 1);
-    const need = [30, 30, 25, 90, 100][tut.step];
-    const lines = ["Lift both arms together to fly up into the ring", "Now lower both arms to fly down to the ring", "Lift one hand a little higher. See the jet tilt?", "Now make them level again and hold steady", "You've got it! Get ready"];
+    const need = this._tutNeed(tut.step);
+    const dyn = this._levelDynamic();
+    const lines = first
+      ? ["Lift both arms together to fly up into the ring", "Now lower both arms to fly down to the ring", "Lift one hand a little higher. See the jet tilt?", "Now make them level again and hold steady", "You've got it! Get ready"]
+      : ["Lift both arms together to fly up into the ring", "Now lower both arms to fly down to the ring", dyn.line];
     if (tut.said !== tut.step) {
       tut.said = tut.step;
-      this._prompt("First flight", lines[tut.step]);
-      if (tut.step > 0) this._speak(lines[tut.step]);
+      this._prompt(first ? "First flight" : `Level ${this.lvl.stage}  ${windyPips(this.level)}`, lines[tut.step]);
+      this._speak(lines[tut.step]);
+      tut.hold = 0;
+      if (!first && tut.step === 2) this.demo = { key: dyn.key, t: 0 };
     }
+    if (this.demo) this.demo.t++;
     if (tut.hold >= need) {
-      tut.step++; tut.hold = 0;
+      tut.step++; tut.hold = 0; tut.pause = WINDY_TUT_PAUSE;
       audio.windy("combo"); this._sparks(this.bx, this.board.y, "#6fa35a", 12);
-      if (tut.step > 4) this._endTutorial(false);
+      this._prompt(first ? "First flight" : `Level ${this.lvl.stage}  ${windyPips(this.level)}`, ["Lovely", "That's it", "Well done", "Beautiful", "Perfect"][tut.step % 5]);
+      if (tut.step >= this._tutSteps()) { this.demo = null; this._endTutorial(false); }
     }
+  }
+  // the level's new element, shown harmlessly on the right during the intro
+  _drawDemo(ctx, c) {
+    const d = this.demo; if (!d) return;
+    const k = this.k, W = c.width, t = d.t;
+    ctx.save();
+    if (d.key === "drones") { for (let i = 0; i < 2; i++) this._drone(ctx, { x: W * 0.72 - ((t * 1.2 + i * 140 * k) % (W * 0.5)), y: this.laneTop + this.laneH * (0.35 + i * 0.3) + Math.sin(t * 0.05 + i) * 18 * k }); }
+    else if (d.key === "mov") { const gap = this.lvl.gap * this.laneH, top = this.laneTop + (this.laneH - gap) * (0.5 + 0.4 * Math.sin(t * 0.03)); const o = { x: W * 0.7, top, base: top, gap, w: 66 * k, mov: 1, ph: 0, style: 1, hue: 1, seed: 3 }; this._bridge(ctx, o); this._tower(ctx, o); }
+    else if (d.key === "wind") { ctx.strokeStyle = "rgba(79,155,217,.85)"; ctx.lineWidth = 4 * k; ctx.lineCap = "round"; for (let i = 0; i < 4; i++) { const y = this.laneTop + this.laneH * (0.2 + i * 0.2), x0 = W * 0.55 + ((t * 3 + i * 90 * k) % (W * 0.35)); ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x0 + 60 * k, y); ctx.lineTo(x0 + 48 * k, y - 8 * k); ctx.moveTo(x0 + 60 * k, y); ctx.lineTo(x0 + 48 * k, y + 8 * k); ctx.stroke(); } }
+    else if (d.key === "slide") { ctx.fillStyle = "#fbf4e4"; ctx.font = `800 ${Math.round(26 * k)}px Nunito, sans-serif`; ctx.textAlign = "center"; ctx.fillText("Tilt = Rook slides", W * 0.7, this.laneTop + this.laneH * 0.4); }
+    else if (d.key === "gap") { const gap = this.lvl.gap * this.laneH, top = this.laneTop + (this.laneH - gap) / 2; const o = { x: W * 0.7, top, base: top, gap, w: 66 * k, mov: 0, ph: 0, style: 0, hue: 0, seed: 5 }; this._bridge(ctx, o); this._tower(ctx, o); ctx.strokeStyle = "rgba(111,163,90,.9)"; ctx.lineWidth = 3 * k; ctx.setLineDash([8 * k, 8 * k]); ctx.strokeRect(o.x - 10 * k, top, o.w + 20 * k, gap); ctx.setLineDash([]); }
+    ctx.restore();
   }
 
   // ---- drawing --------------------------------------------------------
@@ -9030,7 +9322,6 @@ export class WindyCity extends GameBase {
     ctx.fillStyle = "rgba(70,90,130,.18)"; ctx.fillRect(x + w * 0.7, y + 34 * k, w * 0.3, h - 34 * k);
     ctx.fillStyle = "rgba(255,252,240,.6)"; ctx.fillRect(x, y + 34 * k, 3 * k, h - 34 * k);
     if (o.style !== 1) { ctx.fillStyle = this._sky().night ? "rgba(255,224,150,.8)" : "rgba(90,130,170,.4)"; for (let wy = y + 48 * k; wy < this.ground - 8 * k; wy += 20 * k) ctx.fillRect(x + 10 * k, wy, w - 26 * k, 6 * k); }
-    ctx.fillStyle = "#7aad62"; ctx.beginPath(); ctx.arc(x + w * 0.3, y + (o.style === 2 ? 26 : 32) * k, 7 * k, 0, TAU); ctx.arc(x + w * 0.68, y + (o.style === 2 ? 28 : 34) * k, 6 * k, 0, TAU); ctx.fill();
   }
   _bridge(ctx, o) {
     const k = this.k, x = o.x, w = o.w, bot = o.top;
@@ -9045,9 +9336,12 @@ export class WindyCity extends GameBase {
   _feather(ctx, it) {
     const k = this.k, bob = Math.sin(this.frame * 0.08 + it.ph) * 4 * k;
     ctx.save(); ctx.translate(it.x, it.y + bob); ctx.rotate(-0.5);
-    ctx.fillStyle = "rgba(255,230,160,.35)"; ctx.beginPath(); ctx.arc(0, 0, 15 * k, 0, TAU); ctx.fill();
-    ctx.fillStyle = "#f3c05e"; ctx.beginPath(); ctx.ellipse(0, 0, 4.5 * k, 11 * k, 0, 0, TAU); ctx.fill();
-    ctx.strokeStyle = "#b98a3a"; ctx.lineWidth = 1.2 * k; ctx.beginPath(); ctx.moveTo(0, -11 * k); ctx.lineTo(0, 13 * k); ctx.stroke();
+    // white with a blue quill and a cool glow (24 Oct 2026, by request: the
+    // yellow feather read as a piece of the cream towers)
+    ctx.fillStyle = "rgba(120,190,255,.35)"; ctx.beginPath(); ctx.arc(0, 0, 16 * k, 0, TAU); ctx.fill();
+    ctx.fillStyle = "#f4fbff"; ctx.beginPath(); ctx.ellipse(0, 0, 5 * k, 12 * k, 0, 0, TAU); ctx.fill();
+    ctx.strokeStyle = "#3f8fd6"; ctx.lineWidth = 1.6 * k; ctx.beginPath(); ctx.moveTo(0, -12 * k); ctx.lineTo(0, 14 * k); ctx.stroke();
+    ctx.strokeStyle = "rgba(63,143,214,.8)"; ctx.lineWidth = 1.2 * k; ctx.beginPath(); ctx.ellipse(0, 0, 5 * k, 12 * k, 0, 0, TAU); ctx.stroke();
     ctx.restore();
   }
   _drone(ctx, d) {
@@ -9088,7 +9382,7 @@ export class WindyCity extends GameBase {
   _cat(ctx) {
     const k = this.k, p = this._catPos(), tilt = Math.abs(this.board.ang * 180 / Math.PI), falling = this.fallT > 0, happy = !!this.over?.completed;
     const blink = this.invuln > 0 && Math.floor(this.frame / 5) % 2;
-    ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.r); ctx.scale(k, k); if (blink) ctx.globalAlpha = 0.45;
+    ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.r); ctx.scale(k * WINDY_CAT_SCALE, k * WINDY_CAT_SCALE); if (blink) ctx.globalAlpha = 0.45;
     const fur = "#2f3340", belly = "#f4f1ea";
     ctx.strokeStyle = "#d9483b"; ctx.lineWidth = 4; ctx.lineCap = "round";
     ctx.beginPath(); ctx.moveTo(2, -3); for (let q = 1; q <= 4; q++) ctx.lineTo(2 - q * 6, -3 + Math.sin(this.frame * 0.25 - q * 0.9) * (1.5 + q)); ctx.stroke();
@@ -9113,7 +9407,7 @@ export class WindyCity extends GameBase {
     else { for (const ex of [3, 9]) { ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(ex, -10, 2.7, 0, TAU); ctx.fill(); ctx.fillStyle = "#3b2f2c"; ctx.beginPath(); ctx.arc(ex, -10, 1.3, 0, TAU); ctx.fill(); } }
     ctx.restore();
   }
-  _sky() { return WINDY_SKIES[(this.level - 1) % WINDY_SKIES.length]; }
+  _sky() { return windySkyFor(this.level); }
   _chip(ctx, x, y, w, h) { ctx.fillStyle = "rgba(251,244,228,.9)"; ctx.beginPath(); ctx.roundRect(x, y, w, h, h / 2); ctx.fill(); }
 
   draw(ctx, c, now) {
@@ -9125,8 +9419,11 @@ export class WindyCity extends GameBase {
     if (sh && this.obs.length) { ctx.fillStyle = `rgba(18,24,60,${sh * 0.45})`; ctx.fillRect(-20, -20, W + 40, H + 40); }
     for (const it of this.items) this._feather(ctx, it);
     for (const d of this.drones) this._drone(ctx, d);
+    if (this.demo) this._drawDemo(ctx, c);
+    if (this.finishX != null) this._finishLine(ctx, c);
     this._jet(ctx, false); this._cat(ctx); this._jet(ctx, true);
     ctx.restore();
+    if (this.over?.completed) this._celebrate(ctx, c, now);
     // hearts (icons, never a number), the level's clock as a thin line, the
     // wind, and the one number on screen: the tilt in degrees
     for (let i = 0; i < WINDY_HEARTS; i++) {
@@ -9134,15 +9431,43 @@ export class WindyCity extends GameBase {
       ctx.fillStyle = i < this.lives ? "#d97b6c" : "rgba(59,74,90,.3)";
       ctx.beginPath(); ctx.moveTo(x, y + 6 * k); ctx.bezierCurveTo(x - 12 * k, y - 4 * k, x - 6 * k, y - 12 * k, x, y - 5 * k); ctx.bezierCurveTo(x + 6 * k, y - 12 * k, x + 12 * k, y - 4 * k, x, y + 6 * k); ctx.fill();
     }
-    if (this.flying || this.over) {
-      const bw = Math.min(260 * k, W * 0.3), bx = W / 2 - bw / 2, by = 24 * k;
-      this._chip(ctx, bx - 4 * k, by - 2 * k, bw + 8 * k, 14 * k);
-      ctx.fillStyle = this.lvT > this.lvFrames - 600 ? "rgba(243,181,98,.95)" : "rgba(111,163,90,.85)";
-      ctx.beginPath(); ctx.roundRect(bx, by, Math.max(10 * k, bw * Math.min(1, this.lvT / this.lvFrames)), 10 * k, 5 * k); ctx.fill();
+    // the level and the progress through its three parts, under the hearts
+    if (!WINDY_CLEAN) {
+      const label = `Level ${this.lvl.stage}  ${windyPips(this.level)}`;
+      ctx.font = `800 ${Math.round(15 * k)}px Nunito, sans-serif`; ctx.textAlign = "left"; ctx.textBaseline = "middle";
+      const tw = ctx.measureText(label).width + 24 * k;
+      this._chip(ctx, 14 * k, 58 * k, tw, 26 * k);
+      ctx.fillStyle = "#3b4a5a"; ctx.fillText(label, 26 * k, 71 * k);
     }
-    if (this.lvl.wind && !this.tut && this.flying) {
-      const wx = W - 110 * k, wy = 28 * k;
-      this._chip(ctx, wx, wy, 90 * k, 20 * k);
+    // THE CLOCK (23 Oct 2026, by request: clearer): a chip with the seconds
+    // left in m:ss and a bar that fills over the level, amber in the last ten
+    // seconds, "FINISH" once the line is on its way
+    if (this.flying || this.over) {
+      const bw = Math.min(300 * k, W * 0.34), bx = W / 2 - bw / 2, by = 18 * k, bh = 34 * k;
+      const left = Math.max(0, Math.ceil((this.lvFrames - this.lvT) / 60)), last = this.lvT > this.lvFrames - 600;
+      this._chip(ctx, bx, by, bw, bh);
+      ctx.fillStyle = last ? "rgba(243,181,98,.95)" : "rgba(111,163,90,.75)";
+      ctx.beginPath(); ctx.roundRect(bx + 6 * k, by + bh - 10 * k, (bw - 12 * k) * Math.min(1, this.lvT / this.lvFrames), 5 * k, 2.5 * k); ctx.fill();
+      ctx.fillStyle = last && !A11Y.calm && Math.floor(now / 400) % 2 ? "#d97b6c" : "#3b4a5a";
+      ctx.font = `800 ${Math.round(18 * k)}px Nunito, sans-serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(this.finishX != null || this.over ? "FINISH" : `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`, W / 2, by + 13 * k);
+    }
+    // the feedback chip, top right (23 Oct 2026, by request): the last thing
+    // that happened and the gaps flown so far
+    if ((this.flying || this.over) && this.fbText) {
+      const age = this.frame - this.fbAt, a = age < 10 ? age / 10 : 1;
+      ctx.save(); ctx.globalAlpha = a;
+      ctx.font = `800 ${Math.round(16 * k)}px Nunito, sans-serif`; ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      const label = `${this.fbText}  ·  ${this.passed} gap${this.passed === 1 ? "" : "s"}`;
+      const tw = ctx.measureText(label).width + 28 * k, cx = W - 14 * k - tw, cy = 56 * k;
+      this._chip(ctx, cx, cy, tw, 28 * k);
+      ctx.fillStyle = this.fbCol; ctx.fillRect(cx, cy + 6 * k, 5 * k, 16 * k);
+      ctx.fillStyle = "#3b4a5a"; ctx.fillText(label, W - 28 * k, cy + 14 * k);
+      ctx.restore();
+    }
+    if (!WINDY_CLEAN && this.lvl.wind && !this.tut && this.flying) {
+      const wx = W - 104 * k, wy = 24 * k;
+      this._chip(ctx, wx, wy, 90 * k, 22 * k);
       ctx.fillStyle = "#3b4a5a"; ctx.font = `700 ${Math.round(12 * k)}px Nunito, sans-serif`; ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
       ctx.fillText("Wind", wx + 8 * k, wy + 14 * k);
       const d = this.windNow / this.lvl.wind, cx = wx + 62 * k, sg = Math.sign(d || 1);
@@ -9162,7 +9487,7 @@ export class WindyCity extends GameBase {
       ctx.fillStyle = "#3b4a5a"; ctx.fillText(q.text, W / 2, ty);
       ctx.restore(); ty += 48 * k;
     }
-    if (this.tut && this.tut.step < 2) {
+    if (this.tut && this.tut.step < 2 && !(this.tut.pause > 0)) {
       const gy = [this.laneTop + this.laneH * 0.25, this.laneTop + this.laneH * 0.78][this.tut.step];
       ctx.save();
       ctx.strokeStyle = "rgba(111,163,90,.9)"; ctx.lineWidth = 4 * k; ctx.setLineDash([8 * k, 8 * k]); ctx.lineDashOffset = -this.frame * 0.5;
@@ -9171,14 +9496,47 @@ export class WindyCity extends GameBase {
       ctx.fillText(this.tut.step === 0 ? "▲" : "▼", this.bx + this.boardLen / 2 + 44 * k, gy + Math.sin(this.frame * 0.15) * 5 * k);
       ctx.restore();
     }
-    if (this.tut) {
-      const need = [30, 30, 25, 90, 100][this.tut.step], bw = W * 0.24;
+    if (this.tut && !(this.tut.pause > 0)) {
+      const need = this._tutNeed(this.tut.step), bw = W * 0.24;
       ctx.fillStyle = "rgba(244,236,221,0.18)"; ctx.beginPath(); ctx.roundRect(W / 2 - bw / 2, H * 0.2, bw, 8 * k, 4 * k); ctx.fill();
       ctx.fillStyle = "#9fc08a"; ctx.beginPath(); ctx.roundRect(W / 2 - bw / 2, H * 0.2, bw * Math.min(1, this.tut.hold / need), 8 * k, 4 * k); ctx.fill();
     }
     if (this.handsLost && !this.over) {
       ctx.fillStyle = "rgba(59,74,90,.35)"; ctx.fillRect(0, 0, W, H);
     }
+  }
+  // the finish line: a chequered banner between two poles across the lane
+  _finishLine(ctx, c) {
+    const k = this.k, x = this.finishX, top = this.laneTop - 10 * k, bot = this.ground;
+    ctx.save();
+    ctx.fillStyle = "#3b4a5a"; ctx.fillRect(x - 3 * k, top, 6 * k, bot - top); ctx.fillRect(x + 54 * k, top, 6 * k, bot - top);
+    const sq = 12 * k;
+    for (let r = 0; r < 3; r++) for (let q = 0; q < 5; q++) { ctx.fillStyle = (r + q) % 2 ? "#2b2f2c" : "#fbf4e4"; ctx.fillRect(x + q * sq, top + r * sq, sq, sq); }
+    ctx.fillStyle = "#d9483b"; ctx.beginPath(); ctx.roundRect(x - 10 * k, top + 40 * k, 80 * k, 24 * k, 6 * k); ctx.fill();
+    ctx.fillStyle = "#fbf4e4"; ctx.font = `800 ${Math.round(14 * k)}px Nunito, sans-serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText("FINISH", x + 30 * k, top + 52 * k);
+    ctx.restore();
+  }
+  // the celebration over the city: FINISH! popping in, then the stars
+  _celebrate(ctx, c, now) {
+    const k = this.k, t = (now - this.over.at) / 1000, W = c.width, H = c.height;
+    const pop = Math.min(1, t / 0.45), sc = 0.6 + 0.4 * (1 - Math.pow(1 - pop, 3)) + (A11Y.calm ? 0 : Math.sin(now / 160) * 0.02);
+    ctx.save();
+    ctx.translate(W / 2, H * 0.36); ctx.scale(sc, sc); ctx.rotate(A11Y.calm ? 0 : Math.sin(now / 500) * 0.03);
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.font = `900 ${Math.round(92 * k)}px Nunito, sans-serif`;
+    ctx.lineWidth = 10 * k; ctx.strokeStyle = "rgba(43,47,44,.9)"; ctx.strokeText("FINISH!", 0, 0);
+    ctx.fillStyle = "#f3b562"; ctx.fillText("FINISH!", 0, 0);
+    if (t > 0.8) {
+      const stars = this.over.stars;
+      for (let i = 0; i < 3; i++) {
+        const a = Math.min(1, (t - 0.8 - i * 0.3) / 0.3); if (a <= 0) continue;
+        ctx.save(); ctx.translate((i - 1) * 70 * k, 70 * k); ctx.scale(a, a);
+        starShape(ctx, 0, 0, 26 * k, i < stars ? "#ffd98a" : "rgba(251,244,228,.35)");
+        ctx.restore();
+      }
+    }
+    ctx.restore();
   }
   // the tilt gauge: a bubble level under the city, green inside 5°, the
   // degrees beside it
@@ -9222,6 +9580,7 @@ export class WindyCity extends GameBase {
     const next = completed ? Math.min(WINDY_MAX, this.level + 1) : Math.max(1, this.level - 1);
     return {
       level: this.level,
+      levelLabel: this.lvl.label, stage: this.lvl.stage, sub: this.lvl.sub, season: windySeasonOf(this.level), timeOfDay: windyTimeOf(this.level),
       windyLevel: next,
       completed,
       gapsPassed: this.passed,

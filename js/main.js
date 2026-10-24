@@ -1,6 +1,6 @@
 import { Tracker } from "./tracker.js?v=69";
 import { Assessment } from "./assessment.js";
-import { GAMES, STAR_RANKS, CANDLE_MAX, LUMEN_STAGES, WINDY_MAX } from "./games.js";
+import { GAMES, STAR_RANKS, CANDLE_MAX, LUMEN_STAGES, WINDY_MAX, PAIR_MAX, windyLabel, windyStageOf, windySubOf } from "./games.js";
 import { Warmup } from "./warmup.js";
 import { SONGS } from "./songs.js";
 import { initialParams, adjust, LIMITS } from "./dda.js";
@@ -40,6 +40,7 @@ const state = {
   candlesMode: "solo",   // Lantern: "solo" | "together" (other hand keeps the candle) | "hold" (trained arm keeps it)
   candlesLevelPick: null, // Lantern: a level chosen on the level map or in the drawer for the NEXT round only (testing); else the ladder
   windyLevelPick: null,   // Windy City Flap: the same, from the drawer
+  pairsLevelPick: null,   // Memory Pairs: the same, from the session plan
   pongSpeed: "normal",   // Pong ball-speed dial: chill | normal | frantic (both the single and the two-player game)
   pongPowerups: true,    // Pong: the orbs and their power-ups
   ferryMode: "solo",
@@ -186,6 +187,7 @@ function loginStep(step) {
 // later. Lumi is pre-selected and is what anyone who never chose gets.
 let coachPick = "lumi";
 let pendingCreate = null;                    // the name waiting on a coach
+let pendingCreateNew = true;                 // ...and whether it is a brand-new participant (the intro follows)
 function renderCoachPick() {
   for (const card of document.querySelectorAll("#login-coach .coach")) {
     const on = card.dataset.coach === coachPick;
@@ -236,7 +238,7 @@ function selectCoach(id, focus, say = true) {
     if (!pendingCreate) return;
     const name = pendingCreate; pendingCreate = null;
     store.saveSettings(name, { coach: coachPick });
-    loginAs(name, true);
+    loginAs(name, pendingCreateNew);
   });
   $("btn-login-back-coach").addEventListener("click", () => { pendingCreate = null; loginStep("login-create"); });
   renderCoachPick();
@@ -286,7 +288,10 @@ for (const arm of ["left", "right"]) {
 }
 $("btn-login-back3").addEventListener("click", () => { pendingLogin = null; loginStep("login-choice"); });
 
-function finishLogin(name, isNew, arm) {
+// The state and the staff drawer for a participant who just logged in; the
+// welcome, the greeting and the mail are finishLogin's. The test shortcut
+// (?go=, below the boot) uses this alone.
+function applyLogin(name, arm) {
   state.patient = name;
   state.side = arm;
   state.sideChosen = true;
@@ -302,6 +307,10 @@ function finishLogin(name, isNew, arm) {
   $("in-email").value = c.email || "";
   $("in-remind-time").value = c.remindAt || "";
   $("in-remind-days").value = c.remindDays || "off";
+}
+
+function finishLogin(name, isNew, arm) {
+  applyLogin(name, arm);
   // a participant made just now sees the intro first (Oct 2026, by
   // request), then the welcome screen and the greeting
   Warmup.preload(arm);                    // the stretch recording for this arm, fetched now
@@ -340,8 +349,19 @@ $("btn-login-back1").addEventListener("click", () => loginStep("login-choice"));
 $("btn-login-back2").addEventListener("click", () => loginStep("login-choice"));
 $("login-people").addEventListener("click", e => {
   const b = e.target.closest(".login-person");
-  if (b) loginAs(b.dataset.name, false);
+  if (b) loginOrPickCoach(b.dataset.name, false);
 });
+// The coach step comes before the first login of ANY participant who has
+// not chosen one (Oct 2026, by request): a new name, a name typed again
+// under "I am new here", or one picked from the list; a record with a coach
+// already chosen logs straight in (the staff drawer changes it later).
+function loginOrPickCoach(name, isNew) {
+  if (store.getPatient(name).settings?.coach) { loginAs(name, isNew); return; }
+  pendingCreate = name; pendingCreateNew = isNew;
+  selectCoach("lumi", false, false);
+  loginStep("login-coach");
+  speak("Choose your coach. Click one to hear them.");
+}
 function createLogin() {
   const name = $("login-name").value.trim();
   if (!name) { $("login-name").focus(); return; }
@@ -349,12 +369,9 @@ function createLogin() {
   const email = $("login-email").value.trim();
   const remindAt = $("login-remind-time").value, remindDays = $("login-remind-days").value;
   if (email || remindDays !== "off") store.setContact(name, { email, remindAt, remindDays });
-  if (store.hasPatient(name)) { loginAs(name, false); return; }   // existing name just logs in
-  // a new participant: the coach comes next, then the arm
-  pendingCreate = name;
-  selectCoach("lumi", false, false);
-  loginStep("login-coach");
-  speak("Choose your coach. Click one to hear them.");
+  // an existing name logs in (choosing a coach first if it never did); a
+  // new participant chooses the coach, then the arm, then sees the intro
+  loginOrPickCoach(name, !store.hasPatient(name));
 }
 
 // the progress snapshot the relay answers update-by-email from: pushed at
@@ -979,6 +996,7 @@ function renderSelect() {
   const wrap = $("cards");
   wrap.innerHTML = "";
   renderVillage();
+  renderToday();
   document.querySelector("#screen-select h1").textContent = "What shall we play today?";
   const prof = store.getProfile(state.patient, state.side);
 
@@ -1010,7 +1028,7 @@ function renderSelect() {
       // two Pongs, one card each (Sep 2026, by request): FE, the arm up and
       // down; Abd-Add, the hand out to the side and across, on the lane the
       // assessment measured
-      const go = axis => () => { state.pongMode = "solo"; state.pongAxis = axis; $("in-pong").value = "solo"; startGame("pong", true); };
+      const go = axis => () => { state.pongMode = "solo"; state.pongAxis = axis; $("in-pong").value = "solo"; renderLevelMap("pong"); };
       gameBtns.pong = mk("pong", "Pong FE", !!gameLock, go("fe"), "Up and down", gameLock);
       gameBtns["pong-abd"] = mk("pong", "Pong Abd-Add", !!gameLock, go("abd"), "Side to side", gameLock);
       // and the same game for two (Oct 2026, by request): a tile of its own
@@ -1020,7 +1038,7 @@ function renderSelect() {
     }
     // the Lantern opens on its level map (Oct 2026, by request: any level
     // can be tried), with the Guild board beside it
-    if (g.id === "candles") { gameBtns.candles = mk(g.id, g.name, !!gameLock, renderLanternLevels, g.trains, gameLock); continue; }
+    if (MAP_DEFS[g.id]) { gameBtns[g.id] = mk(g.id, g.name, !!gameLock, () => renderLevelMap(g.id), g.trains, gameLock); continue; }
     gameBtns[g.id] = mk(g.id, g.name, !!gameLock, () => startGame(g.id, true), g.trains, gameLock);
   }
   // the session plan, if the therapist made one: a strip above the cards
@@ -1051,7 +1069,48 @@ function renderSelect() {
 // last block "Finish for today" is the way on. Finishing early loses
 // nothing: every round is logged as usual.
 const PLAN_BLOCK_MIN = 15, PLAN_MAX_BLOCKS = 6;
+const PLAN_MINUTES = [5, 10, 15, 20, 30];
+// TODAY (23 Oct 2026, by request): what the day has held so far, for the hub
+// strip and the round card: minutes trained (store.playtime), rounds and
+// stars (the day's round records), rounds per game, and the goal the bar
+// fills towards: the plan's minutes, else DAILY_GOAL_MIN
+const DAILY_GOAL_MIN = 30;
+function localDayKey(d = new Date()) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
+function todayStats(name = state.patient) {
+  const key = localDayKey();
+  const p = store.getPatient(name) || {};
+  const pt = (p.playtime || {})[key] || { ms: 0, rounds: 0, assessments: 0 };
+  const rounds = (p.sessions || []).filter(r => r.day === key || (typeof r.date === "string" && r.date.startsWith(key)));
+  const perGame = {};
+  for (const r of rounds) perGame[r.game] = (perGame[r.game] || 0) + 1;
+  const stars = rounds.reduce((a, r) => a + (r.stars || 0), 0);
+  const plan = store.getSchedule(name);
+  const goal = plan?.blocks?.length ? planMinutes(plan.blocks) : DAILY_GOAL_MIN;
+  return { minutes: Math.round(pt.ms / 60000), seconds: Math.round(pt.ms / 1000), rounds: rounds.length, assessments: pt.assessments || 0, stars, perGame, goal, planned: !!plan?.blocks?.length };
+}
+function todayHTML(t, compact = false) {
+  const gameName = id => GAMES.find(g => g.id === id)?.name || id;
+  const games = Object.entries(t.perGame).map(([id, n]) => `${gameName(id)} ${n}`).join(" · ");
+  const f = Math.min(1, t.goal ? t.minutes / t.goal : 0);
+  return `<div class="today-line"><b>Today:</b> ${plural(t.minutes, "minute")} trained · ${plural(t.stars, "star")} · ${plural(t.rounds, "round")}${t.assessments ? " · measured" : ""}</div>`
+    + `<div class="today-bar"><div style="width:${Math.round(f * 100)}%"></div></div>`
+    + `<div class="today-goal">${t.minutes} of ${t.goal} min${t.planned ? " in the plan" : ""}${games && !compact ? ` · ${games}` : ""}</div>`;
+}
+function renderToday() {
+  const el = $("today-strip");
+  if (!el || !state.patient || state.patient === "guest") { el?.classList.add("hidden"); return; }
+  el.classList.remove("hidden");
+  el.innerHTML = todayHTML(todayStats());
+}
 let planDraft = [], planReturn = null;
+// the levels a block can start a game at (23 Oct 2026, by request): the
+// game's own ladder, or "where they are" (null) to carry on from the banked level
+function planLevels(game) {
+  if (game === "windy") return Array.from({ length: WINDY_MAX }, (_, i) => ({ v: i + 1, name: `Level ${windyStageOf(i + 1)} · part ${windySubOf(i + 1)} of 3${windyStageOf(i + 1) > 12 ? " · endless" : ""}` }));
+  if (game === "candles") return Array.from({ length: CANDLE_MAX }, (_, i) => { const st = LUMEN_STAGES.find(s => i + 1 >= s.from && i + 1 <= s.to); return { v: i + 1, name: `Level ${i + 1}${st ? ` · ${st.name}` : ""}` }; });
+  if (game === "pairs") return Array.from({ length: PAIR_MAX }, (_, i) => ({ v: i + 1, name: `Level ${i + 1}` }));
+  return [];
+}
 
 // the games a block can hold: the enabled cards, Pong as its two games
 function planChoices() {
@@ -1071,61 +1130,80 @@ const planKey = b => b.game === "pong" ? (b.axis === "abd" ? "pong-abd" : "pong"
 function planName(b) { return planChoices().find(c => c.key === planKey(b))?.name || GAMES.find(g => g.id === b.game)?.name || b.game; }
 function planMinutes(blocks) { return blocks.reduce((s, b) => s + (b.minutes || PLAN_BLOCK_MIN), 0); }
 
-// open the plan screen; `then` is where Save or Skip goes afterwards
+// open the plan screen; `then` is where Save or Skip goes afterwards.
+// (24 Oct 2026, by request: every game is one 15-minute block. The therapist
+// clicks a game tile to add it, the session line grows by 15 minutes, ✕ on
+// a block drops it and the line shrinks. No minutes to pick.)
 function renderSchedule(then) {
   planReturn = then;
   const saved = store.getSchedule(state.patient);
-  const choices = planChoices();
   planDraft = saved?.blocks?.length
-    ? saved.blocks.map(b => ({ game: b.game, axis: b.axis, minutes: b.minutes || PLAN_BLOCK_MIN }))
-    : [{ game: choices[0].game, axis: choices[0].axis, minutes: PLAN_BLOCK_MIN }];
+    ? saved.blocks.map(b => ({ game: b.game, axis: b.axis, level: b.level ?? null, minutes: PLAN_BLOCK_MIN }))
+    : [];
   drawPlan();
   show("screen-schedule");
   document.querySelectorAll("#screen-schedule .kbd-focus").forEach(el => el.classList.remove("kbd-focus"));
-  focusHint($("btn-plan-save"));
+  focusHint(planDraft.length ? $("btn-plan-save") : document.querySelector("#plan-picks .gcard"));
 }
 function drawPlan() {
   const choices = planChoices();
-  const wrap = $("plan-blocks");
-  wrap.innerHTML = "";
+  // THE SESSION LINE: one segment per block, 15 minutes each, in order
+  const line = $("plan-blocks");
+  line.innerHTML = "";
   planDraft.forEach((b, i) => {
-    const row = document.createElement("div");
-    row.className = "plan-block";
-    const head = document.createElement("div");
-    head.className = "plan-block-head";
-    head.innerHTML = `<div><b>Block ${i + 1} · ${b.minutes} min</b><span class="pick">${planName(b)}</span></div>`;
-    if (planDraft.length > 1) {
-      const rm = document.createElement("button");
-      rm.className = "plan-remove"; rm.textContent = "Remove"; rm.dataset.dwell = "1";
-      rm.addEventListener("click", () => { planDraft.splice(i, 1); drawPlan(); });
-      head.appendChild(rm);
+    const seg = document.createElement("div");
+    seg.className = "plan-seg";
+    seg.style.setProperty("--art", "none");
+    const head = document.createElement("div"); head.className = "plan-seg-head";
+    const name = document.createElement("b"); name.textContent = planName(b); head.appendChild(name);
+    const mins = document.createElement("span"); mins.className = "plan-seg-min"; mins.textContent = `${PLAN_BLOCK_MIN} min`; head.appendChild(mins);
+    const rm = document.createElement("button");
+    rm.className = "plan-remove"; rm.textContent = "✕"; rm.title = "Drop this block"; rm.setAttribute("aria-label", `Drop ${planName(b)}`); rm.dataset.dwell = "1";
+    rm.addEventListener("click", () => { planDraft.splice(i, 1); drawPlan(); });
+    head.appendChild(rm);
+    seg.appendChild(head);
+    const levels = planLevels(b.game);
+    if (levels.length) {
+      const el = document.createElement("select");
+      el.setAttribute("aria-label", "Level to start at"); el.dataset.dwell = "1";
+      el.add(new Option("Where they are", ""));
+      for (const o of levels) el.add(new Option(o.name, String(o.v)));
+      el.value = b.level == null ? "" : String(b.level);
+      el.addEventListener("change", () => { b.level = el.value ? +el.value : null; });
+      seg.appendChild(el);
+    } else {
+      const note = document.createElement("span"); note.className = "plan-note"; note.textContent = "pace follows their last game"; seg.appendChild(note);
     }
-    row.appendChild(head);
-    const tiles = document.createElement("div");
-    tiles.className = "plan-tiles";
-    for (const c of choices) {
-      const t = document.createElement("button");
-      t.className = "plan-tile" + (c.key === planKey(b) ? " on" : "");
-      t.dataset.dwell = "1";
-      t.innerHTML = (CARD_ART[c.game] || "") + `<div class="name">${c.name}</div>`;
-      t.addEventListener("click", () => { b.game = c.game; b.axis = c.axis; drawPlan(); });
-      tiles.appendChild(t);
-    }
-    row.appendChild(tiles);
-    wrap.appendChild(row);
+    line.appendChild(seg);
   });
+  if (!planDraft.length) {
+    const empty = document.createElement("div"); empty.className = "plan-empty";
+    empty.textContent = "Nothing yet. Click a game below to add 15 minutes of it.";
+    line.appendChild(empty);
+  }
   const total = planMinutes(planDraft);
-  $("plan-total").textContent = `${planDraft.length} block${planDraft.length === 1 ? "" : "s"} · ${total} minutes`;
-  $("btn-plan-add").disabled = planDraft.length >= PLAN_MAX_BLOCKS;
+  $("plan-total").innerHTML = planDraft.length
+    ? `<b>${total} minutes</b> · ${planDraft.length} block${planDraft.length === 1 ? "" : "s"} of ${PLAN_BLOCK_MIN}${planDraft.length >= PLAN_MAX_BLOCKS ? " · that is the most for one session" : ""}`
+    : `Each game adds ${PLAN_BLOCK_MIN} minutes`;
+  // THE GAME TILES: click one to add a block of it (again for another 15 minutes)
+  const picks = $("plan-picks");
+  picks.innerHTML = "";
+  for (const c of choices) {
+    const n = planDraft.filter(b => planKey(b) === c.key).length;
+    const card = pongCard(c.name, n ? `${n * PLAN_BLOCK_MIN} min in the plan · add ${PLAN_BLOCK_MIN} more` : `Add ${PLAN_BLOCK_MIN} minutes`, () => {
+      if (planDraft.length >= PLAN_MAX_BLOCKS) { speak(`${PLAN_MAX_BLOCKS * PLAN_BLOCK_MIN} minutes is the most for one session.`); return; }
+      planDraft.push({ game: c.game, axis: c.axis, level: null, minutes: PLAN_BLOCK_MIN });
+      drawPlan();
+    }, CARD_ART[c.game] || CARD_ART.pong);
+    card.classList.add("plan-pick");
+    if (n) card.classList.add("on");
+    if (planDraft.length >= PLAN_MAX_BLOCKS) card.classList.add("full");
+    picks.appendChild(card);
+  }
+  $("btn-plan-save").disabled = !planDraft.length;
 }
-$("btn-plan-add").addEventListener("click", () => {
-  if (planDraft.length >= PLAN_MAX_BLOCKS) return;
-  const last = planDraft[planDraft.length - 1] || planChoices()[0];
-  planDraft.push({ game: last.game, axis: last.axis, minutes: PLAN_BLOCK_MIN });
-  drawPlan();
-});
 $("btn-plan-save").addEventListener("click", () => {
-  store.setSchedule(state.patient, planDraft.map(b => ({ game: b.game, axis: b.axis, minutes: b.minutes })));
+  store.setSchedule(state.patient, planDraft.map(b => ({ game: b.game, axis: b.axis, level: b.level ?? null, minutes: b.minutes })));
   speak(`Plan saved. ${planDraft.length} block${planDraft.length === 1 ? "" : "s"}, ${planMinutes(planDraft)} minutes.`);
   const then = planReturn; planReturn = null;
   (then || (() => { renderSelect(); show("screen-select"); }))();
@@ -1141,7 +1219,7 @@ function renderPlanStrip(gameLock) {
   const plan = store.getSchedule(state.patient);
   if (!plan?.blocks?.length) { strip.classList.add("hidden"); strip.innerHTML = ""; return null; }
   strip.classList.remove("hidden");
-  const text = plan.blocks.map(b => `${planName(b)} ${b.minutes || PLAN_BLOCK_MIN} min`).join(" · ");
+  const text = plan.blocks.map(b => `${planName(b)}${b.level ? ` level ${b.game === "windy" ? windyStageOf(b.level) : b.level}` : ""} ${b.minutes || PLAN_BLOCK_MIN} min`).join(" · ");
   strip.innerHTML = `<div>Today's plan: ${text}</div>`;
   const btn = document.createElement("button");
   btn.className = "btn"; btn.dataset.dwell = "1";
@@ -1163,6 +1241,12 @@ function startPlanBlock(i) {
   const b = p.blocks[i];
   p.idx = i; p.startedAt = Date.now();
   if (b.game === "pong") { state.pongMode = "solo"; state.pongAxis = b.axis || "fe"; $("in-pong").value = "solo"; }
+  // the block's chosen level starts its first round; the ladder carries on from there
+  if (b.level) {
+    if (b.game === "windy") state.windyLevelPick = b.level;
+    else if (b.game === "candles") state.candlesLevelPick = b.level;
+    else if (b.game === "pairs") state.pairsLevelPick = b.level;
+  }
   startGame(b.game, true);
 }
 // minutes left in the current block (0 when it is over)
@@ -1399,33 +1483,144 @@ function renderPartnerMeasure() {
 // THE LANTERN'S LEVEL MAP (Oct 2026, by request: keep the level choice and
 // the leaderboard, so every stage can be tried). Six stages, every level a
 // button, the ladder's own level marked; the Guild board beside it.
-function renderLanternLevels() {
+// THE LEVEL MAPS (23 Oct 2026, by request: "like Candy Crush, to show
+// progress"): one winding path per ladder game, a node per level, the stars
+// earned on each, the current level lit, the levels ahead drawn dim but
+// playable (any level can be tried; the ladder carries on from the level
+// played). Chapters (stages) are named along the path. Deliberately without
+// the parts of those maps that exist to keep people playing past when they
+// meant to stop: no lives, no gates, no boosters. One map for Windy City
+// Flap, the Lantern and Memory Pairs (MAP_DEFS); the Lantern keeps its Guild
+// board under it. Per-level stars and bests live in a progress bag per game
+// (store.getProgress: the Lantern's own candlesLumen; windyMap and pairsMap
+// written by onRoundEnd).
+const MAP_DEFS = {
+  windy: {
+    title: "Windy City Flap: where shall we fly?", bag: "windyMap", levelKey: "windyLevel", pick: "windyLevelPick",
+    count: () => WINDY_MAX,
+    chapters: () => { const out = []; for (let st = 1; st <= WINDY_MAX / 3; st++) out.push({ from: (st - 1) * 3 + 1, to: st * 3, name: `Level ${st}`, note: st > 12 ? "A little faster and tighter" : windyNoteOf(st) }); return out; },
+    label: n => `${windySubOf(n)}`,            // on the node: the part within the stage
+  },
+  candles: {
+    title: "The Lantern: where shall we start?", bag: "candlesLumen", levelKey: "candlesLevel", pick: "candlesLevelPick",
+    count: () => CANDLE_MAX,
+    chapters: () => LUMEN_STAGES.map((st, k) => ({ from: st.from, to: st.to, name: `Stage ${k + 1} · ${st.name}`, note: "" })),
+    label: n => `${n}`,
+  },
+  // Pong's ladder is the star's five ranks (24 Oct 2026, by request): the
+  // opponents in a row, the beaten ones lit, the next one named
+  pong: {
+    title: () => `Pong ${state.pongAxis === "abd" ? "Abd-Add" : "FE"}: who shall we play?`, bag: "pongMap", levelKey: "starRank", pick: "starRankPick",
+    count: () => STAR_RANKS.length,
+    chapters: () => STAR_RANKS.map((r, i) => ({ from: i + 1, to: i + 1, name: r.name, note: "" })),
+    label: n => `${n}`,
+  },
+  pairs: {
+    title: "Memory Pairs: which board?", bag: "pairsMap", levelKey: "pairsLevel", pick: "pairsLevelPick",
+    count: () => PAIR_MAX,
+    chapters: () => [{ from: 1, to: PAIR_MAX, name: "Boards", note: "More cards, closer together, further out" }],
+    label: n => `${n}`,
+  },
+};
+const WINDY_NOTES = ["Learn to fly", "Rook slides", "Faster", "Drones", "Moving bridges", "Narrower gaps", "Faster", "Crosswind", "More drones", "Bridges move further", "Stronger wind", "The finale"];
+function windyNoteOf(st) { return WINDY_NOTES[st - 1] || ""; }
+
+// the SVG: nodes along a serpentine path, `per` to a row; `around` draws only
+// a window of levels about the current one (the round card's strip)
+function levelMapSVG(def, cur, prog, around = null) {
+  const total = def.count(), chapters = def.chapters();
+  const stars = prog.stars || {}, best = prog.best || {};
+  let from = 1, to = total;
+  if (around) { from = Math.max(1, cur - around); to = Math.min(total, cur + around); }
+  const n = to - from + 1, per = around ? n : Math.min(8, Math.max(4, Math.round(Math.sqrt(total * 1.6))));
+  const rows = Math.ceil(n / per), W = 960, colW = W / (per + 1), rowH = around ? 120 : 118, top = around ? 54 : 70;
+  const H = top + rows * rowH + (around ? 10 : 20);
+  const pos = i => { const r = Math.floor(i / per), c = i % per, cc = r % 2 ? per - 1 - c : c; return { x: colW * (cc + 1), y: top + r * rowH + rowH / 2 }; };
+  const nodes = []; for (let L = from; L <= to; L++) nodes.push({ L, ...pos(L - from) });
+  let d = "";
+  nodes.forEach((p, i) => {
+    if (!i) { d += `M${p.x} ${p.y}`; return; }
+    const q = nodes[i - 1]; const mx = (p.x + q.x) / 2;
+    d += p.y === q.y ? ` L${p.x} ${p.y}` : ` C${q.x} ${q.y + rowH * 0.55} ${p.x} ${p.y - rowH * 0.55} ${p.x} ${p.y}`;
+    void mx;
+  });
+  let svg = `<svg class="lvl-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="Level map">`;
+  svg += `<path d="${d}" class="trail"/>`;
+  const doneTo = nodes.filter(p => p.L < cur);
+  if (doneTo.length) {
+    let d2 = ""; const seg = nodes.filter(p => p.L <= cur);
+    seg.forEach((p, i) => { if (!i) { d2 += `M${p.x} ${p.y}`; return; } const q = seg[i - 1]; d2 += p.y === q.y ? ` L${p.x} ${p.y}` : ` C${q.x} ${q.y + rowH * 0.55} ${p.x} ${p.y - rowH * 0.55} ${p.x} ${p.y}`; });
+    svg += `<path d="${d2}" class="trail done"/>`;
+  }
+  for (const ch of chapters) {
+    const p = nodes.find(q => q.L === ch.from); if (!p) continue;
+    svg += `<text class="chap" x="${p.x}" y="${p.y - 44}" text-anchor="middle">${ch.name}</text>`;
+    if (ch.note && !around) svg += `<text class="chapnote" x="${p.x}" y="${p.y - 28}" text-anchor="middle">${ch.note}</text>`;
+  }
+  for (const p of nodes) {
+    const st = stars[p.L] || 0, played = !!best[p.L] || st > 0, isCur = p.L === cur, ahead = p.L > cur && !played;
+    const r = isCur ? 26 : 20;
+    svg += `<g class="node${isCur ? " cur" : played ? " played" : ahead ? " ahead" : ""}" data-level="${p.L}" tabindex="0" role="button" aria-label="Level ${p.L}">`;
+    if (isCur) svg += `<circle cx="${p.x}" cy="${p.y}" r="${r + 9}" class="halo"/>`;
+    svg += `<circle cx="${p.x}" cy="${p.y}" r="${r}"/>`;
+    svg += `<text x="${p.x}" y="${p.y + 1}" text-anchor="middle" dominant-baseline="middle" class="num">${def.label(p.L)}</text>`;
+    if (st) svg += `<text x="${p.x}" y="${p.y + r + 16}" text-anchor="middle" class="stars">${"★".repeat(st)}${"☆".repeat(Math.max(0, 3 - st))}</text>`;
+    else if (played) svg += `<text x="${p.x}" y="${p.y + r + 16}" text-anchor="middle" class="stars dim">☆☆☆</text>`;
+    svg += `</g>`;
+  }
+  return svg + `</svg>`;
+}
+function renderLevelMap(gameId) {
+  const def = MAP_DEFS[gameId]; if (!def) return;
   const wrap = $("cards");
   wrap.innerHTML = "";
-  document.querySelector("#screen-select h1").textContent = "The Lantern: where shall we start?";
-  const cur = store.getLevel(state.patient, "candlesLevel");
-  const prog = store.getProgress(state.patient, "candlesLumen") || {};
-  const stars = prog.stars || {}, best = prog.best || {};
+  document.querySelector("#screen-select h1").textContent = typeof def.title === "function" ? def.title() : def.title;
+  const cur = store.getLevel(state.patient, def.levelKey);
+  const prog = store.getProgress(state.patient, def.bag) || {};
+  const played = Object.keys(prog.best || {}).length, starSum = Object.values(prog.stars || {}).reduce((a, b) => a + (b || 0), 0);
   let html = `<div class="duo-setup lvl-map">`;
-  LUMEN_STAGES.forEach((st, k) => {
-    html += `<div class="lvl-stage"><div class="lvl-name">Stage ${k + 1} · ${st.name}</div><div class="lvl-row">`;
-    for (let L = st.from; L <= st.to; L++)
-      html += `<button class="lvl-btn${L === cur ? " cur" : ""}${best[L] ? " played" : ""}" data-level="${L}" data-dwell="1" title="${best[L] ? `best ${best[L]}` : "not played"}">${L}<small>${"★".repeat(stars[L] || 0)}</small></button>`;
-    html += `</div></div>`;
-  });
-  html += `<p class="hint">The ladder stands at level <b>${cur}</b>. Any level can be played (to try a stage out); the ladder carries on from the level played.</p>`;
-  html += lanternBoardHTML(prog);
+  html += levelMapSVG(def, cur, prog);
+  html += gameId === "pong"
+    ? `<p class="hint">Next opponent: <b>${STAR_RANKS[cur - 1]?.name || "Little star"}</b>${prog.rally ? ` · your longest rally ever: <b>${prog.rally}</b>` : ""}. Win a match to move up the ladder; click any star to play it.</p>`
+    : `<p class="hint">You are at level <b>${gameId === "windy" ? windyStageOf(cur) : cur}</b>${played ? ` · ${plural(played, "level")} played · ${plural(starSum, "star")} on the map` : ""}. Click any level to play it; the path carries on from there.</p>`;
+  if (gameId === "candles") html += lanternBoardHTML(prog);
   html += `</div>`;
   wrap.innerHTML = html;
-  wrap.querySelectorAll(".lvl-btn").forEach(b => b.addEventListener("click", () => {
-    state.candlesLevelPick = +b.dataset.level;
-    startGame("candles", true);
-  }));
-  const stName = LUMEN_STAGES.find(st => cur >= st.from && cur <= st.to)?.name || "";
-  const play = pongCard(`Continue · Level ${cur}`, stName, () => { state.candlesLevelPick = null; startGame("candles", true); }, CARD_ART.candles);
+  wrap.querySelectorAll(".node").forEach(g => {
+    const go = () => { state[def.pick] = +g.dataset.level; startGame(gameId, true); };
+    g.addEventListener("click", go);
+    g.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } });
+  });
+  const sub = gameId === "candles" ? (LUMEN_STAGES.find(st => cur >= st.from && cur <= st.to)?.name || "")
+    : gameId === "windy" ? windyNoteOf(windyStageOf(cur)) : "";
+  const play = pongCard(gameId === "pong" ? `Play · vs the ${STAR_RANKS[cur - 1]?.name || "Little star"}` : `Continue · Level ${gameId === "windy" ? windyStageOf(cur) : cur}`, sub, () => { state[def.pick] = null; startGame(gameId, true); }, CARD_ART[gameId]);
   wrap.appendChild(play);
-  wrap.appendChild(pongCard("↩ Back", "All games", renderSelect, CARD_ART.candles));
+  wrap.appendChild(pongCard("↩ Back", "All games", renderSelect, CARD_ART[gameId]));
   focusHint(play);
+}
+function renderLanternLevels() { renderLevelMap("candles"); }
+// stars and bests on a ladder game's map, from the round that just ended
+function noteMapProgress(round) {
+  const g = round.game;
+  if (g !== "windy" && g !== "pairs" && g !== "pong") return;
+  const bag = store.getProgress(state.patient, MAP_DEFS[g].bag) || { stars: {}, best: {}, plays: {} };
+  bag.stars ??= {}; bag.best ??= {}; bag.plays ??= {};
+  let L, stars, best;
+  if (g === "pong") {
+    // the star rank played: a match won is 3 stars, drawn 2, played 1; the
+    // best is the longest rally against that star, and bag.rally the longest ever
+    if (round.pongMode === "duo" || !round.starRank) return;
+    L = round.starRank; stars = round.matchWon === true ? 3 : round.matchWon == null ? 2 : 1; best = round.bestRally || 0;
+    bag.rally = Math.max(bag.rally || 0, round.bestRally || 0);
+  }
+  else if (g === "windy") { L = round.level; stars = round.levelStars || 0; best = round.gapsPassed || 0; }
+  else { L = round.pairsLevel; const cleared = (round.boardsCleared || 0) > 0; stars = cleared ? ((round.wrongTurns || 0) <= 2 ? 3 : 2) : (round.pairsFound || 0) > 0 ? 1 : 0; best = round.pairsFound || 0; }
+  if (!L) return;
+  bag.stars[L] = Math.max(bag.stars[L] || 0, stars);
+  bag.best[L] = Math.max(bag.best[L] || 0, best);
+  bag.plays[L] = (bag.plays[L] || 0) + 1;
+  bag.last = { level: L, date: new Date().toISOString() };
+  store.setProgress(state.patient, MAP_DEFS[g].bag, bag);
 }
 
 // THE LAMPLIGHTERS' GUILD (from the Lantern mockup, by request): a board of
@@ -1790,7 +1985,7 @@ function startGame(id, fresh) {
     // session is where the next one starts, or the ladder means nothing
     level: id === "lens" ? store.getLevel(state.patient, "scratchLevel")
       : id === "dots" ? store.getLevel(state.patient, "dotsLevel")
-      : id === "pairs" ? store.getLevel(state.patient, "pairsLevel")
+      : id === "pairs" ? (state.pairsLevelPick || store.getLevel(state.patient, "pairsLevel"))
       : id === "candles" ? (state.candlesLevelPick || store.getLevel(state.patient, "candlesLevel"))
       : id === "windy" ? (state.windyLevelPick || store.getLevel(state.patient, "windyLevel")) : undefined,
     mode: id === "pong" ? state.pongMode
@@ -1801,7 +1996,8 @@ function startGame(id, fresh) {
     axis: id === "pong" ? state.pongAxis : undefined,
     // the Lantern's per-level bests and Star Atlas (Pip's flag is set from them)
     lumen: id === "candles" ? store.getProgress(state.patient, "candlesLumen") : undefined,
-    starRank: id === "pong" ? store.getLevel(state.patient, "starRank") : undefined,
+    starRank: id === "pong" ? (state.starRankPick || store.getLevel(state.patient, "starRank")) : undefined,
+    bestRallyEver: id === "pong" ? (store.getProgress(state.patient, "pongMap")?.rally || 0) : undefined,
     // Pong's round-1 tutorial SETS the ball's pace only on the first game
     // ever on this arm (no stored Pong difficulty yet); after that it is a
     // warm-up and the pace is the level the patient has reached
@@ -1828,6 +2024,8 @@ function startGame(id, fresh) {
   state.current = game;
   state.candlesLevelPick = null; $("in-candles-level").value = "";   // a picked level is for one round
   state.windyLevelPick = null; $("in-windy-level").value = "";
+  state.pairsLevelPick = null;
+  state.starRankPick = null;
   // the webcam follows a second body only while two are playing
   state.tracker.setSecond?.(id === "pong" && state.pongMode === "duo");
   show("stage");
@@ -1869,6 +2067,7 @@ function onRoundEnd(round) {
   if (round.game === "pairs" && round.pairsLevel) {
     store.setLevel(state.patient, "pairsLevel", round.pairsLevel, 6);
   }
+  noteMapProgress(round);
   // Windy City Flap: up a level on a finished flight, down one at most when the hearts ran out
   if (round.game === "windy" && round.windyLevel) {
     store.setLevel(state.patient, "windyLevel", round.windyLevel, WINDY_MAX);
@@ -1900,6 +2099,8 @@ function onRoundEnd(round) {
     return;
   }
 
+  round.date ??= new Date().toISOString();
+  round.day = localDayKey();
   store.logRound(state.patient, round);
   if (round.game === "pong" && round.pongMode === "duo") store.logRivalry(state.patient, round.p2Name || "guest", round.matchWon, round.bestRally);
   state.sessionStars += round.stars;
@@ -2126,6 +2327,19 @@ function renderBetween(round, note) {
   const sum = roundSummary(round);
   $("rc-head").textContent = sum.head;
   $("rc-text").textContent = sum.text;
+  // the map strip (23 Oct 2026, by request): the path about the level just
+  // played, with its stars, for the three ladder games
+  {
+    const def = MAP_DEFS[round.game], el = $("rc-map");
+    if (def && el) {
+      const L = round.game === "windy" ? round.level : round.game === "candles" ? (round.level || round.candlesLevel) : round.pairsLevel;
+      const prog = store.getProgress(state.patient, def.bag) || {};
+      el.innerHTML = L ? levelMapSVG(def, L, prog, 3) : "";
+    } else if (el) el.innerHTML = "";
+  }
+  // the day so far (23 Oct 2026, by request): rounds, minutes, stars, and
+  // the bar towards the plan's minutes or the daily goal
+  $("rc-today").innerHTML = state.patient && state.patient !== "guest" ? todayHTML(todayStats(), true) : "";
   const shown = Math.min(sum.count, RC_MAX_GLYPHS);
   $("rc-glyphs").innerHTML = (RC_GLYPHS[sum.glyph] || RC_GLYPHS.star).repeat(shown)
     + (sum.count > shown ? `<span class="more">+${sum.count - shown}</span>` : "");
@@ -2720,7 +2934,7 @@ for (let L = 1; L <= CANDLE_MAX; L++) {
 }
 $("in-candles-level").addEventListener("change", e => { state.candlesLevelPick = +e.target.value || null; });
 // Windy City Flap's level for the NEXT round (testing: any level at once); the ladder otherwise
-for (let L = 1; L <= WINDY_MAX; L++) $("in-windy-level").add(new Option(`Level ${L}${L > 12 ? " · endless" : ""}`, String(L)));
+for (let L = 1; L <= WINDY_MAX; L++) $("in-windy-level").add(new Option(`Level ${windyStageOf(L)} · part ${windySubOf(L)} of 3${windyStageOf(L) > 12 ? " · endless" : ""}`, String(L)));
 $("in-windy-level").addEventListener("change", e => { state.windyLevelPick = +e.target.value || null; });
 $("in-pong-speed").addEventListener("change", e => { state.pongSpeed = e.target.value; });
 $("in-pong-power").addEventListener("change", e => { state.pongPowerups = e.target.value === "on"; });
@@ -2831,6 +3045,107 @@ if (previewOf === "pongscore") {
     const raw = JSON.parse(localStorage.getItem("rehabsuite-v1"));
     if (raw?.patients?.preview) { delete raw.patients.preview; localStorage.setItem("rehabsuite-v1", JSON.stringify(raw)); }
   } catch {}
+} else if (new URLSearchParams(location.search).get("go")) {
+  // ?go=<target>: straight to one game or screen (see testJump)
+  boot().then(() => { state.tracker?.setSqueezeEase?.(A11Y.squeezeEase); watchWelcome(); testJump(new URLSearchParams(location.search)); });
 } else {
   boot().then(() => { state.tracker?.setSqueezeEase?.(A11Y.squeezeEase); watchWelcome(); });
 }
+
+/* ================= test shortcuts (Oct 2026, by request) ================= */
+// ?go=<target> jumps straight to one game or screen once the camera is up,
+// so a game can be tested without the login, the welcome lift and the
+// assessment in front of it. It logs in a throwaway participant ("tester"
+// unless &name= says otherwise) and, when that arm has no reach profile yet,
+// writes a synthetic one (a round 0.95 SW envelope, a 15-140 degree lift,
+// all five targets reached, flagged test: true and reference
+// "test-synthetic" so it can never pass for a measurement) with the DDA's
+// seed parameters, so the games have a workspace to lay targets in. A real
+// participant named with &name= keeps their own profile. Targets: a game id
+// (pong, candles, pairs, windy, and any disabled game by its id), assess,
+// select, welcome, warmup, rom, schedule, levels (&game=), duo, profile,
+// collections. Options: &arm=left|right (right), &level=N for the ladder
+// games, &axis=fe|abd and &mode=solo|bimanual|... for Pong, &fresh=1 to
+// rewrite the synthetic profile. The staff drawer lists these as links.
+const TEST_TARGETS = {
+  select: "the hub", welcome: "the welcome screen", warmup: "the warm-up", assess: "the assessment",
+  rom: "the after-assessment screen", schedule: "the session plan", levels: "a level map (&game=)",
+  duo: "Pong two-player setup", profile: "the therapist profile", collections: "the collections",
+};
+function testProfile(arm) {
+  const envelope = Array.from({ length: 32 }, (_, i) =>
+    Math.round((0.95 + 0.12 * Math.cos((i + 0.5) / 32 * Math.PI * 2 - 0.6)) * 1000) / 1000);
+  const keys = ["down-out", "out", "up-out", "up-across", "across"], degs = [-45, 10, 65, 125, 180];
+  const extremes = keys.map((key, i) => ({
+    key, deg: degs[i], reached: true, frac: 0.85, reachSW: 0.81, askSW: 0.81, anatSW: 1.45, askFrac: 0.85, fracAnat: 0.56,
+    timeMs: 2500, holdMs: 400, stability: 0.02, squeeze: i < 4, release: i < 4, preClosed: false, graspOk: i < 4,
+  }));
+  const profile = {
+    arm, date: new Date().toISOString(), center: { x: 0, y: 0 }, reference: "test-synthetic", test: true,
+    curlCal: null, envelope, envPts: null, covered: 1, armLenSW: 1.45, areaSW2: 2.6, coverage: 0.42,
+    quadrants: { upOut: 0.28, upAcross: 0.24, downAcross: 0.22, downOut: 0.26 }, shoulderM: 0.38,
+    style: "test", video: null, laps: [],
+    lift: { startDeg: 15, peakDeg: 140, rangeDeg: 125, returned: true, seconds: 4 },
+    extremes, arcMinDeg: 15, arcMaxDeg: 140, arcMeasured: true, jitter: 0.05, loopSeconds: 10,
+    grasp: extremes.map(e => ({ deg: e.deg, key: e.key, ok: true, stability: e.stability, squeeze: e.graspOk })),
+    reachablePositions: keys, graspPositions: keys.slice(0, 4), compEvents: [],
+  };
+  profile.params = initialParams(profile);
+  return profile;
+}
+function testJump(q) {
+  const go = q.get("go");
+  const arm = q.get("arm") === "left" ? "left" : "right";
+  const name = (q.get("name") || "tester").trim().slice(0, 24) || "tester";
+  store.login(name);
+  store.setArm(name, arm);
+  if (!store.getProfile(name, arm) || q.get("fresh")) store.saveProfile(name, arm, testProfile(arm));
+  applyLogin(name, arm);
+  const level = q.get("level") ? Math.max(1, +q.get("level")) : null;
+  const toHub = () => { renderSelect(); show("screen-select"); };
+  const game = GAMES.find(g => g.id === go);
+  if (game) {
+    if (go === "pong") {
+      state.pongMode = q.get("mode") || "solo"; $("in-pong").value = state.pongMode;
+      state.pongAxis = q.get("axis") === "abd" ? "abd" : "fe";
+      if (state.pongMode === "duo") { renderDuoSetup(); return; }
+    }
+    if (level) {
+      if (go === "candles") state.candlesLevelPick = level;
+      if (go === "windy") state.windyLevelPick = level;
+      if (go === "pairs") state.pairsLevelPick = level;
+    }
+    startGame(go, true);
+    return;
+  }
+  switch (go) {
+    case "select": toHub(); break;
+    case "welcome": show("screen-welcome"); break;
+    case "warmup": startWarmup(toHub); break;
+    case "assess": startAssessment({ override: true, force: true }); break;
+    case "rom": renderRomCompare([arm]); show("screen-romcompare"); romLiveLoop(); break;
+    case "schedule": renderSchedule(toHub); break;
+    case "levels": renderLevelMap(MAP_DEFS[q.get("game")] ? q.get("game") : "windy"); break;
+    case "duo": state.pongMode = "duo"; state.pongAxis = "fe"; $("in-pong").value = "duo"; renderDuoSetup(); break;
+    case "profile": renderProfile(); show("screen-profile"); break;
+    case "collections": renderCollections(); show("screen-collections"); break;
+    default: toHub(); speak(`No test target called ${go}.`);
+  }
+}
+// the drawer's list of shortcuts: every enabled game, Pong's two axes, the screens
+function renderTestLinks() {
+  const box = $("testlinks");
+  if (!box) return;
+  const arm = state.side || "right";
+  const link = (label, qs) => `<a href="?go=${qs}&arm=${arm}">${label}</a>`;
+  const games = GAMES.filter(g => !g.disabled).flatMap(g => g.id === "pong"
+    ? [link("Pong FE", "pong&axis=fe"), link("Pong Abd-Add", "pong&axis=abd"), link("Pong two players", "duo")]
+    : [link(g.name, g.id)]);
+  const screens = Object.entries(TEST_TARGETS).filter(([k]) => k !== "duo" && k !== "levels")
+    .map(([k, v]) => link(v, k));
+  const maps = Object.keys(MAP_DEFS).map(g => link(`${GAMES.find(x => x.id === g)?.name || g} levels`, `levels&game=${g}`));
+  box.innerHTML = `<div>${games.join(" · ")}</div><div>${maps.join(" · ")}</div><div>${screens.join(" · ")}</div>` +
+    `<div class="hint">Each link reloads straight into that game or screen as "tester" (${arm} arm, synthetic reach). Add <code>&name=</code> for a real participant, <code>&level=N</code>, <code>&mode=bimanual</code>.</div>`;
+}
+renderTestLinks();
+$("in-arm").addEventListener("change", renderTestLinks);

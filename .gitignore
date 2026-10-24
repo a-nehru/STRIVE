@@ -28,3 +28,8 @@ tools/.venv-tts/
 tools/tts_cache/
 tools/voices/*.wav
 tools/voices/*.mp3
+# Tracking lab (tools/model_lab.py, tools/handmodels): the CUDA venv, model weights, recordings
+tools/.venv-hands/
+tools/recordings/
+*.pt
+tools/tracking_config.json

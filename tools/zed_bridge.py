@@ -59,9 +59,13 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
+import sys
+
 import cv2
 import numpy as np
 import pyzed.sl as sl
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # game LM layout (MediaPipe pose indexes) <- BODY_38 names, with fallbacks.
 # HAND_MIDDLE_4 is a fingertip, so it stands in for the "index tip" the
@@ -102,6 +106,39 @@ PROFILES = {
 RES_FPS = {"HD2K": (15,), "HD1080": (15, 30), "HD720": (15, 30, 60), "VGA": (15, 30, 60, 100)}
 # the hand crop and a few pixel thresholds were tuned on a 1280-wide picture
 REF_WIDTH = 1280
+
+
+CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tracking_config.json")
+
+
+def load_config():
+    """The tracking lab's "Use for the game" choice (tools/tracking_config.json):
+    the ZED picture size, frame rate, depth mode and body model, and the hand
+    model. Missing file = the built-in defaults. Flags given on the command
+    line still win."""
+    try:
+        return json.load(open(CONFIG_PATH))
+    except (OSError, ValueError):
+        return {}
+
+
+def open_with_retries(zed, init, tries=4, pause=2.0):
+    """Open the camera, trying again on a transient failure. A ZED 2i on SDK
+    5.5 reports "Corrupted frames were detected" on roughly every other open
+    made soon after a close (seen 23 Oct 2026, 3 of 6 opens), and the next
+    attempt succeeds; the retry turns that into a two-second wait."""
+    st = None
+    for i in range(tries):
+        st = zed.open(init)
+        if st == sl.ERROR_CODE.SUCCESS:
+            return st
+        print(f"  camera open failed ({st}); trying again in {pause:.0f} s ({i + 1}/{tries})")
+        try:
+            zed.close()
+        except Exception:
+            pass
+        time.sleep(pause)
+    return st
 
 
 def pick_fps(res, want):
@@ -511,6 +548,9 @@ MP_TIPS = (8, 12, 16, 20)
 HAND_FRESH_S = 0.35        # a result older than this is not sent
 
 
+from handmodels.base import aperture as hm_aperture   # noqa: E402  (thumb-index, logged beside the curl)
+
+
 def mp_curl(world):
     w = world[0]
     palm = math.dist(world[9], w)
@@ -520,27 +560,14 @@ def mp_curl(world):
 
 
 class HandWorker(threading.Thread):
-    def __init__(self, model_path=HAND_MODEL_PATH):
+    def __init__(self, model="mediapipe"):
         super().__init__(daemon=True)
-        import mediapipe as mp
-        from mediapipe.tasks.python import BaseOptions, vision
-        if not os.path.exists(model_path):
-            import requests
-            print(f"  downloading the MediaPipe hand model (7.8 MB) to {model_path}")
-            os.makedirs(os.path.dirname(model_path), exist_ok=True)
-            r = requests.get(HAND_MODEL_URL, timeout=120)
-            r.raise_for_status()
-            open(model_path, "wb").write(r.content)
-        self.mp = mp
-
-        def make():
-            opts = vision.HandLandmarkerOptions(
-                base_options=BaseOptions(model_asset_path=model_path),
-                running_mode=vision.RunningMode.VIDEO, num_hands=1,
-                min_hand_detection_confidence=0.5, min_tracking_confidence=0.5)
-            return vision.HandLandmarker.create_from_options(opts)
-        self.lm = {"left": make(), "right": make()}
-        self.t_ms = {"left": 0, "right": 0}
+        # the model behind the common detect(rgb, side, t_ms) interface:
+        # "mediapipe" in-process (what shipped), anything else through a
+        # worker in tools/.venv-hands (see tools/handmodels)
+        from handmodels.client import make_hand_model
+        self.model = make_hand_model(model)
+        self.name_ = model
         self.cv = threading.Condition()
         self.job = None
         self.result = {"hands": [], "at": 0.0}
@@ -575,20 +602,18 @@ class HandWorker(threading.Thread):
                     continue
                 try:
                     rgb = cv2.cvtColor(np.ascontiguousarray(crop), cv2.COLOR_BGRA2RGB)
-                    img = self.mp.Image(image_format=self.mp.ImageFormat.SRGB, data=rgb)
-                    ts = max(int(t_ms), self.t_ms[side] + 1)      # must strictly increase
-                    self.t_ms[side] = ts
-                    res = self.lm[side].detect_for_video(img, ts)
-                except Exception:
+                    res = self.model.detect(rgb, side, int(t_ms))
+                except Exception as e:
+                    if not getattr(self, "_warned", False):
+                        self._warned = True
+                        print(f"  hand model {self.name_}: {e.__class__.__name__}: {e}")
                     continue
-                if not res.hand_landmarks:
+                if not res:
                     continue
-                h, w = crop.shape[:2]
-                pts = [(x0 + p.x * w, y0 + p.y * h) for p in res.hand_landmarks[0]]
-                curl = None
-                if getattr(res, "hand_world_landmarks", None):
-                    curl = mp_curl([(p.x, p.y, p.z) for p in res.hand_world_landmarks[0]])
-                hands.append({"side": side, "px": pts, "curl": curl})
+                pts = [(x0 + p[0], y0 + p[1]) for p in res["pts"]]
+                curl = mp_curl(res["world"]) if res.get("world") else None
+                aperture = hm_aperture(res["world"]) if res.get("world") else None
+                hands.append({"side": side, "px": pts, "curl": curl, "aperture": aperture})
             self.ms = (time.perf_counter() - t0) * 1000
             self.result = {"hands": hands, "at": time.monotonic()}
 
@@ -835,7 +860,8 @@ def capture(zed, rt, run, table, shoulders, res_w, res_h, preview_w, jpeg_every,
                     lx, ly = level_px(px, py, res_w, res_h, rot)
                     pts.append([round(lx / res_w, 5), round(ly / res_h, 5)])
                 hand_payload.append({"side": h["side"], "pts": pts,
-                                     "curl": round(h["curl"], 4) if h["curl"] is not None else None})
+                                     "curl": round(h["curl"], 4) if h["curl"] is not None else None,
+                                     "aperture": round(h["aperture"], 4) if h.get("aperture") is not None else None})
             if n % 30 == 0:
                 STATUS["hand_ms"] = round(HANDS.ms, 1)
         STATUS["seats"] = [e["id"] for e in entries]
@@ -887,7 +913,8 @@ def capture(zed, rt, run, table, shoulders, res_w, res_h, preview_w, jpeg_every,
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--profile", choices=PROFILES, default="fast",
+    cfg = load_config()
+    ap.add_argument("--profile", choices=list(PROFILES) + ["lab"], default="lab" if cfg.get("zed") else "fast",
                     help="fast = game default (MEDIUM model); balanced = ACCURATE model")
     ap.add_argument("--res", choices=list(RES_FPS), default=None,
                     help="camera picture size (default HD2K, 2208x1242)")
@@ -910,6 +937,9 @@ def main():
     ap.add_argument("--gamma", type=int, default=PICTURE_DEFAULTS["gamma"],
                     help="1-9, SDK default 8 (higher lifts the shadows)")
     ap.add_argument("--preview-width", type=int, default=640)
+    ap.add_argument("--hand-model", choices=["mediapipe", "wilor"], default=cfg.get("hand_model", "mediapipe"),
+                    help="which 21-point hand model runs on the wrist crops: mediapipe (CPU, "
+                         "in-process) or wilor (CUDA, in tools/.venv-hands; tools/setup_hands_env.cmd)")
     ap.add_argument("--hands", choices=["auto", "off"], default="auto",
                     help="grasp from the MediaPipe hand model on a crop around each wrist "
                          "(auto: on when the mediapipe package is installed)")
@@ -938,7 +968,15 @@ def main():
                          "(mean relative difference; lower = stricter)")
     args = ap.parse_args()
 
-    P = dict(PROFILES[args.profile])
+    if args.profile == "lab":
+        # the tracking lab's choice (tools/tracking_config.json), on the fast profile's other settings
+        P = dict(PROFILES["fast"])
+        P.update({k: cfg["zed"][k] for k in ("res", "fps", "depth", "model") if k in cfg.get("zed", {})})
+        P["fp16"] = P["model"] != "HUMAN_BODY_ACCURATE"
+        print(f"  using the tracking lab's choice from {os.path.basename(CONFIG_PATH)} "
+              f"(saved {cfg.get('saved', '?')}): {P['res']}@{P['fps']} {P['depth']} {P['model']}, hand model {args.hand_model}")
+    else:
+        P = dict(PROFILES[args.profile])
     if args.res:
         P["res"] = args.res
     P["fps"] = pick_fps(P["res"], args.fps or P["fps"])
@@ -957,7 +995,7 @@ def main():
     init.coordinate_units = sl.UNIT.METER
 
     zed = sl.Camera()
-    st = zed.open(init)
+    st = open_with_retries(zed, init)
     if st != sl.ERROR_CODE.SUCCESS:
         raise SystemExit(f"camera open failed: {st}")
 
@@ -995,14 +1033,14 @@ def main():
     SEATS = Seats(max(1, args.bodies), args.seat_grace, args.sig_tol)
     if args.hands == "auto":
         try:
-            HANDS = HandWorker()
+            HANDS = HandWorker(args.hand_model)
             HANDS.start()
-            print("  grasp: MediaPipe hand model on a crop around each wrist")
+            print(f"  grasp: {args.hand_model} hand model on a crop around each wrist")
         except Exception as e:
             HANDS = None
             print(f"  grasp: hand model unavailable ({e.__class__.__name__}: {e}); "
                   "the game falls back to the ZED fingertips")
-    STATUS["hand_model"] = HANDS is not None
+    STATUS["hand_model"] = args.hand_model if HANDS is not None else False
     TILT = Tilt(args.tilt)
     # the IMU is read in the capture thread (grabbing here, before it starts,
     # hung the bridge); the first reading is announced from there

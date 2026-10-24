@@ -7,6 +7,7 @@
 
 :root {
   --night: #1b1b3a;
+  --ink: #1b1b3a;           /* text on cream: the plan dropdowns were cream on cream without it (24 Oct 2026) */
   --dusk: #3a3168;
   --lav: #8f76b0;
   --cream: #f4ecdd;
@@ -74,6 +75,17 @@ button { font-family: inherit; cursor: pointer; }
 .menu-actions { display: flex; gap: 14px; justify-content: center; padding: 0 3vw 4vh; }
 
 .select-sub { margin: -6px 0 20px; font-weight: 700; font-size: 16px; opacity: 0.65; text-align: center; }
+/* today: minutes trained, stars, rounds, and the bar towards the plan or the daily goal */
+.today-strip { width: min(94vw, 760px); margin: -8px auto 14px; background: rgba(244,236,221,0.07); border: 1px solid rgba(244,236,221,0.14); border-radius: 14px; padding: 10px 16px; }
+.today-line { font-weight: 700; font-size: 17px; }
+.today-bar { height: 8px; border-radius: 4px; background: rgba(244,236,221,0.14); margin: 8px 0 6px; overflow: hidden; }
+.today-bar div { height: 100%; background: var(--amber); border-radius: 4px; transition: width .4s; }
+.today-goal { font-weight: 700; font-size: 14px; opacity: 0.7; }
+.rc-today { margin: 6px 0 4px; padding: 10px 14px; border-radius: 12px; background: rgba(27,27,58,0.06); text-align: left; }
+.rc-today .today-line { font-size: 16px; }
+.rc-today .today-bar { background: rgba(27,27,58,0.12); }
+.rc-today:empty { display: none; }
+
 .gcard .title small { display: block; font-size: 62%; font-weight: 700; opacity: 0.75; margin-top: 3px; }
 #handcursor.grasping { transform: translate(-50%, -50%) scale(0.7); filter: brightness(1.3); }
 
@@ -313,6 +325,36 @@ body.calm .coach, body.calm .coach .tick { transition: none; } body.calm .coach:
 .lvl-btn.cur small { color: #1b1b3a; }
 .lvl-btn:focus-visible, .lvl-btn.kbd-focus { outline: 3px solid var(--amber); outline-offset: 2px; }
 /* the Guild board (Lantern) and the head-to-head (two-player Pong) */
+/* the level maps (23 Oct 2026): a winding path, a node per level, stars under each */
+.lvl-svg { display: block; width: 100%; height: auto; max-width: 1100px; margin: 0 auto 8px; }
+.lvl-svg .trail { fill: none; stroke: rgba(244,236,221,.22); stroke-width: 10; stroke-linecap: round; stroke-linejoin: round; }
+.lvl-svg .trail.done { stroke: rgba(232,168,106,.6); }
+.lvl-svg .node { cursor: pointer; }
+.lvl-svg .node circle { fill: #2a2a55; stroke: rgba(244,236,221,.45); stroke-width: 3; }
+.lvl-svg .node.played circle { fill: #3b3a6e; stroke: #ffd98a; }
+.lvl-svg .node.ahead circle { fill: #20203f; stroke: rgba(244,236,221,.22); stroke-dasharray: 4 5; }
+.lvl-svg .node.cur circle { fill: var(--amber); stroke: #fff3c4; }
+.lvl-svg .node.cur .halo { fill: rgba(232,168,106,.22); stroke: none; animation: lvlhalo 1.8s ease-in-out infinite; }
+.lvl-svg .node .num { fill: var(--cream); font: 800 18px Nunito, sans-serif; pointer-events: none; }
+.lvl-svg .node.cur .num { fill: #1b1b3a; font-size: 22px; }
+.lvl-svg .node.ahead .num { fill: rgba(244,236,221,.5); }
+.lvl-svg .node .stars { fill: #ffd98a; font: 700 15px Nunito, sans-serif; letter-spacing: -1px; }
+.lvl-svg .node .stars.dim { fill: rgba(244,236,221,.35); }
+.lvl-svg .chap { fill: var(--cream); font: 800 16px Nunito, sans-serif; }
+.lvl-svg .chapnote { fill: rgba(244,236,221,.6); font: 700 12px Nunito, sans-serif; }
+.lvl-svg .node:hover circle, .lvl-svg .node:focus-visible circle { stroke: var(--amber); stroke-width: 4; }
+.lvl-svg .node:focus-visible { outline: none; }
+@keyframes lvlhalo { 0%, 100% { opacity: .5; } 50% { opacity: 1; } }
+.rc-map .lvl-svg { max-width: 520px; margin: 4px auto 0; }
+.rc-map .lvl-svg .trail { stroke: rgba(27,27,58,.15); }
+.rc-map .lvl-svg .trail.done { stroke: rgba(232,168,106,.7); }
+.rc-map .lvl-svg .node circle { fill: #f4ecdd; stroke: rgba(27,27,58,.35); }
+.rc-map .lvl-svg .node.played circle { fill: #fff3c4; stroke: #e8a86a; }
+.rc-map .lvl-svg .node .num { fill: #1b1b3a; }
+.rc-map .lvl-svg .node.ahead .num { fill: rgba(27,27,58,.45); }
+.rc-map .lvl-svg .chap { fill: #1b1b3a; }
+.rc-map:empty { display: none; }
+body.calm .lvl-svg .node.cur .halo { animation: none; }
 .board { background: rgba(20,16,40,.35); border-radius: 14px; padding: 12px 18px; font-size: 16px; }
 .board h3 { margin: 0 0 6px; font-size: 17px; }
 .board p { margin: 4px 0 8px; }
@@ -443,6 +485,11 @@ body.hc #caption { background: rgba(8, 6, 18, 0.97); border-color: rgba(244,236,
 .plan-tile.kbd-focus { outline: 3px solid var(--amber); outline-offset: 2px; }
 .plan-tile.on { border-color: var(--amber); box-shadow: 0 0 0 3px rgba(232,168,106,.35), 0 6px 18px rgba(10,10,30,.45); }
 .plan-tile.on::after { content: "✓"; position: absolute; top: 6px; right: 8px; font-weight: 900; font-size: 18px; color: #1b1b3a; background: var(--amber); border-radius: 50%; width: 26px; height: 26px; line-height: 26px; text-align: center; }
+.plan-row { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; background: rgba(244,236,221,0.07); border: 1px solid rgba(244,236,221,0.14); border-radius: 16px; padding: 12px 16px; }
+.plan-row b { font-size: 18px; min-width: 84px; }
+.plan-row select { font: 700 16px Nunito, sans-serif; color: var(--ink); background: var(--cream); border: 0; border-radius: 10px; padding: 10px 12px; min-width: 150px; }
+.plan-row select.kbd-focus { outline: 3px solid var(--amber); outline-offset: 2px; }
+.plan-row .plan-note { font-weight: 700; font-size: 14px; opacity: 0.7; }
 .plan-foot { display: flex; align-items: center; gap: 18px; width: min(94vw, 1180px); }
 .plan-foot .btn[disabled] { opacity: 0.45; }
 .plan-total { font-weight: 800; font-size: 18px; opacity: 0.9; }
@@ -701,3 +748,29 @@ table.log td { padding: 7px 4px; font-size: 13px; font-weight: 700; border-top: 
 .campeople .people-followed { border-color: var(--sage, #9fc08a); color: var(--sage, #9fc08a); }
 
 /* between rounds: the one-line explanation of the ring, the stars and the points */
+
+/* staff drawer: test shortcuts (?go= links that skip the login and the assessment) */
+#testshortcuts { font-size: 13px; margin: 6px 0; }
+#testshortcuts summary { cursor: pointer; font-weight: 700; opacity: 0.8; }
+#testlinks div { margin: 6px 0; line-height: 1.8; }
+#testlinks a { color: var(--amber); text-decoration: none; border-bottom: 1px dotted var(--amber); }
+#testlinks a:hover { border-bottom-style: solid; }
+#testlinks .hint { font-size: 11px; opacity: 0.7; line-height: 1.4; }
+#testlinks code { font-size: 11px; }
+
+/* the session plan as a line of 15-minute blocks plus the game tiles that add them (24 Oct 2026) */
+.plan-blocks { flex-direction: row; flex-wrap: wrap; align-items: stretch; gap: 10px; }
+.plan-seg { flex: 1 1 150px; max-width: 240px; min-width: 150px; background: rgba(232,168,106,0.16); border: 2px solid rgba(232,168,106,0.55); border-radius: 16px; padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 8px; }
+.plan-seg-head { display: flex; align-items: center; gap: 8px; }
+.plan-seg-head b { font-size: 17px; flex: 1; line-height: 1.2; }
+.plan-seg-min { font-weight: 800; font-size: 13px; opacity: 0.75; white-space: nowrap; }
+.plan-seg .plan-remove { padding: 2px 9px; font-size: 15px; line-height: 1.4; }
+.plan-seg select { font: 700 14px Nunito, sans-serif; color: var(--ink); background: var(--cream); border: 0; border-radius: 10px; padding: 7px 10px; width: 100%; }
+.plan-seg .plan-note { font-size: 13px; opacity: 0.7; }
+.plan-empty { width: 100%; text-align: center; opacity: 0.7; font-weight: 700; padding: 18px 0; border: 2px dashed rgba(244,236,221,0.25); border-radius: 16px; }
+.plan-picks { display: flex; flex-wrap: wrap; justify-content: center; gap: 14px; width: min(94vw, 1180px); margin-top: 6px; }
+.plan-picks .gcard { width: 150px; height: 190px; }
+.plan-picks .gcard.on { outline: 3px solid var(--amber); outline-offset: 2px; }
+.plan-picks .gcard.full { opacity: 0.45; }
+.plan-total b { font-size: 1.2em; }
+

@@ -79,28 +79,35 @@ export function drawBody(ctx, c, t, opts = {}) {
 // ring (or nothing, with opts.fallback === false, for callers that draw
 // their own cursor). Returns true if a hand skeleton was drawn.
 const FINGER_CHAINS = [[0, 1, 2, 3, 4], [0, 5, 6, 7, 8], [0, 9, 10, 11, 12], [0, 13, 14, 15, 16], [0, 17, 18, 19, 20]];
+// opts.tint (optional): one colour for this hand whatever its state, for a
+// game that tells its hands apart by colour (the Lantern, Oct 2026); closed
+// is then shown by a fuller web and a thicker stroke instead of the sage
+const hexA = (hex, a) => `rgba(${parseInt(hex.slice(1, 3), 16)},${parseInt(hex.slice(3, 5), 16)},${parseInt(hex.slice(5, 7), 16)},${a})`;
 export function drawHand(ctx, c, t, side, opts = {}) {
   const pts = t._handPts(side);
   const closed = t.handClosed(side);
   const k = opts.scale ?? 1;
+  const tint = opts.tint || null;
+  const stroke = tint || (closed ? "#9fc08a" : "#e8a86a");
+  const web = tint ? hexA(tint, closed ? 0.42 : 0.24) : (closed ? "rgba(159,192,138,0.3)" : "rgba(232,168,106,0.26)");
   if (pts) {
     const P = pts.map(p => {
       const px = t._videoToPx(p.x, p.y, c);
       return opts.map ? opts.map(px) : px;
     });
     const palmW = Math.hypot(P[5].x - P[17].x, P[5].y - P[17].y);
-    const lw = Math.max(3, palmW * 0.16);
+    const lw = Math.max(3, palmW * (tint && closed ? 0.2 : 0.16));
     ctx.save();
     ctx.lineCap = "round"; ctx.lineJoin = "round";
-    ctx.shadowColor = closed ? "rgba(159,192,138,0.8)" : "rgba(232,168,106,0.7)";
+    ctx.shadowColor = tint ? hexA(tint, 0.75) : closed ? "rgba(159,192,138,0.8)" : "rgba(232,168,106,0.7)";
     ctx.shadowBlur = 14;
     // palm web
-    ctx.fillStyle = closed ? "rgba(159,192,138,0.3)" : "rgba(232,168,106,0.26)";
+    ctx.fillStyle = web;
     ctx.beginPath();
     [0, 1, 5, 9, 13, 17].forEach((idx, i) => { const p = P[idx]; i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y); });
     ctx.closePath(); ctx.fill();
     // fingers
-    ctx.strokeStyle = closed ? "#9fc08a" : "#e8a86a";
+    ctx.strokeStyle = stroke;
     ctx.lineWidth = lw;
     for (const chain of FINGER_CHAINS) {
       ctx.beginPath();
@@ -121,9 +128,9 @@ export function drawHand(ctx, c, t, side, opts = {}) {
   if (!hp) return false;
   if (opts.map) hp = opts.map(hp);
   ctx.save();
-  ctx.shadowColor = closed ? "rgba(159,192,138,0.9)" : "rgba(232,168,106,0.8)";
+  ctx.shadowColor = tint ? hexA(tint, 0.85) : closed ? "rgba(159,192,138,0.9)" : "rgba(232,168,106,0.8)";
   ctx.shadowBlur = closed ? 26 : 18;
-  ctx.fillStyle = closed ? "#9fc08a" : "#e8a86a";
+  ctx.fillStyle = stroke;
   ctx.beginPath(); ctx.arc(hp.x, hp.y, 11 * k, 0, TAU); ctx.fill();
   ctx.shadowBlur = 0;
   ctx.strokeStyle = closed ? "#9fc08a" : "rgba(244,236,221,0.55)";
