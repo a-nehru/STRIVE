@@ -13,7 +13,7 @@
 import { Tracker } from "./tracker.js";
 
 const $ = id => document.getElementById(id);
-const WIN_AT = 7, PAD_H = 0.2, PAD_X = 0.04, BALL_R = 0.012;
+const WIN_AT = 7, PAD_H = 0.2, PAD_X = 0.04, BALL_R = 0.022;
 const SPEED0 = 0.42, SPEED_HIT = 1.045, SPEED_PER_S = 1.012, SPEED_MAX = 2.4, SPEED_POINT = 1.06;
 const ARM_LO = 25, ARM_HI = 155;        // degrees of arm elevation that span the lane to begin with
 const STUN = [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun1.l.google.com:19302" }];
