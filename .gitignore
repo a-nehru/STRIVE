@@ -33,3 +33,9 @@ tools/.venv-hands/
 tools/recordings/
 *.pt
 tools/tracking_config.json
+# the launcher: service logs and store backups (patient data)
+tools/logs/
+tools/backups/
+tools/smoke/
+# personal scratch notes
+NOTES.md

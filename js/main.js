@@ -1,12 +1,13 @@
-import { Tracker } from "./tracker.js?v=69";
+import { Tracker } from "./tracker.js?v=70";
 import { Assessment } from "./assessment.js";
 import { GAMES, STAR_RANKS, CANDLE_MAX, LUMEN_STAGES, WINDY_MAX, PAIR_MAX, windyLabel, windyStageOf, windySubOf } from "./games.js";
 import { Warmup } from "./warmup.js";
+import { probeLauncher, launcherInfo, backupNow, listBackups, restoreBackup, backupState, startAutoBackup } from "./backup.js";
 import { SONGS } from "./songs.js";
 import { initialParams, adjust, LIMITS } from "./dda.js";
 import { drawBody, drawVideoMirror } from "./engine.js";
 import { store } from "./storage.js";
-import { drawVillage, villageLine, villageCounts } from "./village.js";
+import { drawVillage, villageCounts } from "./village.js";
 import { audio } from "./audio.js";
 import { A11Y, applySettings, speakLine, showCaption, hushVoice, COACHES } from "./a11y.js";
 import { coachLine, phrasebookLines } from "./coachlines.js";
@@ -307,6 +308,7 @@ function applyLogin(name, arm) {
   $("in-email").value = c.email || "";
   $("in-remind-time").value = c.remindAt || "";
   $("in-remind-days").value = c.remindDays || "off";
+  backupNow("login");
 }
 
 function finishLogin(name, isNew, arm) {
@@ -611,6 +613,7 @@ const INTRO_CUES = [0.5, 10, 17.7, 33.2, 39.2, 48.2];
 const INTRO_GAP_MS = 350;        // breath between queued lines
 const INTRO_STALL_MS = 8000;     // a recording that never starts: read the script without it
 const INTRO_TAIL_MS = 800;       // after the last line, before what comes next
+const INTRO_HOLD_LEAD = 0.3;     // s before a section: the recording holds there while the voice is still behind
 // the written form is as scripted; the spoken form reads as words
 const introSpoken = s => s.replace(/STRIVE/g, "Strive").replace("1,000", "a thousand").replace("than 100", "than a hundred");
 
@@ -663,7 +666,16 @@ function playIntro(then = null) {
     // a recording that failed or never started: the voice carries the script
     const failed = !!v.error || (t === 0 && now - startedAt > INTRO_STALL_MS);
     const over = v.ended || failed;
-    while (next < INTRO_CUES.length && (over || t >= INTRO_CUES[next])) queue.push(next++);
+    // the voice sets the pace (26 Oct 2026, by request: the narrator fell
+    // behind the captions): just before the next section the recording
+    // holds its frame until the line before it has been said
+    const behind = speaking || queue.length > 0;
+    if (!over && next < INTRO_CUES.length && t >= INTRO_CUES[next] - INTRO_HOLD_LEAD && behind) {
+      if (!v.paused) v.pause();
+    } else {
+      if (v.paused && !over && t > 0) v.play().catch(() => {});
+      while (next < INTRO_CUES.length && (over || t >= INTRO_CUES[next])) queue.push(next++);
+    }
     pump();
     if (over && next >= INTRO_CUES.length && !queue.length && !speaking) { setTimeout(finish, INTRO_TAIL_MS); return; }
     raf = requestAnimationFrame(tick);
@@ -978,8 +990,8 @@ const CARD_ART = {
 let villageAnim = 0;
 function renderVillage() {
   const v = store.getVillage(state.patient);
-  const today = dayKey(new Date());
-  $("village-line").textContent = villageLine(v, v.seen, today);
+  // (the line under the street, "Your street is dark tonight...", went
+  // 26 Oct 2026, by request: it read as an instruction before any game)
   const c = villageCounts(v);
   store.markVillageSeen(state.patient, { villagers: c.villagers, clouds: c.clouds, days: Object.keys(v.days || {}) });
   const cv = $("village-canvas");
@@ -1088,6 +1100,15 @@ function todayStats(name = state.patient) {
   const goal = plan?.blocks?.length ? planMinutes(plan.blocks) : DAILY_GOAL_MIN;
   return { minutes: Math.round(pt.ms / 60000), seconds: Math.round(pt.ms / 1000), rounds: rounds.length, assessments: pt.assessments || 0, stars, perGame, goal, planned: !!plan?.blocks?.length };
 }
+// the hub's strip (26 Oct 2026, by request): no other text, just the
+// minutes against the goal, and a flag at the end of the bar saying the
+// goal is there
+const TODAY_FLAG = `<svg class="today-flag" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 22V3" stroke="#f4ecdd" stroke-width="2.2" stroke-linecap="round"/><path d="M6 4h12l-3 4 3 4H6z" fill="#e8a86a"/></svg>`;
+function todayHubHTML(t) {
+  const f = Math.min(1, t.goal ? t.minutes / t.goal : 0);
+  return `<div class="today-line"><b>Today:</b> ${t.minutes} of ${t.goal} min</div>`
+    + `<div class="today-track"><div class="today-bar"><div style="width:${Math.round(f * 100)}%"></div></div>${TODAY_FLAG}</div>`;
+}
 function todayHTML(t, compact = false) {
   const gameName = id => GAMES.find(g => g.id === id)?.name || id;
   const games = Object.entries(t.perGame).map(([id, n]) => `${gameName(id)} ${n}`).join(" · ");
@@ -1100,7 +1121,7 @@ function renderToday() {
   const el = $("today-strip");
   if (!el || !state.patient || state.patient === "guest") { el?.classList.add("hidden"); return; }
   el.classList.remove("hidden");
-  el.innerHTML = todayHTML(todayStats());
+  el.innerHTML = todayHubHTML(todayStats());
 }
 let planDraft = [], planReturn = null;
 // the levels a block can start a game at (23 Oct 2026, by request): the
@@ -1176,21 +1197,23 @@ function drawPlan() {
     }
     line.appendChild(seg);
   });
-  if (!planDraft.length) {
-    const empty = document.createElement("div"); empty.className = "plan-empty";
-    empty.textContent = "Nothing yet. Click a game below to add 15 minutes of it.";
-    line.appendChild(empty);
+  // the rest of the bar as empty slots, so there is something plainly to
+  // fill (26 Oct 2026, by request: "add 15 min" on the tiles was unclear)
+  for (let i = planDraft.length; i < PLAN_MAX_BLOCKS; i++) {
+    const slot = document.createElement("div"); slot.className = "plan-seg plan-slot";
+    slot.innerHTML = `<span>${i + 1}</span><small>${PLAN_BLOCK_MIN} min</small>`;
+    line.appendChild(slot);
   }
   const total = planMinutes(planDraft);
   $("plan-total").innerHTML = planDraft.length
     ? `<b>${total} minutes</b> · ${planDraft.length} block${planDraft.length === 1 ? "" : "s"} of ${PLAN_BLOCK_MIN}${planDraft.length >= PLAN_MAX_BLOCKS ? " · that is the most for one session" : ""}`
-    : `Each game adds ${PLAN_BLOCK_MIN} minutes`;
+    : "";
   // THE GAME TILES: click one to add a block of it (again for another 15 minutes)
   const picks = $("plan-picks");
   picks.innerHTML = "";
   for (const c of choices) {
     const n = planDraft.filter(b => planKey(b) === c.key).length;
-    const card = pongCard(c.name, n ? `${n * PLAN_BLOCK_MIN} min in the plan · add ${PLAN_BLOCK_MIN} more` : `Add ${PLAN_BLOCK_MIN} minutes`, () => {
+    const card = pongCard(c.name, n ? `(${PLAN_BLOCK_MIN} min) · ${n} in the plan` : `(${PLAN_BLOCK_MIN} min)`, () => {
       if (planDraft.length >= PLAN_MAX_BLOCKS) { speak(`${PLAN_MAX_BLOCKS * PLAN_BLOCK_MIN} minutes is the most for one session.`); return; }
       planDraft.push({ game: c.game, axis: c.axis, level: null, minutes: PLAN_BLOCK_MIN });
       drawPlan();
@@ -1648,7 +1671,7 @@ function lanternBoardHTML(prog) {
   for (const r of keep) {
     if (r.rank - last > 1) html += `<tr><td colspan="3" class="dots">⋯</td></tr>`;
     last = r.rank;
-    html += `<tr class="${r.me ? "me" : ""}"><td>${r.rank === 1 ? "👑" : r.rank}</td><td class="nm">${r.me ? "⭐ " : ""}${r.name}</td><td>${r.score.toLocaleString()}</td></tr>`;
+    html += `<tr class="${r.me ? "me" : ""}"><td>${r.rank}</td><td class="nm">${r.me ? "<b>" + r.name + "</b>" : r.name}</td><td>${r.score.toLocaleString()}</td></tr>`;
   }
   const next = rows[rank - 2];
   const chase = !mine ? "Light a level today to take your place."
@@ -1706,11 +1729,20 @@ function startAssessment(opts = {}) {
     // device-level A/B switch (staff drawer): the drawn figure with two
     // circles and a lift, or the instruction video
     style: localStorage.getItem("strive-assess-style") || "video",
+    // moved to a new spot partway: the shape so far is about the old spot,
+    // so the measurement starts again from the beginning (26 Oct 2026)
+    onMoved: () => {
+      audio.stopBgm();
+      $("prompt").innerHTML = "You moved to a new spot<small>Let's start again from the beginning</small>";
+      speak("You moved to a new spot, so let's start the measurement again from the beginning.");
+      setTimeout(() => { if (state.current === a) startAssessment({ ...opts, override: true, force: true }); }, 3500);
+    },
   });
   state.current = a;
   const t0 = performance.now();
   a.start(profile => {
     profile.params = initialParams(profile);
+    setTimeout(() => backupNow("assessment", true), 2000);
     store.saveProfile(state.patient, profile.arm, profile);
     store.logPlaytime(state.patient, performance.now() - t0, "assessment");
     snapshot(state.patient);
@@ -1725,10 +1757,11 @@ function startAssessment(opts = {}) {
       requestAnimationFrame(romLiveLoop);   // once the layout has settled
       focusHint($("btn-rom-done"));
     };
-    // the arm's first measurement: the therapist chooses the session plan
-    // (15-minute blocks, a game each) before the result and the hub
-    if (firstEver) renderSchedule(showResult);
-    else showResult();
+    // the result straight away (26 Oct 2026, by request: it used to wait
+    // behind the plan); on the arm's first measurement the therapist's
+    // session plan follows it, on Continue
+    state.romThen = firstEver ? "plan" : null;
+    showResult();
   });
 }
 
@@ -1779,9 +1812,9 @@ function romLiveLoop() {
   const prev = (store.getPatient(state.patient).history[arm] || []).slice(-1)[0] || null;
   const TAU = Math.PI * 2;
   const cen = prof.center || { x: 0, y: 0 };
-  // the frame: px per shoulder width so the biggest thing drawn (the full
-  // circle about the shoulder, or the widest reach) sits inside the canvas
-  const reach = Math.max(prof.armLenSW ? prof.armLenSW + 0.5 : 0, ...prof.envelope, ...(prev?.envelope || []), 1);
+  // the frame: px per shoulder width so the widest reach, today's or last
+  // time's, sits inside the canvas with a margin
+  const reach = Math.max(...prof.envelope, ...(prev?.envelope || []), 1) * 1.15;
   const k = Math.min(W, H) * 0.46 / reach;
   const cx = W / 2, cy = H * 0.52;
   const P = rel => ({ x: cx + (rel.x - cen.x) * k, y: cy - (rel.y - cen.y) * k });
@@ -1799,19 +1832,9 @@ function romLiveLoop() {
     ctx.closePath(); style();
   };
   ctx.save();
-  // the full circle of the arm's own length about the assessed shoulder:
-  // what the big number is a percentage of
-  if (prof.armLenSW) {
-    const sr = { x: cen.x + (arm === "right" ? 0.5 : -0.5), y: cen.y };
-    ctx.beginPath();
-    for (let i = 0; i <= 48; i++) {
-      const th = i / 48 * TAU;
-      const q = P({ x: sr.x + Math.cos(th) * prof.armLenSW, y: sr.y + Math.sin(th) * prof.armLenSW });
-      i === 0 ? ctx.moveTo(q.x, q.y) : ctx.lineTo(q.x, q.y);
-    }
-    ctx.strokeStyle = "rgba(244,236,221,0.5)"; ctx.lineWidth = 2; ctx.setLineDash([3, 8]); ctx.stroke();
-    ctx.setLineDash([]);
-  }
+  // (the dotted "ideal" circle of the arm's length went 26 Oct 2026, by
+  // request: nobody moves in a perfect circle and staying inside one is not
+  // the goal)
   if (prev?.envelope) shape(prev.envelope, prev.envPts, () => {
     ctx.strokeStyle = "rgba(244,236,221,0.45)"; ctx.lineWidth = 2; ctx.setLineDash([8, 8]); ctx.stroke(); ctx.setLineDash([]);
   });
@@ -1866,7 +1889,7 @@ function renderRomCompare(arms) {
   const hist = p.history[arm] || [];
   const prev = hist.slice(-1)[0] || null;
   $("rom-sub").textContent = `${arm === "left" ? "Left" : "Right"} arm${prev ? ` · last time ${fmtDay(prev.date)}` : " · your first measurement"}`;
-  if (!cur) { $("rom-big").innerHTML = ""; $("rom-tiles").innerHTML = ""; $("rom-plot").innerHTML = ""; return; }
+  if (!cur) { $("rom-big").innerHTML = ""; $("rom-plot").innerHTML = ""; return; }
 
   const pct = v => v == null ? null : Math.round(v * 100);
   const nowPct = pct(cur.coverage) ?? 0, wasPct = pct(prev?.coverage);
@@ -1875,43 +1898,13 @@ function renderRomCompare(arms) {
     : Math.abs(dPct) < 3 ? `<span class="chip sm">about the same as last time</span>`
     : dPct > 0 ? `<span class="chip up">▲ ${dPct} points more than last time</span>`
     : `<span class="chip dn">▼ ${-dPct} points less than last time</span>`;
-  const word = nowPct >= 80 ? "Nearly the whole circle. Wonderful."
-    : nowPct >= 55 ? "More than half of the circle. Good going."
-    : nowPct >= 30 ? "About a third of the circle. Every session can grow it."
-    : "A small part of the circle for now. We will build it up together.";
   $("rom-big").innerHTML = `
     <div class="pct">${nowPct}%</div>
-    <div class="of">of the full circle your arm could reach</div>
+    <div class="of">of the space your arm could reach</div>
     ${chip}`;
 
-  // three tiles, one sentence each
-  const tile = (lab, val, unit, was, now, fmt, say) => {
-    let d = "";
-    if (was != null && now != null) {
-      const diff = now - was;
-      d = Math.abs(diff) < 1e-9 ? `<span class="dlt sm">same as last time</span>`
-        : `<span class="dlt ${diff > 0 ? "up" : "dn"}">${diff > 0 ? "▲" : "▼"} ${fmt(Math.abs(diff))} vs last time</span>`;
-    } else d = `<span class="dlt sm">baseline</span>`;
-    return `<div class="rom-tile"><div class="lab">${lab}</div>
-      <div class="val">${now == null ? "–" : fmt(now)}${unit ? ` <small>${unit}</small>` : ""}</div>
-      ${d}</div>`;
-  };
-  const tiles = [];
-  const liftNow = cur.lift?.peakDeg ?? cur.arcMaxDeg, liftWas = prev?.lift?.peakDeg ?? prev?.arcMaxDeg;
-  if (liftNow != null) tiles.push(tile("How high the arm lifted", null, "of 180°", liftWas, liftNow,
-    v => `${Math.round(v)}°`, "Straight up is 180 degrees. Out to the side is 90."));
-  if (cur.extremes?.length) {
-    const n = cur.extremes.filter(e => e.reached).length, w = prev?.extremes ? prev.extremes.filter(e => e.reached).length : null;
-    tiles.push(tile("Targets reached", null, `of ${cur.extremes.length}`, w, n, v => `${Math.round(v)}`,
-      "Five spots inside your own shape, each held for a moment."));
-  }
-  if (cur.envelope?.length) {
-    const n = Math.max(...cur.envelope), w = prev?.envelope ? Math.max(...prev.envelope) : null;
-    const fmt = v => cm ? `${Math.round(v * cm)} cm` : `${v.toFixed(2)} SW`;
-    tiles.push(tile("Longest reach", null, "", w, n, fmt,
-      cm ? "Measured from the middle of your shoulders." : "In shoulder widths, from the middle of your shoulders."));
-  }
-  $("rom-tiles").innerHTML = tiles.join("");
+  // (the three tiles, lift / targets / longest reach, went 26 Oct 2026, by
+  // request: the graph stands for itself; they stay on the therapist profile)
 
   // the plot: coverage per assessment day, 0..100%, one series, amber
   const pts = [...hist.map(h => ({ d: h.date, v: pct(h.coverage) })), { d: cur.date, v: nowPct }]
@@ -2046,6 +2039,7 @@ function duoProfile() {
 }
 
 function onRoundEnd(round) {
+  setTimeout(() => backupNow("round"), 1500);     // after the record is written
   audio.stopBgm();
   round.round = state.roundNumber;
   store.logPlaytime(state.patient, (round.seconds || 0) * 1000, "round");
@@ -2754,6 +2748,7 @@ function renderPeople(t) {
 }
 $("btn-rom-done").addEventListener("click", () => {
   $("btn-rom-done").classList.remove("kbd-focus");
+  if (state.romThen === "plan") { state.romThen = null; renderSchedule(() => { renderSelect(); show("screen-select"); }); return; }
   renderSelect();
   show("screen-select");
 });
@@ -3038,13 +3033,40 @@ if (previewOf === "pongscore") {
     extremes: Array.from({ length: 5 }, (_, i) => ({ reached: i < reached, graspOk: i < 2 })),
   });
   const days = d => new Date(Date.now() - d * 864e5).toISOString();
-  for (const [d, k, cov, peak, r] of [[21, 0.55, 0.22, 95, 2], [14, 0.7, 0.31, 108, 3], [7, 0.8, 0.38, 121, 3], [0, 0.95, 0.47, 132, 4]])
-    store.saveProfile("preview", "right", mk(days(d), k, cov, peak, r));
-  renderRomCompare(["right"]); show("screen-romcompare"); romLiveLoop();
-  try {
-    const raw = JSON.parse(localStorage.getItem("rehabsuite-v1"));
-    if (raw?.patients?.preview) { delete raw.patients.preview; localStorage.setItem("rehabsuite-v1", JSON.stringify(raw)); }
-  } catch {}
+  // &n=10: that many assessments, two or three days apart, with the
+  // ups and downs a real patient has (what the graph looks like later on)
+  const n = Math.max(1, Math.min(24, +new URLSearchParams(location.search).get("n") || 4));
+  const wob = i => [0, 0.03, -0.02, 0.04, -0.03, 0.02, 0.01, -0.04, 0.03, 0][i % 10];
+  for (let i = 0; i < n; i++) {
+    const f = n === 1 ? 1 : i / (n - 1);
+    store.saveProfile("preview", "right", mk(days(Math.round((n - 1 - i) * 2.5)), 0.55 + 0.4 * f + wob(i),
+      Math.max(0.05, 0.22 + 0.25 * f + wob(i)), Math.round(95 + 37 * f), Math.min(5, 2 + Math.round(2 * f))));
+  }
+  renderRomCompare(["right"]); show("screen-romcompare"); romLiveLoop(); requestAnimationFrame(romLiveLoop);
+  // the sample patient leaves storage with the page (romLiveLoop reads it
+  // every frame, so it cannot go straight after the first draw)
+  addEventListener("pagehide", () => {
+    try {
+      const raw = JSON.parse(localStorage.getItem("rehabsuite-v1"));
+      if (raw?.patients?.preview) { delete raw.patients.preview; localStorage.setItem("rehabsuite-v1", JSON.stringify(raw)); }
+    } catch {}
+  });
+} else if (previewOf === "plan" || previewOf === "hub") {
+  // ?preview=plan / ?preview=hub (26 Oct 2026): those two screens with no
+  // camera, for a screenshot; a throwaway "preview" participant with the
+  // test profile, gone from storage with the page
+  state.patient = "preview"; state.side = "right";
+  store.saveProfile("preview", "right", testProfile("right"));
+  store.setSchedule("preview", [{ game: "windy", level: null, minutes: 15 }, { game: "pong", axis: "fe", level: null, minutes: 15 },
+    { game: "candles", level: null, minutes: 15 }, { game: "pairs", level: null, minutes: 15 }].slice(0, previewOf === "plan" ? 2 : 4));
+  if (previewOf === "plan") renderSchedule(null);
+  else { renderSelect(); show("screen-select"); }
+  addEventListener("pagehide", () => {
+    try {
+      const raw = JSON.parse(localStorage.getItem("rehabsuite-v1"));
+      if (raw?.patients?.preview) { delete raw.patients.preview; localStorage.setItem("rehabsuite-v1", JSON.stringify(raw)); }
+    } catch {}
+  });
 } else if (new URLSearchParams(location.search).get("go")) {
   // ?go=<target>: straight to one game or screen (see testJump)
   boot().then(() => { state.tracker?.setSqueezeEase?.(A11Y.squeezeEase); watchWelcome(); testJump(new URLSearchParams(location.search)); });
@@ -3070,7 +3092,7 @@ if (previewOf === "pongscore") {
 const TEST_TARGETS = {
   select: "the hub", welcome: "the welcome screen", warmup: "the warm-up", assess: "the assessment",
   rom: "the after-assessment screen", schedule: "the session plan", levels: "a level map (&game=)",
-  duo: "Pong two-player setup", profile: "the therapist profile", collections: "the collections",
+  duo: "Pong two-player setup", profile: "the therapist profile", collections: "the collections", board: "this week's board",
 };
 function testProfile(arm) {
   const envelope = Array.from({ length: 32 }, (_, i) =>
@@ -3129,6 +3151,7 @@ function testJump(q) {
     case "duo": state.pongMode = "duo"; state.pongAxis = "fe"; $("in-pong").value = "duo"; renderDuoSetup(); break;
     case "profile": renderProfile(); show("screen-profile"); break;
     case "collections": renderCollections(); show("screen-collections"); break;
+    case "board": renderLeaderboard(); show("screen-select"); break;
     default: toHub(); speak(`No test target called ${go}.`);
   }
 }
@@ -3149,3 +3172,82 @@ function renderTestLinks() {
 }
 renderTestLinks();
 $("in-arm").addEventListener("change", renderTestLinks);
+
+/* ================= the launcher: services and backups (Oct 2026) ================= */
+// tools/launcher.py serves the site and takes backups of the store; the staff
+// drawer shows what is running and lets staff back up now or restore a copy
+async function renderBackupUI() {
+  const info = launcherInfo();
+  const el = $("launcherstate");
+  if (!info) { el.textContent = "Services: start the game with start_strive.bat to see them"; el.className = ""; }
+  else {
+    const parts = Object.values(info.services || {}).map(x => `${x.name.replace(" relay", "").replace(" bridge", "")} ${x.up ? "up" : "off"}`);
+    el.textContent = `Services: ${parts.join(" · ")}${info.zed_present ? " · ZED plugged in" : ""}`;
+    el.className = "ok";
+  }
+  $("backupstate").textContent = backupState();
+  const sel = $("sel-backup");
+  sel.innerHTML = "";
+  if (info) {
+    const list = await listBackups();
+    for (const b of list) sel.add(new Option(`${b.at.replace("T", " ")} · ${Math.round(b.bytes / 1024)} KB`, b.file));
+    if (!list.length) sel.add(new Option("none yet", ""));
+  } else sel.add(new Option("launcher not running", ""));
+  $("btn-backup-now").disabled = !info; $("btn-restore").disabled = !info;
+}
+$("btn-backup-now").addEventListener("click", async () => {
+  const r = await backupNow("manual", true);
+  $("backupstate").textContent = r?.ok ? (r.unchanged ? "Backups: nothing changed since the last one" : `Backups: saved ${r.file}`) : "Backups: could not save (is the launcher running?)";
+  await probeLauncher(); renderBackupUI();
+});
+let restoreArmed = null;
+$("btn-restore").addEventListener("click", async () => {
+  const file = $("sel-backup").value;
+  if (!file) return;
+  if (restoreArmed !== file) {
+    restoreArmed = file;
+    $("btn-restore").textContent = "Click again to replace ALL data with this backup";
+    setTimeout(() => { restoreArmed = null; $("btn-restore").textContent = "Restore…"; }, 8000);
+    return;
+  }
+  try { await backupNow("before-restore", true); await restoreBackup(file); }
+  catch (e) { $("backupstate").textContent = "Restore failed: " + e.message; restoreArmed = null; $("btn-restore").textContent = "Restore…"; }
+});
+probeLauncher().then(renderBackupUI);
+startAutoBackup();
+
+/* ================= this week's board (Oct 2026, by request: a leaderboard, with practice names for now) ================= */
+// Ten fictional players whose stars for the week are anchored to the
+// patient's own count on the first day they played this week, so a week of
+// play climbs the board; it never compares one patient with another.
+const BOARD_NAMES = [["Harbor Jo", 2.4], ["Mira of the Mill", 2.0], ["Old Tom", 1.7], ["Ana Lightkeeper", 1.45], ["Sam the Rower", 1.25],
+  ["Lena Fisher", 1.08], ["Pip's cousin", 0.92], ["Benny the Baker", 0.78], ["Rosa Bell", 0.62], ["Wren", 0.48]];
+function weekKey(d = new Date()) { const x = new Date(d); x.setDate(x.getDate() - (x.getDay() + 6) % 7); return dayKey(x); }   // the local Monday
+function weekStars(name) {
+  const p = store.getPatient(name), since = weekKey();
+  return (p.sessions || []).filter(r => (r.day || (r.date || "").slice(0, 10)) >= since).reduce((a, r) => a + (r.stars || 0), 0);
+}
+function renderLeaderboard() {
+  const wrap = $("cards");
+  wrap.innerHTML = "";
+  document.querySelector("#screen-select h1").textContent = "This week's board";
+  const mine = weekStars(state.patient);
+  let anchor = store.getProgress(state.patient, "board") || {};
+  if (anchor.week !== weekKey()) { anchor = { week: weekKey(), ref: Math.max(12, mine || 12) }; store.setProgress(state.patient, "board", anchor); }
+  const seed = i => Math.abs((Math.sin(i * 12.9898 + anchor.ref) * 43758.5453) % 1);
+  const rows = BOARD_NAMES.map(([name, f], i) => ({ name, score: Math.round(anchor.ref * f * (0.94 + 0.12 * seed(i))) }));
+  rows.push({ name: state.patient === "guest" ? "You" : state.patient, score: mine, me: true });
+  rows.sort((a, b) => b.score - a.score);
+  rows.forEach((r, i) => { r.rank = i + 1; });
+  const me = rows.find(r => r.me), next = rows[me.rank - 2];
+  const chase = !mine ? "Play a round this week to take your place." : next ? `${next.score - mine + 1} more star${next.score - mine + 1 === 1 ? "" : "s"} to pass ${next.name}.` : "Top of the board this week!";
+  const html = rows.map(r => `<tr class="${r.me ? "me" : ""}"><td>${r.rank}</td><td class="nm">${r.me ? "<b>" + r.name + "</b>" : r.name}</td><td>${r.score}</td></tr>`).join("");
+  wrap.innerHTML = `<div class="duo-setup"><div class="board"><h3>Stars this week</h3>
+    <p>You are <b>#${me.rank}</b> of ${rows.length} with <b>${mine}</b> star${mine === 1 ? "" : "s"}. ${chase}</p>
+    <table><tr><th>#</th><th class="nm">Player</th><th>Stars</th></tr>${html}</table>
+    <p class="hint">A star is a minute of play. The other players are practice names for now.</p></div></div>`;
+  const back = pongCard("↩ Back", "All games", renderSelect, CARD_ART.pong);
+  wrap.appendChild(back);
+  focusHint(back);
+}
+$("btn-select-board").addEventListener("click", renderLeaderboard);

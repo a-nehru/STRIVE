@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>STRIVE</title>
-<link rel="stylesheet" href="css/style.css?v=82">
+<link rel="stylesheet" href="css/style.css?v=84">
 </head>
 <body>
 
@@ -63,7 +63,7 @@
          mockup): three styles, a sample line each, arrow keys and Enter -->
     <div id="login-coach" class="hidden">
       <h1 class="login-head">Choose your coach</h1>
-      <p class="login-sub">Click a coach to hear them. You can change any time.</p>
+      <p class="login-sub">All three coach the same games. They only differ in how they talk to you. Click one to hear them. You can change any time.</p>
       <div class="coaches" role="radiogroup" aria-label="Coaches">
         <button class="coach coach-rook" type="button" role="radio" aria-checked="false" data-coach="rook">
           <span class="tick" aria-hidden="true"></span>
@@ -82,6 +82,7 @@
           <span class="txt">
             <span class="name">Rook</span>
             <span class="style">Fun and upbeat</span>
+            <span class="what">Cheers every move and keeps it light, with jokes and a laugh.</span>
             <span class="line">"Smooth flying, co-pilot! Two more!"</span>
           </span>
           <span class="coach-hear" role="button" tabindex="-1">Hear it</span>
@@ -104,6 +105,7 @@
           <span class="txt">
             <span class="name">Lumi</span>
             <span class="style">Calm and gentle</span>
+            <span class="what">Quiet, kind words. Never hurries you. Good on a tired day.</span>
             <span class="line">"Nice and slow. Take your time."</span>
           </span>
           <span class="coach-hear" role="button" tabindex="-1">Hear it</span>
@@ -126,6 +128,7 @@
           <span class="txt">
             <span class="name">Maple</span>
             <span class="style">Pushes you to do more</span>
+            <span class="what">Tells you how you did against last time, and asks for a little more.</span>
             <span class="line">"Up six from last week. Now beat it."</span>
           </span>
           <span class="coach-hear" role="button" tabindex="-1">Hear it</span>
@@ -189,12 +192,12 @@
   <div class="today-strip hidden" id="today-strip"></div>
   <div class="village" id="village">
     <canvas id="village-canvas"></canvas>
-    <div class="village-line" id="village-line"></div>
   </div>
   <div class="plan-strip hidden" id="plan-strip"></div>
   <div class="cards" id="cards"></div>
   <div class="menu-actions">
     <button class="btn ghost-light" id="btn-select-help">Ask for help</button>
+    <button class="btn ghost-light" id="btn-select-board">This week's board</button>
     <button class="btn ghost-light" id="btn-select-mail">Email my progress</button>
   </div>
 </div>
@@ -248,7 +251,7 @@
      blocks, a game each, after the first assessment and from the drawer -->
 <div id="screen-schedule" class="screen hidden">
   <h1>Today's plan</h1>
-  <div class="select-sub">Click a game to add 15 minutes of it. Click it again for another 15. Drop a block with ✕. Skip to choose games freely.</div>
+  <div class="select-sub">Fill the bar with games. Click a game below to put it in the next slot. Each slot is 15 minutes. ✕ takes one out.</div>
   <div class="plan-blocks" id="plan-blocks"></div>
   <div class="plan-foot"><div class="plan-total" id="plan-total"></div></div>
   <div class="plan-picks" id="plan-picks"></div>
@@ -265,11 +268,10 @@
   <div class="rom-hero">
     <div class="rom-live-wrap">
       <canvas id="rom-live"></canvas>
-      <div class="rom-live-legend">Today · dashed: last time · dotted: the full circle</div>
+      <div class="rom-live-legend">Today · dashed: last time</div>
     </div>
     <div class="rom-big" id="rom-big"></div>
   </div>
-  <div class="rom-tiles" id="rom-tiles"></div>
   <div class="rom-plot-wrap">
     <div id="rom-plot"></div>
   </div>
@@ -464,6 +466,11 @@
   </label>
   <div id="coachstate">Coach lines: checking</div>
   <div id="voicestate">Voice: checking</div>
+  <div id="launcherstate">Services: checking</div>
+  <div id="backupstate">Backups: checking</div>
+  <div class="row"><button class="btn ghost-light" id="btn-backup-now">Back up now</button></div>
+  <label>Restore a backup <select id="sel-backup"></select></label>
+  <div class="row"><button class="btn ghost-light" id="btn-restore">Restore…</button></div>
   <details id="testshortcuts">
     <summary>Test shortcuts (skip the login and the assessment)</summary>
     <div id="testlinks"></div>
@@ -499,6 +506,6 @@
 <div id="loading" class="hidden"><div class="spinner"></div><div id="loading-text">Waking up the camera&hellip;</div>
   <div id="loading-error" class="hidden"><button class="btn big" id="btn-loading-retry">Try again</button><button class="btn ghost-light" id="btn-loading-continue">Continue without the camera</button></div></div>
 
-<script type="module" src="js/main.js?v=82"></script>
+<script type="module" src="js/main.js?v=84"></script>
 </body>
 </html>

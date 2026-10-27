@@ -66,6 +66,7 @@ export class Warmup {
   start(onDone) {
     this.onDone = onDone;
     this.active = true;
+    hushVoice();                     // her voice leads: nothing left over from the screen before
     this.startT = performance.now();
     this.step = -1;
     this.sparks = [];
@@ -180,7 +181,7 @@ export class Warmup {
         this.cheered = true;
         const line = this.opts.endLine || "Lovely. Nice and loose. Let's play.";
         this._prompt("Lovely!", line.replace(/^Lovely\. /, ""));
-        speakLine(line, 0.9, false);
+        // nothing spoken: the recording ends with its own voice
         audio.fanfare();
         for (let k = 0; k < 5; k++) this._shower(W * (0.2 + 0.15 * k), H * 0.3, 18);
       }

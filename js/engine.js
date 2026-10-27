@@ -4,7 +4,7 @@
 
 import { Coach } from "./coach.js";
 import { audio } from "./audio.js";
-import { A11Y, speakLine, hushVoice } from "./a11y.js";
+import { A11Y, speakQueued, voiceBusy, hushVoice } from "./a11y.js";
 import { coachLine, coachSpeak } from "./coachlines.js";
 
 export const TAU = Math.PI * 2;
@@ -238,8 +238,9 @@ export class GameBase {
   }
 
   // caption defaults to false in-game: say() shows #cue and tellStory shows
-  // #prompt, so the text is already on screen — no double display
-  _speak(text, caption = false) { speakLine(text, 0.9, caption); }
+  // #prompt, so the text is already on screen — no double display.
+  // A game's line waits for the one being said rather than cutting it off.
+  _speak(text, caption = false) { speakQueued(text, 0.9, caption); }
 
   // story intro (round 1): shows + speaks, and delays play by its length
   tellStory(story) {
@@ -429,9 +430,11 @@ export class GameBase {
   clearDwell(key) { if (this._dwells) delete this._dwells[key]; }
 
   // ---- therapist voice: short spoken guidance driven by performance ----
-  say(text) {
+  // Optional feedback is dropped while another line is being said;
+  // `important` (a point announced, the end of a game) waits its turn instead.
+  say(text, important = false) {
     const now = performance.now();
-    if (now - this.fb.lastSpeak < 4500) return;
+    if (!important && (now - this.fb.lastSpeak < 4500 || voiceBusy())) return;
     this.fb.lastSpeak = now;
     this._speak(text);
     const el = document.getElementById("cue");

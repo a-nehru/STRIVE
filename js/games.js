@@ -1584,7 +1584,7 @@ export class ArcPong extends GameBase {
   // spoken NOW, past the therapist voice's rate limit: a point announcement
   // that gets swallowed because the star said something 3 s ago is worse
   // than none, the patient would be left reading the board
-  _announce(text) { this.fb.lastSpeak = 0; this.say(text); }
+  _announce(text) { this.say(text, true); }
 
   // A point is decided: tally it, then the CEREMONY. The point is announced
   // out loud with the scoreline (patient's score first, always), drawn big
@@ -5388,7 +5388,6 @@ export class Candles extends GameBase {
         c.tEnter = this.playT;
         const straight = c.leave ? lumenDist(h, c.leave) : 0;
         c.eff = c.path > 0 ? Math.min(1, straight / c.path) : null;
-        if (hold > 0 && Math.random() < 0.35) this.say("Steady. Hold it there.");
       }
       if (!this.inside) { c.lastEnter = this.playT; this.inside = true; }
       if (hold <= 0) { this._light(now); return; }

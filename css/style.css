@@ -80,6 +80,9 @@ button { font-family: inherit; cursor: pointer; }
 .today-line { font-weight: 700; font-size: 17px; }
 .today-bar { height: 8px; border-radius: 4px; background: rgba(244,236,221,0.14); margin: 8px 0 6px; overflow: hidden; }
 .today-bar div { height: 100%; background: var(--amber); border-radius: 4px; transition: width .4s; }
+.today-track { display: flex; align-items: center; gap: 6px; }
+.today-track .today-bar { flex: 1; margin: 8px 0; }
+.today-flag { width: 26px; height: 26px; flex: none; margin-top: -10px; }
 .today-goal { font-weight: 700; font-size: 14px; opacity: 0.7; }
 .rc-today { margin: 6px 0 4px; padding: 10px 14px; border-radius: 12px; background: rgba(27,27,58,0.06); text-align: left; }
 .rc-today .today-line { font-size: 16px; }
@@ -153,6 +156,7 @@ button { font-family: inherit; cursor: pointer; }
 .coach .txt { display: flex; flex-direction: column; align-items: center; gap: 4px; }
 .coach .name { font-weight: 800; font-size: clamp(22px, 2.6vw, 34px); }
 .coach .style { font-weight: 700; font-size: clamp(15px, 1.5vw, 20px); color: var(--c); }
+.coach .what { font-weight: 700; font-size: clamp(15px, 1.4vw, 19px); color: var(--cream); line-height: 1.35; }
 .coach .line { font-weight: 600; font-size: clamp(14px, 1.3vw, 18px); color: rgba(244,236,221,0.75); line-height: 1.35; min-height: 2.7em; }
 .coach .tick { position: absolute; top: 12px; right: 12px; width: 36px; height: 36px; border-radius: 50%; background: var(--c);
   opacity: 0; transform: scale(.6); transition: all .15s ease; }
@@ -436,7 +440,7 @@ body.hc #caption { background: rgba(8, 6, 18, 0.97); border-color: rgba(244,236,
 #btn-quit:hover { background: rgba(244,236,221,0.28); }
 /* patient-facing help: one big, always-there button, never in the way of
    the prompt (top centre) or the quit cross (top right) */
-#btn-help { position: fixed; left: 16px; top: 16px; z-index: 60; padding: 12px 22px; border-radius: 14px;
+#btn-help { position: fixed; left: 76px; top: 16px;   /* beside the staff gear (16px + 46px + a gap), never over it */ z-index: 60; padding: 12px 22px; border-radius: 14px;
   border: 2px solid rgba(232,168,106,0.7); background: rgba(27,27,58,0.75); color: #f4ecdd;
   font: 800 18px Nunito, sans-serif; cursor: pointer; }
 #btn-help:hover { background: rgba(232,168,106,0.35); }
@@ -709,7 +713,7 @@ table.log td { padding: 7px 4px; font-size: 13px; font-weight: 700; border-top: 
 .rom-tile .dlt.dn { color: #ffb0a0; background: rgba(181,80,58,.18); }
 .rom-tile .dlt.sm { color: rgba(244,236,221,.7); background: rgba(244,236,221,.1); }
 .rom-tile .say { font-size: 15px; line-height: 1.4; opacity: .75; margin-top: 8px; }
-.rom-plot-wrap { max-width: 1100px; margin: 0 auto 26px; background: rgba(244,236,221,.05); border: 1px solid rgba(244,236,221,.12); border-radius: 18px; padding: 16px 18px 10px; }
+.rom-plot-wrap { width: 100%; max-width: 1100px; box-sizing: border-box; margin: 0 auto 26px; background: rgba(244,236,221,.05); border: 1px solid rgba(244,236,221,.12); border-radius: 18px; padding: 16px 18px 10px; }
 .rom-plot-title { font-size: 16px; font-weight: 800; opacity: .8; margin-bottom: 6px; }
 #rom-plot svg { display: block; width: 100%; height: auto; }
 #rom-plot .ax { stroke: rgba(244,236,221,.14); stroke-width: 1; }
@@ -767,6 +771,9 @@ table.log td { padding: 7px 4px; font-size: 13px; font-weight: 700; border-top: 
 .plan-seg .plan-remove { padding: 2px 9px; font-size: 15px; line-height: 1.4; }
 .plan-seg select { font: 700 14px Nunito, sans-serif; color: var(--ink); background: var(--cream); border: 0; border-radius: 10px; padding: 7px 10px; width: 100%; }
 .plan-seg .plan-note { font-size: 13px; opacity: 0.7; }
+.plan-slot { background: transparent; border: 2px dashed rgba(244,236,221,0.28); align-items: center; justify-content: center; min-height: 74px; gap: 2px; color: rgba(244,236,221,0.55); }
+.plan-slot span { font-size: 22px; font-weight: 900; }
+.plan-slot small { font-size: 13px; font-weight: 700; }
 .plan-empty { width: 100%; text-align: center; opacity: 0.7; font-weight: 700; padding: 18px 0; border: 2px dashed rgba(244,236,221,0.25); border-radius: 16px; }
 .plan-picks { display: flex; flex-wrap: wrap; justify-content: center; gap: 14px; width: min(94vw, 1180px); margin-top: 6px; }
 .plan-picks .gcard { width: 150px; height: 190px; }

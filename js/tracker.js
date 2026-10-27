@@ -33,9 +33,9 @@ async function _exists(url) {
     return r.ok;
   } catch { return false; }
 }
-function _withTimeout(p, ms, what) {
+function _withTimeout(p, ms, what, full) {   // `full`: the whole message, when the hint about downloads does not fit
   let t;
-  const timer = new Promise((_, rej) => { t = setTimeout(() => rej(new Error(`${what} took too long. Is the network blocking the download?`)), ms); });
+  const timer = new Promise((_, rej) => { t = setTimeout(() => rej(new Error(full || `${what} took too long. Is the network blocking the download?`)), ms); });
   return Promise.race([p, timer]).finally(() => clearTimeout(t));
 }
 // the tasks-vision runtime: {FilesetResolver, PoseLandmarker, HandLandmarker}
@@ -304,7 +304,7 @@ export class Tracker {
     } catch (e) { console.warn("Camera enumeration failed", e); }
     videoEl.srcObject = stream;
     await _withTimeout(new Promise(res => { videoEl.onloadedmetadata = res; }), 15000,
-      "The camera opened but gave no picture");
+      "", "The camera opened but gave no picture. Is another program using it?");
     await videoEl.play();
 
     const mp = await loadMediaPipe(status);

@@ -47,7 +47,7 @@
 import { Coach } from "./coach.js";
 import { audio } from "./audio.js";
 import { CENTER, drawBody, drawHand, drawVideoMirror } from "./engine.js";
-import { A11Y, hushVoice } from "./a11y.js";
+import { A11Y, hushVoice, speakLine, voiceBusy } from "./a11y.js";
 
 const BINS = 32;                         // 11.25° wedges (was 16): a finer outline, chord error under 1%
 const PAINT_SPREAD = 2;                  // neighbours each side credited with a reach's projection (±33.75°)
@@ -100,7 +100,13 @@ const TARGETS = [
 const TARGET_FRAC = 0.85;                // of the reach the circles measured in that direction: inside the shape
 const TARGET_MIN_SW = 0.5;               // never so close that resting there passes
 const TARGET_REACH_MS = 10000;           // to get there
-const GRASP_MS = 7000;                   // then, to open, squeeze and open (Oct 2026: a step more when the hand arrives closed)
+const GRASP_MS = 11000;                  // then: open wide, close, open again (26 Oct 2026: three asks every time)
+const GRASP_WIDE_MS = 1000;              // "open wide" is held this long, so a hand that arrived open still hears the ask
+// moving to a new spot mid-measurement starts it again (26 Oct 2026, by
+// request: a body that moves turns the rest of the shape into nonsense).
+// Tighter than the games' relocated(), held for a while so a lean into a
+// reach that comes back is never a move.
+const MOVED_SW = 0.8, MOVED_SCALE = 0.25, MOVED_MS = 2500;
 const GRASP_HOLD_MS = 300;               // a hand state counts once it has held this long (no flicker)
 const TARGET_SETTLE = 1400;              // pause between targets
 const TARGET_CAP = 0.34;                 // capture radius at the target (SW) — generous
@@ -286,6 +292,22 @@ export class Assessment {
     hushVoice();
   }
 
+  // true when the body has sat somewhere else for MOVED_MS since the
+  // baseline the measurement started from; hands the restart to main.js
+  _movedCheck(now) {
+    if (this.state === "settle" || !this.opts.onMoved) return false;
+    const b = this.t.baseline;
+    if (!b || !this.t.anchor || !this.t.shoulderW) return false;
+    const d = Math.hypot(this.t.anchor.x - b.anchor.x, this.t.anchor.y - b.anchor.y) / b.sw;
+    const sc = Math.abs(this.t.shoulderW - b.sw) / b.sw;
+    if (d < MOVED_SW && sc < MOVED_SCALE) { this.movedSince = null; return false; }
+    this.movedSince ??= now;
+    if (now - this.movedSince < MOVED_MS) return false;
+    this.stop();
+    this.opts.onMoved();
+    return true;
+  }
+
   _promptSettle() {
     this._prompt(`Hold your ${this.side} hand still`, "Rest it comfortably in front of you");
   }
@@ -296,16 +318,11 @@ export class Assessment {
     el.innerHTML = main ? main + (sub ? `<small>${sub}</small>` : "") + tag : "";
   }
 
-  _speak(text) {
-    try {
-      hushVoice();
-      const u = new SpeechSynthesisUtterance(text);
-      u.rate = 0.9;   // unhurried, for an older audience
-      speechSynthesis.speak(u);
-    } catch { /* optional */ }
-  }
+  // the coach's own voice, like the rest of the app (it used to be the
+  // browser's default voice, so the voice changed between lines)
+  _speak(text) { speakLine(text, 0.9, false); }
 
-  _speaking() { try { return !!speechSynthesis.speaking; } catch { return false; } }
+  _speaking() { return voiceBusy(); }
 
   // settle time is up AND the current spoken line has finished (capped)
   _settled(ms, now) {
@@ -369,8 +386,10 @@ export class Assessment {
     if (this.vid && this.state === "video") this._videoTick(now, !!paused);   // preloaded earlier: never run before its phase
     if (!this.t.trackingOk) return;
 
-    // scooting/settling in the chair: re-baseline instead of letting geometry drift
-    if (this.t.relocated()) this.t.setBaseline();
+    // moved to a new spot: start again (the opts.onMoved hook), or, without
+    // one, re-baseline as before
+    if (this._movedCheck(now)) return;
+    if (this.t.relocated() && !this.opts.onMoved) this.t.setBaseline();
 
     // The WRIST is the measured point, on every camera path. The palm centre
     // is for pick-up interactions in the games; on the ZED path it is built
@@ -399,6 +418,9 @@ export class Assessment {
     }
     this.prev = { x: hand.x, y: hand.y, t: now };
 
+    // the recording's own voice is the instruction: the coach shows its cue
+    // but does not talk over her
+    this.coach.mute = this.state === "video" && !!this.vidSound;
     this.coach.update(now);
     this._measureArm();
     this._update(now, hand, speed);
@@ -547,7 +569,7 @@ export class Assessment {
           this.ext = { ...tg, best: 0, bestProj: 0, start: now, since: null, graspAt: null,
                        samples: [], squeeze: false, release: false, done: false };
           this.state = "target"; this.stateT = now;
-          this._prompt("Reach the blue target", "Get there, then squeeze and open your hand");
+          this._prompt("Reach for the blue target", "Get there and hold it");
           this._speak("Reach the blue target.");
         }
         break;
@@ -573,16 +595,16 @@ export class Assessment {
             e.since = now; e.graspAt = now;
             e.preClosed = e.preClosedAtArrival = this.t.handClosed(this.side);
             audio.note(5);
-            // THE GRASP CHECK (Oct 2026, by request): one short ask at a
-            // time, each spoken once, each counted only when the hand has
-            // held the state for GRASP_HOLD_MS. A hand that arrives open is
-            // asked to squeeze, then open. A hand that arrives closed is
-            // asked to open first, then squeeze, then open, so the check
-            // always sees both states change.
-            e.gstep = e.preClosed ? "open-first" : "close";
+            // THE GRASP CHECK (26 Oct 2026, by request: "now open" with no
+            // ask to close was confusing): the same three asks every time,
+            // one at a time, each spoken once: open the fingers wide (held
+            // GRASP_WIDE_MS, so a hand that arrived open still hears it),
+            // close the hand, open again. Each state counts once it has held
+            // GRASP_HOLD_MS, so the check always sees both changes.
+            e.gstep = "open-first";
             e.gState = null; e.gAt = now;
-            this._prompt("Hold it there", e.preClosed ? "Open your hand" : "Squeeze your hand");
-            this._speak(e.preClosed ? "Good. Now open your hand." : "Good. Now squeeze your hand.");
+            this._prompt("Open your fingers wide", "As wide as you can");
+            this._speak("Good. Now open your fingers as wide as you can.");
           } else if (now - e.start > TARGET_REACH_MS) {
             audio.note(2);
             this._speak(e.best > 0.6 ? "Close! That's a good stretch." : "That's fine. Let's try the next one.");
@@ -597,14 +619,14 @@ export class Assessment {
         const closedNow = this.t.handClosed(this.side);
         if (closedNow !== e.gState) { e.gState = closedNow; e.gAt = now; }
         const held = now - e.gAt >= GRASP_HOLD_MS;
-        if (held && e.gstep === "open-first" && !closedNow) {
+        if (now - e.gAt >= GRASP_WIDE_MS && e.gstep === "open-first" && !closedNow) {
           e.preClosed = false; e.gstep = "close"; audio.note(3);
-          this._prompt("Hold it there", "Now squeeze your hand");
-          this._speak("Now squeeze.");
+          this._prompt("Now close your hand", "Make a fist");
+          this._speak("Now try to close your hand.");
         } else if (held && e.gstep === "close" && closedNow) {
           e.squeeze = true; e.gstep = "open"; audio.note(4);
-          this._prompt("Hold it there", "Now open your hand");
-          this._speak("And open.");
+          this._prompt("And open again", "Let your fingers go");
+          this._speak("And open again.");
         } else if (held && e.gstep === "open" && !closedNow) {
           e.release = true; e.gstep = "done"; audio.note(6);
         }
@@ -1104,7 +1126,7 @@ export class Assessment {
     audio.fanfare();
     this._prompt("Beautiful!", "Now five targets to reach for, one at a time");
     this._speak("Beautiful. Now five targets to reach for, one at a time. "
-              + "Reach each one, then squeeze and open your hand.");
+              + "Reach each one and hold it. Then I will ask you to open and close your hand.");
   }
 
   // ---------- workspace geometry ----------
@@ -1741,7 +1763,7 @@ export class Assessment {
             ctx.fillText(want, tp.x, tp.y - rad - 30);
             ctx.font = `800 ${Math.round(fs(c.height * 0.026))}px Nunito, sans-serif`;
             ctx.fillStyle = matches ? "#9fc08a" : "rgba(244,236,221,0.8)";
-            ctx.fillText(e.gstep === "done" ? "that's it" : e.gstep === "close" ? "squeeze" : "open", tp.x, tp.y - rad - big - 38);
+            ctx.fillText(e.gstep === "done" ? "that's it" : e.gstep === "close" ? "close" : e.gstep === "open-first" ? "open wide" : "open again", tp.x, tp.y - rad - big - 38);
             ctx.font = `700 ${Math.round(fs(c.height * 0.02))}px Nunito, sans-serif`;
             ctx.fillStyle = seen ? "rgba(232,168,106,0.9)" : "rgba(159,192,138,0.9)";
             ctx.fillText(seen ? "we see: closed" : "we see: open", tp.x, tp.y + rad + 34);

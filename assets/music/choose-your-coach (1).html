@@ -1,0 +1,160 @@
+<title>Choose Your Coach</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Kaisei+Decol:wght@700&family=Zen+Maru+Gothic:wght@500;700&display=swap">
+<style>
+/* Layout: one calm screen, title on top, three large equal coach boxes in a row (stacked on phones), one big start button */
+:root{
+  --paper:#fbf4e4; --ink:#2f3a4a; --quiet:#5c6675; --card:#ffffff;
+  --rook:#d9483b; --lumi:#e2a43a; --maple:#5f9a4c; --focus:#4f8ccc;
+  --display:"Kaisei Decol",Georgia,serif;
+  --body:"Zen Maru Gothic",system-ui,sans-serif;
+  color-scheme:light;
+}
+html,body{height:100%}
+body{background:var(--paper);color:var(--ink);font-family:var(--body);
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+main{min-height:100%;max-width:1200px;margin:0 auto;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:clamp(18px,3vh,32px);padding-block:24px}
+h1{font:700 clamp(34px,5vw,60px)/1.1 var(--display);margin:0;text-align:center;text-wrap:balance}
+.sub{margin:0;font-size:clamp(18px,2vw,24px);color:var(--quiet);text-align:center}
+.coaches{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:clamp(14px,2vw,28px);width:100%}
+.coach{--c:var(--ink);position:relative;border:4px solid transparent;background:var(--card);border-radius:28px;padding:clamp(16px,2vw,26px);
+  display:flex;flex-direction:column;align-items:center;gap:10px;cursor:pointer;text-align:center;font:inherit;color:inherit;
+  box-shadow:0 0 0 2px rgba(47,58,74,.08),0 10px 24px rgba(47,58,74,.08);transition:transform .15s ease,border-color .15s ease}
+.coach:hover{transform:translateY(-3px)}
+.coach:focus-visible{outline:5px solid var(--focus);outline-offset:4px}
+.coach[aria-checked="true"]{border-color:var(--c);transform:translateY(-4px);box-shadow:0 0 0 2px var(--c),0 16px 30px rgba(47,58,74,.14)}
+.coach svg{width:min(100%,220px);aspect-ratio:1;max-width:100%}
+.txt{display:flex;flex-direction:column;align-items:inherit;gap:6px}
+.name{font:700 clamp(26px,3vw,38px)/1.1 var(--display)}
+.style{font-weight:700;font-size:clamp(17px,1.8vw,22px);color:var(--c)}
+.line{font-size:clamp(17px,1.7vw,21px);color:var(--quiet);line-height:1.35;min-height:2.7em;margin:0}
+.tick{position:absolute;top:14px;right:14px;width:44px;height:44px;border-radius:50%;background:var(--c);color:#fff;font:700 26px/44px var(--body);opacity:0;transform:scale(.6);transition:all .15s ease}
+.coach[aria-checked="true"] .tick{opacity:1;transform:scale(1)}
+#rook{--c:var(--rook)} #lumi{--c:#b97a12} #maple{--c:var(--maple)}
+.start{border:0;border-radius:999px;background:var(--ink);color:var(--paper);font:700 clamp(22px,2.4vw,30px) var(--body);padding:18px 44px;cursor:pointer;min-height:64px}
+.start:disabled{opacity:.35;cursor:default}
+.start:focus-visible{outline:5px solid var(--focus);outline-offset:4px}
+.hint{margin:0;font-size:16px;color:var(--quiet);text-align:center}
+@media (max-width:720px){.coaches{grid-template-columns:1fr}.coach{flex-direction:row;text-align:left;align-items:center}.coach svg{width:96px;flex:none}.txt{align-items:flex-start;gap:4px}.line{min-height:0}}
+@media (prefers-reduced-motion:reduce){.coach,.tick{transition:none}.coach:hover,.coach[aria-checked="true"]{transform:none}}
+</style>
+
+<main>
+  <div>
+    <h1>Choose your coach!</h1>
+    <p class="sub">Tap the coach you like. You can change any time.</p>
+  </div>
+
+  <div class="coaches" role="radiogroup" aria-label="Coaches">
+    <button class="coach" id="rook" role="radio" aria-checked="false" data-name="Rook">
+      <span class="tick" aria-hidden="true">✓</span>
+      <svg viewBox="0 0 200 200" aria-hidden="true">
+        <circle cx="100" cy="100" r="96" fill="#fde7e2"/>
+        <path d="M58 150q-30 0-34-30" stroke="#2f3340" stroke-width="10" fill="none" stroke-linecap="round"/>
+        <ellipse cx="100" cy="140" rx="42" ry="36" fill="#2f3340"/><ellipse cx="108" cy="148" rx="20" ry="20" fill="#f4f1ea"/>
+        <path d="M60 78L62 34L88 62Z" fill="#2f3340"/><path d="M140 78L138 34L112 62Z" fill="#2f3340"/>
+        <circle cx="100" cy="88" r="40" fill="#2f3340"/>
+        <path d="M60 80a40 40 0 0 1 80 0z" fill="#d9483b"/><rect x="60" y="76" width="80" height="8" rx="3" fill="#d9483b"/><rect x="96" y="48" width="8" height="26" rx="3" fill="#fbf4e4"/>
+        <ellipse cx="100" cy="100" rx="22" ry="16" fill="#f4f1ea"/>
+        <path d="M80 92q6-7 12 0M108 92q6-7 12 0" stroke="#fbf4e4" stroke-width="4" fill="none" stroke-linecap="round"/>
+        <path d="M96 100h8l-4 5z" fill="#e58a8a"/><path d="M92 110q8 6 16 0" stroke="#2f3340" stroke-width="3" fill="none" stroke-linecap="round"/>
+        <path d="M70 122q30 14 60 0" stroke="#d9483b" stroke-width="9" fill="none" stroke-linecap="round"/><path d="M128 124l20 22" stroke="#d9483b" stroke-width="9" stroke-linecap="round"/>
+      </svg>
+      <span class="txt">
+        <span class="name">Rook</span>
+        <span class="style">Fun and upbeat</span>
+        <p class="line">“Smooth flying, co-pilot! Two more!”</p>
+      </span>
+    </button>
+
+    <button class="coach" id="lumi" role="radio" aria-checked="false" data-name="Lumi">
+      <span class="tick" aria-hidden="true">✓</span>
+      <svg viewBox="0 0 200 200" aria-hidden="true">
+        <circle cx="100" cy="100" r="96" fill="#fdf1d6"/>
+        <circle cx="100" cy="100" r="70" fill="#ffe7a8" opacity=".5"/>
+        <ellipse cx="66" cy="78" rx="30" ry="18" fill="#ffffff" opacity=".85" transform="rotate(-25 66 78)"/><ellipse cx="134" cy="78" rx="30" ry="18" fill="#ffffff" opacity=".85" transform="rotate(25 134 78)"/>
+        <ellipse cx="100" cy="128" rx="20" ry="26" fill="#f2b33d"/><ellipse cx="100" cy="132" rx="13" ry="17" fill="#fff3c4"/>
+        <circle cx="100" cy="82" r="26" fill="#6b5b8a"/>
+        <path d="M90 58q-8-20-20-22M110 58q8-20 20-22" stroke="#6b5b8a" stroke-width="4" fill="none" stroke-linecap="round"/><circle cx="70" cy="36" r="5" fill="#f2b33d"/><circle cx="130" cy="36" r="5" fill="#f2b33d"/>
+        <path d="M88 82q5-5 10 0M102 82q5-5 10 0" stroke="#fdf1d6" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+        <path d="M94 93q6 5 12 0" stroke="#fdf1d6" stroke-width="3" fill="none" stroke-linecap="round"/>
+        <circle cx="84" cy="91" r="3.5" fill="#f19bb5" opacity=".8"/><circle cx="116" cy="91" r="3.5" fill="#f19bb5" opacity=".8"/>
+        <path d="M150 104v14" stroke="#6b5b8a" stroke-width="3"/><rect x="138" y="118" width="24" height="30" rx="6" fill="#f7c65b" stroke="#8a6a2a" stroke-width="3"/><circle cx="150" cy="133" r="6" fill="#fff3c4"/>
+        <path d="M122 104q16-4 28 0" stroke="#6b5b8a" stroke-width="4" fill="none" stroke-linecap="round"/>
+      </svg>
+      <span class="txt">
+        <span class="name">Lumi</span>
+        <span class="style">Calm and gentle</span>
+        <p class="line">“Nice and slow. Take your time.”</p>
+      </span>
+    </button>
+
+    <button class="coach" id="maple" role="radio" aria-checked="false" data-name="Maple">
+      <span class="tick" aria-hidden="true">✓</span>
+      <svg viewBox="0 0 200 200" aria-hidden="true">
+        <circle cx="100" cy="100" r="96" fill="#e6f1df"/>
+        <path d="M50 196q0-62 50-62t50 62z" fill="#3f7fbf"/><path d="M96 136h8v60h-8z" fill="#fbf4e4"/>
+        <circle cx="66" cy="54" r="16" fill="#9a6a44"/><circle cx="134" cy="54" r="16" fill="#9a6a44"/><circle cx="66" cy="54" r="8" fill="#c99a72"/><circle cx="134" cy="54" r="8" fill="#c99a72"/>
+        <circle cx="100" cy="92" r="44" fill="#9a6a44"/>
+        <ellipse cx="100" cy="108" rx="22" ry="17" fill="#d7b08a"/><ellipse cx="100" cy="101" rx="8" ry="6" fill="#3a2a22"/>
+        <path d="M91 113q9 8 18 0" stroke="#3a2a22" stroke-width="3" fill="none" stroke-linecap="round"/>
+        <circle cx="84" cy="86" r="5" fill="#3a2a22"/><circle cx="116" cy="86" r="5" fill="#3a2a22"/><circle cx="85.5" cy="84.5" r="1.6" fill="#fff"/><circle cx="117.5" cy="84.5" r="1.6" fill="#fff"/>
+        <path d="M77 76l13 1M123 76l-13 1" stroke="#3a2a22" stroke-width="3.5" stroke-linecap="round"/>
+        <path d="M100 136q-20 14-14 34" stroke="#d9483b" stroke-width="3" fill="none"/><rect x="74" y="168" width="22" height="12" rx="5" fill="#c9ced6" stroke="#6b7480" stroke-width="2"/>
+        <rect x="124" y="150" width="34" height="42" rx="4" fill="#fbf4e4" stroke="#6b7480" stroke-width="3"/><rect x="133" y="146" width="16" height="8" rx="2" fill="#6b7480"/>
+        <path d="M130 164h22M130 172h22M130 180h14" stroke="#9aa3ae" stroke-width="2.5"/>
+      </svg>
+      <span class="txt">
+        <span class="name">Maple</span>
+        <span class="style">Pushes you to do more</span>
+        <p class="line">“Up six from last week. Now beat it!”</p>
+      </span>
+    </button>
+  </div>
+
+  <button class="start" id="start" type="button" disabled>Pick a coach</button>
+  <p class="hint" id="hint">Use the arrow keys or remote to move, and OK or Enter to choose.</p>
+</main>
+
+<script>
+(() => {
+  const cards = [...document.querySelectorAll('.coach')];
+  const start = document.getElementById('start');
+  const hint = document.getElementById('hint');
+  let chosen = null;
+  try { chosen = localStorage.getItem('coach'); } catch (e) {}
+
+  function select(card, focus) {
+    cards.forEach(c => { const on = c === card; c.setAttribute('aria-checked', String(on)); c.tabIndex = on ? 0 : -1; });
+    chosen = card.id;
+    try { localStorage.setItem('coach', chosen); } catch (e) {}
+    start.disabled = false;
+    start.textContent = 'Start with ' + card.dataset.name;
+    start.style.background = getComputedStyle(card).getPropertyValue('--c');
+    if (focus) card.focus();
+  }
+
+  cards.forEach((card, i) => {
+    card.tabIndex = i === 0 ? 0 : -1;
+    card.addEventListener('click', () => select(card, false));
+    card.addEventListener('keydown', e => {
+      const k = e.key;
+      if (['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp'].includes(k)) {
+        e.preventDefault();
+        const step = (k === 'ArrowRight' || k === 'ArrowDown') ? 1 : -1;
+        select(cards[(i + step + cards.length) % cards.length], true);
+      } else if (k === 'Enter' && chosen === card.id) { e.preventDefault(); start.click(); }
+    });
+  });
+
+  start.addEventListener('click', () => {
+    if (!chosen) return;
+    // Hand-off point: a game would read localStorage 'coach' (rook, lumi or maple) and load that coach's voice and lines.
+    window.dispatchEvent(new CustomEvent('coachchosen', { detail: { coach: chosen } }));
+    hint.textContent = 'Great choice! ' + document.getElementById(chosen).dataset.name + ' will coach you today.';
+  });
+
+  const saved = cards.find(c => c.id === chosen);
+  if (saved) select(saved, false);
+})();
+</script>

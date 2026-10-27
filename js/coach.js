@@ -5,7 +5,7 @@
 // shows the corrected posture, the world dims, one spoken cue plays.
 
 import { audio } from "./audio.js";
-import { speakLine } from "./a11y.js";
+import { speakLine, voiceBusy } from "./a11y.js";
 import { coachLine } from "./coachlines.js";
 
 // The cue's words come from the chosen coach's phrasebook (coachlines.js,
@@ -21,6 +21,7 @@ export class Coach {
     this.side = side;
     this.sens = sensitivity;
     this.quiet = !!opts.quiet;
+    this.mute = false;   // shows the cue but says nothing (a video's own voice is playing)
     this.state = "idle";
     this.type = null;
     this.overSince = null;
@@ -63,8 +64,9 @@ export class Coach {
 
   get dimming() { return this.state === "alert" && !this.quiet ? 0.15 : 0; }
 
-  // caption false: the cue pill already shows the text on screen
-  _speak(text) { speakLine(text, 0.95, false); }
+  // caption false: the cue pill already shows the text on screen. A cue
+  // never talks over another line: the pill and the dim carry it then.
+  _speak(text) { if (!this.mute && !voiceBusy()) speakLine(text, 0.95, false); }
   _cuePill(text, show) {
     const el = document.getElementById("cue");
     if (!el) return;

@@ -103,6 +103,28 @@ export function applySettings(s) {
 // games and the coach never change voice within a session.
 let voiceSeq = 0;                 // a newer line supersedes an older one still being fetched
 let voiceEl = null;               // the <audio> playing now
+// Who is talking (Oct 2026, by request: the voice kept cutting itself off
+// mid-sentence). `busy` is the seq of the line still being fetched or said,
+// 0 when quiet; `busyCap` lets a stuck engine go after a reading-paced while.
+let busy = 0, busyCap = 0;
+export function voiceBusy() { return busy !== 0 && busy === voiceSeq && performance.now() < busyCap; }
+// A line that must be heard but should not cut the one being said waits its
+// turn here; one still waiting after maxWaitMs is out of date and dropped.
+const voiceQueue = [];
+let queueTimer = null;
+export function speakQueued(text, rate = 0.9, caption = false, maxWaitMs = 9000) {
+  if (!voiceBusy() && !voiceQueue.length) { speakLine(text, rate, caption); return; }
+  voiceQueue.push({ text, rate, caption, until: performance.now() + maxWaitMs });
+  if (!queueTimer) queueTimer = setInterval(drainQueue, 200);
+}
+function drainQueue() {
+  const now = performance.now();
+  while (voiceQueue.length && voiceQueue[0].until < now) voiceQueue.shift();
+  if (!voiceQueue.length) { clearInterval(queueTimer); queueTimer = null; return; }
+  if (voiceBusy()) return;
+  const q = voiceQueue.shift();
+  speakLine(q.text, q.rate, q.caption);
+}
 function stopVoice() {
   if (voiceEl) { try { voiceEl.pause(); voiceEl.src = ""; } catch {} voiceEl = null; }
 }
@@ -123,6 +145,9 @@ export function speakLine(text, rate = 0.9, caption = true, onend = null, coach 
   const words = text.split(/\s+/).length;
   const guard = onend ? setTimeout(finish, Math.max(3000, words * 430 / rate) + 1500) : null;
   const seq = ++voiceSeq;
+  busy = text ? seq : 0;
+  busyCap = performance.now() + 6000 + Math.max(3000, words * 600 / rate);   // fetch budget + reading time
+  const ended = () => { if (busy === seq) busy = 0; finish(); };
   try { speechSynthesis.cancel(); } catch {}
   stopVoice();
   if (caption) showCaption(text);
@@ -137,8 +162,8 @@ export function speakLine(text, rate = 0.9, caption = true, onend = null, coach 
       const voice = coachVoice(who);
       if (voice) u.voice = voice;
       u.volume = A11Y.volVoice;
-      u.onend = finish;
-      u.onerror = finish;
+      u.onend = ended;
+      u.onerror = ended;
       speechSynthesis.speak(u);
     } catch { /* voice optional: the guard timer finishes the line */ }
   };
@@ -152,7 +177,7 @@ export function speakLine(text, rate = 0.9, caption = true, onend = null, coach 
       a.preservesPitch = true;
       a.playbackRate = Math.min(1.2, Math.max(0.6, rate * cv.rate));
       a.volume = Math.min(1, Math.max(0, A11Y.volVoice));
-      a.onended = () => { if (voiceEl === a) voiceEl = null; finish(); };
+      a.onended = () => { if (voiceEl === a) voiceEl = null; ended(); };
       a.onerror = () => { if (voiceEl === a) voiceEl = null; browser(); };
       voiceEl = a;
       a.play().catch(() => { if (voiceEl === a) voiceEl = null; browser(); });
@@ -163,6 +188,8 @@ export function speakLine(text, rate = 0.9, caption = true, onend = null, coach 
 // stop whatever is being said now (both engines)
 export function hushVoice() {
   voiceSeq++;
+  busy = 0;
+  voiceQueue.length = 0;
   try { speechSynthesis.cancel(); } catch {}
   stopVoice();
 }
