@@ -64,6 +64,10 @@ async function modelPath(key) {
   return (await _exists(MP_LOCAL + m.file)) ? MP_LOCAL + m.file : m.cdn;
 }
 
+// framing: the hips must sit above this (normalised y) for the waist to count
+// as in the picture (Oct 2026, by request: the login asks people back until
+// they are seen down to the waist)
+const WAIST_MAX_Y = 0.92;
 const LM = {
   nose: 0,
   earL: 7, earR: 8,
@@ -77,6 +81,9 @@ const LM = {
 const ZED_BRIDGE = "http://localhost:8322";
 
 const SLOW = 0.04, FAST = 0.35, HAND = 0.5;
+// the ZED's own body fitting already steadies the joints, so its points are
+// smoothed less here (27 Oct 2026, by request: the skeleton trailed the picture)
+const HAND_ZED = 0.8;
 // Body lock (webcam path). MediaPipe returns up to numPoses bodies in
 // confidence order and re-orders them freely, so a therapist or a second
 // patient in frame can become "the" body mid-round. We keep our own lock and
@@ -217,7 +224,7 @@ export class Tracker {
   // the ZED SDK skeleton when it's running; "webcam" forces MediaPipe. The
   // bridge speaks the MediaPipe 33-landmark layout, so everything downstream
   // of _ingest (smoothing, stable frame, coach, grip fallback) is identical.
-  async init(videoEl, source = "auto", status = null) {
+  async init(videoEl, source = "auto", status = null, onPicture = null) {
     this.video = videoEl;
     this.source = "webcam";
     this.onStatus = status;
@@ -244,7 +251,9 @@ export class Tracker {
         // hold the "waking up the camera" screen until the stream's first
         // frame has actually arrived, so the welcome mirror does not open on
         // a blank panel and fill in a second or two later
-        await Promise.race([this._openPreview(cv), new Promise(res => setTimeout(res, 4000))]);
+        const shown = this._openPreview(cv);
+        shown.then(() => onPicture?.());
+        await Promise.race([shown, new Promise(res => setTimeout(res, 4000))]);
         // GRASP ON THE ZED (Sep 2026): the bridge's BODY_38 fingertips are too
         // coarse to call open/close reliably, so the 21-point hand model runs
         // in the BRIDGE on a crop around each wrist (status.hand_model) and
@@ -306,6 +315,7 @@ export class Tracker {
     await _withTimeout(new Promise(res => { videoEl.onloadedmetadata = res; }), 15000,
       "", "The camera opened but gave no picture. Is another program using it?");
     await videoEl.play();
+    onPicture?.();                // the picture is up: the models load behind it
 
     const mp = await loadMediaPipe(status);
     this.mpLocal = mp.local;
@@ -451,6 +461,7 @@ export class Tracker {
         if (msg.hands?.length) {
           this._ingestHands({ landmarks: msg.hands.map(h => h.pts.map(q => ({ x: q[0], y: q[1] }))) },
                             now, msg.hands.map(h => h.curl));
+          for (const h of msg.hands) if (h.bend != null) this._ingestBend(h.side, h.bend, now);
         }
       } catch { /* skip malformed frame */ }
     };
@@ -746,7 +757,7 @@ export class Tracker {
     for (const k of Object.keys(raw)) {
       if (!raw[k].ok) continue;
       if (!this.pts[k]) this.pts[k] = { x: raw[k].x, y: raw[k].y };
-      mix(this.pts[k], raw[k], HAND);
+      mix(this.pts[k], raw[k], this.source === "zed" ? HAND_ZED : HAND);
       this.pts[k].ok = true;
     }
 
@@ -814,7 +825,10 @@ export class Tracker {
     }
 
     // fresh per-frame visibility (pts.ok is sticky; this is not) for framing checks
-    this.rawVis = { hips: raw.hipL.ok && raw.hipR.ok };
+    // waist: both hips seen AND inside the picture with a little room under
+    // them (a detector can report a hip it inferred below the frame edge)
+    this.rawVis = { hips: raw.hipL.ok && raw.hipR.ok,
+      waist: raw.hipL.ok && raw.hipR.ok && Math.max(raw.hipL.y, raw.hipR.y) < WAIST_MAX_Y };
 
     // trunk axis (shoulders -> hips)
     if (raw.hipL.ok && raw.hipR.ok) {
@@ -1080,6 +1094,23 @@ export class Tracker {
       this.hands[side] = { pts, at: now, curl: curls?.[k] ?? null };
     }
   }
+  // WRIST BEND (28 Oct 2026, by request: measure it before a wrist shot is
+  // built): flexion + / extension - in degrees from the bridge (ZED forearm
+  // against the hand model's 3D hand), with the range seen this session and
+  // how often a new value arrives. ZED only; null on a webcam.
+  _ingestBend(side, deg, now) {
+    const b = (this.bends ??= {})[side] ??= { deg, lo: deg, hi: deg, at: now, n: 0, t0: now };
+    if (b.n > 0 && deg === b.deg) return;            // the same answer resent with a newer body frame
+    b.deg = deg; b.at = now; b.n++;
+    b.lo = Math.min(b.lo, deg); b.hi = Math.max(b.hi, deg);
+  }
+  wristBend(side) {
+    const b = this.bends?.[side];
+    if (!b || performance.now() - b.at > 600) return null;
+    const secs = (b.at - b.t0) / 1000;
+    return { deg: b.deg, lo: b.lo, hi: b.hi, rate: secs > 1 ? b.n / secs : null };
+  }
+  resetWristBend() { this.bends = {}; }
   _handPts(side) {
     const h = this.hands[side];
     return h && performance.now() - h.at < 600 ? h.pts : null;

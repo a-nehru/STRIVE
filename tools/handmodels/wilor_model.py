@@ -51,9 +51,11 @@ class WiLoRHands(HandModel):
             box = o.get("hand_bbox", [0, 0, w, h])
             bx, by = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
             same = int(round(float(o.get("is_right", want_right)))) == want_right
-            # the crop is centred on the wanted wrist: prefer the matching hand,
-            # then the one nearest the centre
-            return (0 if same else 1, (bx - cx) ** 2 + (by - cy) ** 2)
+            # the crop is centred on the wanted wrist: the hand nearest the
+            # centre is the one, and the model's own left/right call (wrong
+            # about two times in five on these crops, 28 Oct 2026) only
+            # breaks a near tie
+            return (bx - cx) ** 2 + (by - cy) ** 2 + (0 if same else (0.12 * w) ** 2)
         o = min(outs, key=score)
         p = o["wilor_preds"]
         k2 = self._arr(p["pred_keypoints_2d"])

@@ -1,6 +1,6 @@
-import { Tracker } from "./tracker.js?v=70";
+import { Tracker } from "./tracker.js?v=72";
 import { Assessment } from "./assessment.js";
-import { GAMES, STAR_RANKS, CANDLE_MAX, LUMEN_STAGES, WINDY_MAX, PAIR_MAX, windyLabel, windyStageOf, windySubOf } from "./games.js";
+import { GAMES, STAR_RANKS, PONG_LEVEL_MAX, CANDLE_MAX, LUMEN_STAGES, WINDY_MAX, PAIR_MAX, windyLabel, windyStageOf, windySubOf, windyPips } from "./games.js";
 import { Warmup } from "./warmup.js";
 import { probeLauncher, launcherInfo, backupNow, listBackups, restoreBackup, backupState, startAutoBackup } from "./backup.js";
 import { SONGS } from "./songs.js";
@@ -27,7 +27,7 @@ const $ = id => document.getElementById(id);
 // recommended card pre-focused, arrow keys to move, Enter to go).
 const MENU_KEYS = false;
 const focusHint = el => { if (MENU_KEYS && el) el.classList.add("kbd-focus"); };
-const SCREENS = ["screen-login", "screen-welcome", "screen-intro", "screen-select", "stage", "screen-between", "screen-romcompare", "screen-collections", "screen-profile", "screen-schedule"];
+const SCREENS = ["screen-login", "screen-welcome", "screen-intro", "screen-select", "stage", "screen-between", "screen-romcompare", "screen-profile", "screen-schedule"];
 
 const state = {
   tracker: null,
@@ -63,6 +63,7 @@ function show(id) {
   // the floating Help follows the stage and the result screens; the welcome
   // and the menu carry their own inline buttons instead
   $("btn-help").classList.toggle("hidden", ["screen-login", "screen-welcome", "screen-intro", "screen-select", "screen-schedule"].includes(id));
+  updateTodayPill();
 }
 
 function resize() { const c = $("canvas"); c.width = innerWidth; c.height = innerHeight; }
@@ -127,8 +128,14 @@ async function boot() {
     // bridge (tools/zed_bridge.py) and falls back to the webcam
     $("loading-text").textContent = "Waking up the camera…";
     $("loading-error").classList.add("hidden");
+    // THE PICTURE FIRST (29 Oct 2026, by request: the login's camera
+    // picture came up seconds late): the loading screen goes as soon as the
+    // camera gives a picture, and the login mirror shows it while the pose
+    // and hand models finish loading behind it (state.camPreview); only
+    // then is the tracker handed over as state.tracker.
     await t.init($("video"), localStorage.getItem("strive-cam-source") || "auto",
-      s => { $("loading-text").textContent = s; });
+      s => { $("loading-text").textContent = s; },
+      () => { state.camPreview = t; $("loading").classList.add("hidden"); });
     t.start();
     state.tracker = t;
     $("camstate").textContent = t.source === "zed"
@@ -141,28 +148,14 @@ async function boot() {
     // drawer's camstate line is not visible on the login screen), and offer a
     // reload; "continue" lets staff reach the drawer to change the source
     console.error("Camera boot failed", e);
+    state.camPreview = null;
+    $("loading").classList.remove("hidden");
     $("camstate").textContent = "Camera: unavailable. " + e.message;
     $("camstate").className = "bad";
     $("loading-text").textContent = "The camera could not start: " + e.message;
     $("loading-error").classList.remove("hidden");
   }
 }
-// FPS readout at the top (Oct 2026, by request): the camera and its picture
-// size, how many pose samples a second the tracker ingests (the bridge's rate
-// on the ZED, MediaPipe's on a webcam) and the screen's own frame rate
-let _fpsScreen = 0, _fpsSeen = 0;
-(function _fpsRaf() { _fpsScreen++; requestAnimationFrame(_fpsRaf); })();
-setInterval(() => {
-  const t = state.tracker, box = $("fpsbox");
-  if (!t) return;
-  const n = t.frames - _fpsSeen; _fpsSeen = t.frames;
-  const cam = t.source === "zed" ? `ZED ${t.zedInfo?.w}×${t.zedInfo?.h}`
-    : `webcam ${t.srcW || t.video?.videoWidth || "?"}×${t.srcH || t.video?.videoHeight || "?"}`;
-  box.textContent = `${cam}  ·  ${n} fps tracking  ·  ${_fpsScreen} fps screen`;
-  box.classList.toggle("stale", n === 0);
-  box.classList.toggle("hidden", state.screen === "screen-romcompare");
-  _fpsScreen = 0;
-}, 1000);
 $("btn-loading-retry").addEventListener("click", () => location.reload());
 $("btn-loading-continue").addEventListener("click", () => $("loading").classList.add("hidden"));
 
@@ -316,6 +309,7 @@ function finishLogin(name, isNew, arm) {
   // a participant made just now sees the intro first (Oct 2026, by
   // request), then the welcome screen and the greeting
   Warmup.preload(arm);                    // the stretch recording for this arm, fetched now
+  if ((localStorage.getItem("strive-assess-style") || "video") === "video") Assessment.preload(arm);   // and the assessment's
   if (isNew && name !== "guest") {
     playIntro(() => { show("screen-welcome"); speak(`Nice to meet you, ${name}. ` + coachLine("session_start")); });
   } else {
@@ -353,16 +347,11 @@ $("login-people").addEventListener("click", e => {
   const b = e.target.closest(".login-person");
   if (b) loginOrPickCoach(b.dataset.name, false);
 });
-// The coach step comes before the first login of ANY participant who has
-// not chosen one (Oct 2026, by request): a new name, a name typed again
-// under "I am new here", or one picked from the list; a record with a coach
-// already chosen logs straight in (the staff drawer changes it later).
+// There is one coach (27 Oct 2026, by request: the choice of three is
+// gone, a11y.js THE_COACH), so nobody is asked to pick one: every login goes
+// straight on. The login-coach step is left in the page, never shown.
 function loginOrPickCoach(name, isNew) {
-  if (store.getPatient(name).settings?.coach) { loginAs(name, isNew); return; }
-  pendingCreate = name; pendingCreateNew = isNew;
-  selectCoach("lumi", false, false);
-  loginStep("login-coach");
-  speak("Choose your coach. Click one to hear them.");
+  loginAs(name, isNew);
 }
 function createLogin() {
   const name = $("login-name").value.trim();
@@ -413,7 +402,8 @@ $("login-name").addEventListener("keydown", e => { if (e.key === "Enter") create
 // back" when any of them is cut off, never how to sit)
 function framingMessage(t) {
   if (!t.trackingOk) return "Take a seat facing the camera";
-  const cut = t.shoulderWFast > 0.42 || !t.rawVis?.hips || t.anchorFast.y < 0.08 || t.anchorFast.y > 0.75;
+  if (!t.rawVis?.waist) return "Move back a little, so we can see you down to your waist";
+  const cut = t.shoulderWFast > 0.42 || t.anchorFast.y < 0.08 || t.anchorFast.y > 0.75;
   if (cut) return "Move back a little, so we can see all of you";
   if (t.shoulderWFast < 0.03) return "If you can, come a little closer to the camera";
   if (t.anchorFast.x < 0.15 || t.anchorFast.x > 0.85) return "Move toward the middle of the picture";
@@ -505,7 +495,14 @@ function watchWelcome() {
     const ctx = c.getContext("2d");
     ctx.clearRect(0, 0, c.width, c.height);
     const t = state.tracker;
-    if (!t) return;
+    if (!t) {
+      // the camera is live but the models are still loading: the picture
+      // alone, so the screen is never an empty frame
+      if (state.camPreview && drawVideoMirror(ctx, c, state.camPreview, onLogin ? 0.42 : 0.30)) {
+        setText(onLogin ? loginEl : trackEl, "Starting the tracking…");
+      }
+      return;
+    }
     const now = performance.now();
 
     // tracking + feature status (so staff can see the whole chain is alive)
@@ -1025,13 +1022,13 @@ function renderSelect() {
     return b;
   };
 
-  // ONE ASSESSMENT A DAY (Sep 2026, by request): the day's session opens
-  // with the measurement and the games wait for it; once it is done the
-  // card locks until tomorrow. The staff drawer and the profile screen can
-  // still re-measure (an override, for the therapist).
+  // The day's session opens with the measurement and the games wait for it
+  // (Sep 2026, by request). Once it is done the card stays open as "Measure
+  // again" (28 Oct 2026, by request: redo it as needed; it used to lock
+  // until tomorrow), and the games, not it, are the recommended next step.
   const today = measuredToday(prof);
-  const assessBtn = mk("assess", today ? "Measured today" : prof ? "Today's measurement" : "Measure your reach", today,
-    () => startAssessment({ force: !!prof }), null, "Done for today");
+  const assessBtn = mk("assess", today ? "Measure again" : prof ? "Today's measurement" : "Measure your reach", false,
+    () => startAssessment({ force: true, override: true }));
   const gameBtns = {};
   const gameLock = !prof ? "Measure your reach first" : !today ? "Today's measurement first" : null;
   for (const g of GAMES) {
@@ -1123,6 +1120,29 @@ function renderToday() {
   el.classList.remove("hidden");
   el.innerHTML = todayHubHTML(todayStats());
 }
+// TODAY ON EVERY SCREEN (28 Oct 2026, by request: easier to see): a small
+// pill at the top centre, the minutes against the goal and a thin bar. It
+// counts live while a game, the assessment or the warm-up is on the stage
+// (the day's logged time plus the time on the stage so far; the round's
+// own time is logged when it ends), and it stays off the screens that show
+// the bigger version (the hub strip, the round card) and before a login.
+const TODAY_PILL_HIDE = ["screen-login", "screen-intro", "screen-select", "screen-between"];
+let _todayStageSince = null;
+function updateTodayPill() {
+  const el = $("today-pill");
+  if (!el) return;
+  if (state.screen === "stage") _todayStageSince ??= Date.now(); else _todayStageSince = null;
+  const on = !!state.patient && state.patient !== "guest" && !TODAY_PILL_HIDE.includes(state.screen);
+  el.classList.toggle("hidden", !on);
+  if (!on) return;
+  // always the TOTAL (28 Oct 2026, by request): the same number in every
+  // game, top right across from Help, so the session has one clock
+  const t = todayStats();
+  const min = Math.floor((t.seconds * 1000 + (_todayStageSince ? Date.now() - _todayStageSince : 0)) / 60000);
+  const f = Math.min(1, t.goal ? min / t.goal : 0);
+  el.innerHTML = `<b>Today</b> ${min} of ${t.goal} min<span class="tp-bar"><span style="width:${Math.round(f * 100)}%"></span></span>`;
+}
+setInterval(updateTodayPill, 5000);
 let planDraft = [], planReturn = null;
 // the levels a block can start a game at (23 Oct 2026, by request): the
 // game's own ladder, or "where they are" (null) to carry on from the banked level
@@ -1149,6 +1169,9 @@ function planChoices() {
 }
 const planKey = b => b.game === "pong" ? (b.axis === "abd" ? "pong-abd" : "pong") : b.game;
 function planName(b) { return planChoices().find(c => c.key === planKey(b))?.name || GAMES.find(g => g.id === b.game)?.name || b.game; }
+// the patient-facing name: the game's own name, without the therapist's
+// axis tag ("Pong", not "Pong FE")
+function planGameName(b) { return GAMES.find(g => g.id === b.game)?.name || planName(b); }
 function planMinutes(blocks) { return blocks.reduce((s, b) => s + (b.minutes || PLAN_BLOCK_MIN), 0); }
 
 // open the plan screen; `then` is where Save or Skip goes afterwards.
@@ -1279,24 +1302,34 @@ function planLeftMin() {
   const b = p.blocks[p.idx];
   return Math.max(0, Math.ceil((b.minutes * 60000 - (Date.now() - p.startedAt)) / 60000));
 }
-// the between-rounds card's plan line and the label of "Next round"
+// the round card's buttons and its time box: within a plan block, the
+// minutes of this game left over "Play again"; once the block is up, the
+// next block's game; after the last block, "One more round" and "Finish
+// for today". Without a plan, the day's minutes against the goal.
 function renderPlanBetween() {
-  const p = state.plan, line = $("rc-plan"), next = $("btn-next-round");
-  next.textContent = "Play again";
-  if (!p) { line.classList.add("hidden"); line.textContent = ""; return; }
-  line.classList.remove("hidden");
-  const left = planLeftMin();
-  const last = p.idx >= p.blocks.length - 1;
-  if (left > 0) {
-    line.textContent = `Block ${p.idx + 1} of ${p.blocks.length} · ${left} min left`;
-  } else if (!last) {
-    const nm = planName(p.blocks[p.idx + 1]);
-    line.textContent = `Block ${p.idx + 1} of ${p.blocks.length} done · next: ${nm}`;
-    next.textContent = `Next: ${nm}`;
-  } else {
-    line.textContent = "That's the whole plan. Well done.";
-    next.textContent = "One more round";
+  const p = state.plan;
+  let again = "Play again", left = "", finish = "Change game", time;
+  // (the block's minutes left go over Play again)
+  if (p) {
+    const b = p.blocks[p.idx], nm = planGameName(b), min = planLeftMin();
+    const last = p.idx >= p.blocks.length - 1;
+    if (min > 0) left = `${plural(min, "minute")} of ${nm} left`;
+    else if (!last) { again = `Next: ${planGameName(p.blocks[p.idx + 1])}`; left = `${nm} is done`; }
+    else { again = "One more round"; left = "That's the whole plan"; finish = "Finish for today"; }
   }
+  // the time bar is the TOTAL (28 Oct 2026, by request): today's minutes
+  // against the plan's whole length, or the daily goal without a plan; the
+  // block's own minutes are on the Play again button
+  const t = todayStats();
+  time = { label: "Today", done: t.minutes, of: t.goal };
+  $("rc-again").textContent = again;
+  $("rc-left").textContent = left;
+  $("rc-left").classList.toggle("hidden", !left);
+  $("btn-finish").textContent = finish;
+  const f = Math.max(0, Math.min(1, time.of ? time.done / time.of : 0));
+  $("rc-time").innerHTML = `<div class="rc-time-line"><b>${time.label}</b> ${Math.min(time.done, time.of)} of ${time.of} min</div>`
+    + `<div class="rc-time-bar"><div style="width:${Math.round(f * 100)}%"></div></div>`;
+  $("rc-time").classList.toggle("hidden", !state.patient || state.patient === "guest");
 }
 // "Next round": the same game while the block runs, the next block's game
 // once its minutes are up, and free play when there is no plan
@@ -1994,7 +2027,9 @@ function startGame(id, fresh) {
     // Pong's round-1 tutorial SETS the ball's pace only on the first game
     // ever on this arm (no stored Pong difficulty yet); after that it is a
     // warm-up and the pace is the level the patient has reached
-    calibrate: id === "pong" && !stored,
+    // (Oct 2026: the sweep no longer sets it; the speed level does)
+    calibrate: false,
+    pongLevel: id === "pong" ? store.getLevel(state.patient, pongLevelKey(state.pongAxis, state.side)) : undefined,
     // the Pong dials, the same for the single and the two-player game
     pongSpeed: id === "pong" ? state.pongSpeed : undefined,
     powerups: id === "pong" ? state.pongPowerups : undefined,
@@ -2038,6 +2073,9 @@ function duoProfile() {
   return store.getProfile(d.p2, d.p2Side) || { arcMinDeg: 30, arcMaxDeg: 150 };
 }
 
+// Pong's speed level, per arm and per Pong (FE / Abd-Add): starts at 1
+const pongLevelKey = (axis, side) => `pongLevel-${axis === "abd" ? "abd" : "fe"}-${side}`;
+
 function onRoundEnd(round) {
   setTimeout(() => backupNow("round"), 1500);     // after the record is written
   audio.stopBgm();
@@ -2054,6 +2092,11 @@ function onRoundEnd(round) {
     round.stars = Math.floor(sec / 60);
     state.starCarrySec = sec - round.stars * 60;
   }
+  // the ladder level before this round is banked, so the card can say
+  // whether the next one is a level up, the same, or a little easier
+  const LADDER = { windy: "windyLevel", candles: "candlesLevel", pairs: "pairsLevel", lens: "scratchLevel", dots: "dotsLevel" };
+  const ladderKey = LADDER[round.game];
+  const ladderPlayed = ladderKey ? (round.game === "windy" ? round.level : round.game === "candles" ? round.levelPlayed : null) ?? store.getLevel(state.patient, ladderKey) : null;
   // Scratch Cards: bank the level the round ended on
   if (round.game === "lens" && round.scratchLevel) {
     store.setLevel(state.patient, "scratchLevel", round.scratchLevel, 6);
@@ -2134,23 +2177,42 @@ function onRoundEnd(round) {
       gamesWon: round.gamesWon ?? null, gamesLost: round.gamesLost ?? null, bestRally: round.bestRally ?? null,
     });
   }
-  if (round.game === "pong" && round.matchWon != null) {
-    if (round.pongMode === "duo") {
-      // two players: the ball follows the result, the star's rank is not in it
-      result.note = round.matchWon ? "You won! A quicker ball next game." : "A slower ball next game.";
-    } else {
-      const rank = store.getLevel(state.patient, "starRank");
-      const next = Math.max(1, Math.min(STAR_RANKS.length, rank + (round.matchWon ? 1 : -1)));
-      store.setLevel(state.patient, "starRank", next, STAR_RANKS.length);
-      const name = STAR_RANKS[next - 1].name;
-      result.note = round.matchWon
-        ? `You won! A quicker ball next game${next > rank ? `, against a ${name}` : ""}.`
-        : `A slower ball next game${next < rank ? `, against a ${name}` : ""}.`;
-    }
-  } else if (round.game === "pong" && round.pointsPlayed > 0) {
-    result.note = "A draw! The same ball next game.";
+  // Pong: the level is the ball's speed (28 Oct 2026, by request). A match
+  // won moves up one level, a match lost down one, a draw stays; the star's
+  // rank no longer moves on its own (staff can still pick it on the map)
+  if (round.game === "pong" && round.pongLevel) {
+    const key = pongLevelKey(round.axis, state.side);
+    const next = round.matchWon === true ? round.pongLevel + 1 : round.matchWon === false ? round.pongLevel - 1 : round.pongLevel;
+    store.setLevel(state.patient, key, next, PONG_LEVEL_MAX);
+    round.lvl = { from: round.pongLevel, to: Math.max(1, Math.min(PONG_LEVEL_MAX, next)), of: PONG_LEVEL_MAX, key };
+    for (const ch of round.levelChanges || [])
+      store.logPongLevel(state.patient, state.side, { axis: round.axis || "fe", kind: "manual-court", from: ch.from, to: ch.to, atS: ch.atS });
+    store.logPongLevel(state.patient, state.side, {
+      axis: round.axis || "fe", kind: "match", from: round.pongLevel, to: round.lvl.to, matchWon: round.matchWon ?? null,
+      gamesWon: round.gamesWon ?? null, gamesLost: round.gamesLost ?? null, startedAt: round.pongLevelStart ?? null,
+    });
   }
   store.saveGameParams(state.patient, state.side, paramKey(round.game, round.axis), result.params);
+  // up / same / down for the round card: the ladder for the ladder games,
+  // the match for Pong, the difficulty change for the rest
+  {
+    const dir = d => d > 0 ? "up" : d < 0 ? "down" : "same";
+    if (ladderKey && round[ladderKey] != null && ladderPlayed != null) {
+      round.next = dir(round[ladderKey] - ladderPlayed);
+      // Windy City's steps show as their stage (the patient never sees "2.1")
+      const show = n => round.game === "windy" ? windyStageOf(n) : n;
+      const of = { windy: windyStageOf(WINDY_MAX), candles: CANDLE_MAX, pairs: PAIR_MAX, lens: 6, dots: 6 }[round.game];
+      round.lvl ??= { from: show(ladderPlayed), to: show(round[ladderKey]), of,
+        pips: round.game === "windy" ? windyPips(round[ladderKey]) : null };
+    }
+    else if (round.game === "pong") round.next = round.matchWon === true ? "up" : round.matchWon === false ? "down" : "same";
+    else {
+      const a = used, b = result.params;
+      const harder = b.rangeScale > a.rangeScale || b.radius < a.radius || b.lifetime < a.lifetime;
+      const easier = b.rangeScale < a.rangeScale || b.radius > a.radius || b.lifetime > a.lifetime;
+      round.next = harder && !easier ? "up" : easier && !harder ? "down" : "same";
+    }
+  }
   // profile.params is deliberately NOT written here: it stays the
   // assessment-seeded starting difficulty, so a game played for the first
   // time starts from what the patient was measured at rather than inheriting
@@ -2309,50 +2371,60 @@ function roundSummary(round) {
   return { head, text, glyph, count };
 }
 
+// what the next round brings, in one line under the headline
+const RC_NEXT = { up: "Level up next game!", same: "Same level next game", down: "A little easier next game" };
+const RC_STAR = `<svg viewBox="0 0 24 24" width="34" height="34" aria-hidden="true"><polygon points="12,2 14.9,8.6 22,9.3 16.5,14 18.3,21 12,17.3 5.7,21 7.5,14 2,9.3 9.1,8.6" fill="#e8a86a"/></svg>`;
+let _rcStarTimer = null;
 function renderBetween(round, note) {
-  // the pill: stars this round (minutes of play) and the lifetime total,
-  // which only ever grows (starsLifetime; `stars` is the spendable balance)
+  // stars, top right: the total, counting up from before this round, with
+  // the round's own stars rising off it
   const p = store.getPatient(state.patient);
-  const saved = Math.max(p?.starsLifetime || 0, p?.stars || 0);
+  const total = Math.max(p?.starsLifetime || 0, p?.stars || 0);
   const n = round.stars || 0;
-  $("rc-stars").innerHTML = `<svg viewBox="0 0 24 24" width="30" height="30"><polygon points="12,2 14.9,8.6 22,9.3 16.5,14 18.3,21 12,17.3 5.7,21 7.5,14 2,9.3 9.1,8.6" fill="#e8a86a"/></svg>`
-    + `<span>+${plural(n, "star")}</span><span class="saved">${plural(saved, "star")} saved</span>`;
-
-  const sum = roundSummary(round);
-  $("rc-head").textContent = sum.head;
-  $("rc-text").textContent = sum.text;
-  // the map strip (23 Oct 2026, by request): the path about the level just
-  // played, with its stars, for the three ladder games
-  {
-    const def = MAP_DEFS[round.game], el = $("rc-map");
-    if (def && el) {
-      const L = round.game === "windy" ? round.level : round.game === "candles" ? (round.level || round.candlesLevel) : round.pairsLevel;
-      const prog = store.getProgress(state.patient, def.bag) || {};
-      el.innerHTML = L ? levelMapSVG(def, L, prog, 3) : "";
-    } else if (el) el.innerHTML = "";
+  $("rc-stars").innerHTML = `${RC_STAR}<span class="rc-star-n" id="rc-star-n">${Math.max(0, total - n)}</span>`
+    + (n > 0 ? `<span class="rc-star-plus">+${n}</span>` : "");
+  clearInterval(_rcStarTimer);
+  if (n > 0) {
+    let v = Math.max(0, total - n);
+    const step = () => { v++; const el = $("rc-star-n"); if (el) el.textContent = v; if (v >= total) clearInterval(_rcStarTimer); };
+    if (A11Y.calm) $("rc-star-n").textContent = total;
+    else setTimeout(() => { _rcStarTimer = setInterval(step, Math.max(120, 900 / n)); }, 500);
   }
-  // the day so far (23 Oct 2026, by request): rounds, minutes, stars, and
-  // the bar towards the plan's minutes or the daily goal
-  $("rc-today").innerHTML = state.patient && state.patient !== "guest" ? todayHTML(todayStats(), true) : "";
-  const shown = Math.min(sum.count, RC_MAX_GLYPHS);
-  $("rc-glyphs").innerHTML = (RC_GLYPHS[sum.glyph] || RC_GLYPHS.star).repeat(shown)
-    + (sum.count > shown ? `<span class="more">+${sum.count - shown}</span>` : "");
-  $("rc-how").textContent = "";
-
-  // the board under the sentence: the Lantern's Guild, or the two-player record
-  $("rc-board").innerHTML = round.game === "candles" ? lanternBoardHTML(store.getProgress(state.patient, "candlesLumen") || {})
-    : round.game === "pong" && round.pongMode === "duo" ? (() => {
-        const r = store.getRivalry(state.patient, round.p2Name || "guest");
-        return `<div class="board"><p>Head to head: <b>${r.wins}</b> to <b>${r.losses}</b> ${round.p2Name || "player two"}${r.draws ? ` · ${r.draws} drawn` : ""} · best rally ever <b>${r.bestRally}</b></p></div>`;
-      })()
-    : "";
-
-  const rest = state.roundNumber % 4 === 0
-    ? " You've earned a longer break. Have some water."
-    : "";
-  $("rc-note").textContent = (note || "") + rest;
+  $("rc-head").textContent = roundSummary(round).head;
+  // the level, top centre: the level just played, and only that ("Level up
+  // next game!" under the headline says where the next one goes; the
+  // "2 → 3" arrow was removed 28 Oct 2026, by request). Windy City shows
+  // its stage with the three parts as pips.
+  {
+    const L = round.lvl, el = $("rc-level");
+    // Pong: the NEXT match's speed level, with arrows to change it by hand
+    // (28 Oct 2026, by request); every change is stored and logged
+    if (L && L.key && round.game === "pong" && state.patient) {
+      const show = () => {
+        const n = store.getLevel(state.patient, L.key);
+        el.innerHTML = `<button class="rc-step" data-d="-1" aria-label="Slower" ${n <= 1 ? "disabled" : ""}>◀</button>`
+          + `Speed ${n}<small> of ${L.of}</small>`
+          + `<button class="rc-step" data-d="1" aria-label="Faster" ${n >= L.of ? "disabled" : ""}>▶</button>`;
+        for (const b of el.querySelectorAll(".rc-step")) b.onclick = () => {
+          const from = store.getLevel(state.patient, L.key), to = Math.max(1, Math.min(L.of, from + +b.dataset.d));
+          if (to === from) return;
+          store.setLevel(state.patient, L.key, to, L.of);
+          store.logPongLevel(state.patient, state.side, { axis: round.axis || "fe", kind: "manual-card", from, to });
+          $("rc-next").textContent = to > L.from ? "Faster next game" : to < L.from ? "Slower next game" : RC_NEXT.same;
+          show();
+        };
+      };
+      show(); el.classList.remove("hidden");
+    } else if (L && L.from) {
+      el.innerHTML = `Level ${L.from}${L.pips ? ` <span class="rc-pips">${L.pips}</span>` : `<small> of ${L.of}</small>`}`;
+      el.classList.remove("hidden");
+    } else el.classList.add("hidden");
+  }
+  $("rc-next").textContent = A11Y.practice ? "Practice round. Nothing counts." : RC_NEXT[round.next] || "";
+  // only the rest reminder stays on the card (every 4th round or a run of
+  // posture slips; onRoundEnd also says it)
+  $("rc-note").textContent = /rest|break/i.test(note || "") ? coachLine("fatigue_detected") : "";
   renderPlanBetween();
-
   for (const f of document.querySelectorAll(".face")) f.classList.remove("selected");
 }
 
@@ -2368,10 +2440,11 @@ document.querySelectorAll(".face").forEach(f => {
       speak("Thank you for telling us. " + REST_LINE);
       // rest is the gentle default now: Finish for today takes the focus
       document.querySelectorAll("#screen-between .kbd-focus").forEach(el => el.classList.remove("kbd-focus"));
+      $("btn-finish").textContent = "Finish for today";
       focusHint($("btn-finish"));
     }
     if (f.dataset.feel === "tired")
-      $("rc-note").textContent = "A little tired is okay. One gentler round, or finish for today?";
+      $("rc-note").textContent = "A little tired is okay. Rest whenever you like.";
     if (f.dataset.feel === "fine")
       $("rc-note").textContent = "Lovely. Play again whenever you are ready.";
   });
@@ -2380,71 +2453,9 @@ document.querySelectorAll(".face").forEach(f => {
 $("btn-next-round").dataset.dwell = "1";
 $("btn-finish").dataset.dwell = "1";
 $("btn-next-round").addEventListener("click", nextRound);
-$("btn-finish").addEventListener("click", () => { state.plan = null; renderCollections(); show("screen-collections"); });
-
-/* ================= P7 collections ================= */
-const DECOR = [
-  { id: "windmill", name: "Windmill", price: 40 },
-  { id: "bridge", name: "Footbridge", price: 60 },
-  { id: "gardens", name: "Night gardens", price: 90 },
-];
-
-function renderCollections() {
-  const p = store.getPatient(state.patient);
-  $("coll-stars").textContent = p.stars;
-  const grid = $("coll-grid");
-  grid.innerHTML = "";
-
-  const add = (artHtml, name, stateHtml, onClick) => {
-    const b = document.createElement("button");
-    b.className = "citem";
-    b.innerHTML = `<div class="cart">${artHtml}</div><div class="crow"><span class="cname">${name}</span>${stateHtml}</div>`;
-    if (onClick) b.addEventListener("click", onClick);
-    grid.appendChild(b);
-  };
-
-  // constellation creatures earned by play
-  for (const c of p.unlocks.creatures) {
-    add(`<svg viewBox="0 0 120 120" style="position:absolute;inset:0;width:100%;height:100%;background:radial-gradient(circle at 50% 45%,#4a3f78,#20204a)">
-      <g stroke="#fff6d8" stroke-width="2" fill="none"><path d="M30 40 L55 65 L85 45 L95 80 L55 65 L60 95"/></g>
-      <g fill="#fff6d8"><circle cx="30" cy="40" r="4"/><circle cx="55" cy="65" r="4"/><circle cx="85" cy="45" r="4"/><circle cx="95" cy="80" r="4"/><circle cx="60" cy="95" r="4"/></g></svg>`,
-      c, `<span class="cstate">Owned</span>`);
-  }
-  if (!p.unlocks.creatures.length)
-    add(`<div style="position:absolute;inset:0;background:radial-gradient(circle at 50% 45%,#4a3f78,#20204a);display:flex;align-items:center;justify-content:center;font-size:34px;opacity:.5">✦</div>`,
-      "Constellation creatures", `<span class="cstate" style="color:rgba(244,236,221,.5)">Play to find them</span>`);
-
-  // lantern sky
-  add(`<div style="position:absolute;inset:0;background:linear-gradient(180deg,#1b1b3a,#3a3168)">
-    ${[24, 60, 96].map((x, i) => `<div style="position:absolute;left:${x}px;top:${[30, 52, 24][i]}px;width:${16 - i * 2}px;height:${20 - i * 2}px;border-radius:40% 40% 50% 50%;background:radial-gradient(circle,#ffd98a,#e8a86a);box-shadow:0 0 12px rgba(232,168,106,.6)"></div>`).join("")}
-    </div>`,
-    "Lantern sky", `<span class="cstate">${p.lanterns} released</span>`);
-
-  // village decor (spend stars)
-  for (const d of DECOR) {
-    const owned = p.unlocks.decor.includes(d.id);
-    add(`<div style="position:absolute;inset:0;background:linear-gradient(180deg,#4a3550,#2a2038);display:flex;align-items:flex-end;gap:5px;padding:0 18px 14px">
-       <div style="width:26px;height:44px;background:#16121f"></div><div style="width:20px;height:60px;background:#16121f"></div><div style="width:30px;height:38px;background:#16121f"></div></div>`,
-      d.name,
-      owned ? `<span class="cstate">Owned</span>` : `<span class="cprice">⭐ ${d.price}</span>`,
-      owned ? null : () => { if (store.buy(state.patient, "decor", d.id, d.price)) audio.hit(); renderCollections(); });
-  }
-
-  // comet cursor
-  const cometOwned = p.unlocks.cursor.includes("comet");
-  const equipped = p.equippedCursor === "comet";
-  add(`<div style="position:absolute;inset:0;background:radial-gradient(circle at 50% 50%,#2f5560,#14243f)">
-     <div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:30px;height:30px;border-radius:50%;background:radial-gradient(circle,#fff,#9fc0c8);box-shadow:0 0 22px 7px rgba(200,230,235,.7)"></div></div>`,
-    "Comet cursor",
-    cometOwned ? `<span class="cstate">${equipped ? "In use" : "Use"}</span>` : `<span class="cprice">⭐ 25</span>`,
-    () => {
-      if (cometOwned) store.equipCursor(state.patient, equipped ? "firefly" : "comet");
-      else if (store.buy(state.patient, "cursor", "comet", 25)) audio.hit();
-      renderCollections();
-    });
-}
-
-$("btn-coll-back").addEventListener("click", () => { renderSelect(); show("screen-select"); });
+// straight back to the game selection (27 Oct 2026, by request: the
+// collection screen is gone)
+$("btn-finish").addEventListener("click", () => { state.plan = null; renderSelect(); show("screen-select"); });
 
 /* ================= S3 staff profile ================= */
 function arcPath(cx, cy, r, a0, a1) {
@@ -2874,6 +2885,8 @@ $("in-arm").addEventListener("change", e => {
 // so changing it reloads the app
 $("in-assess-style").value = localStorage.getItem("strive-assess-style") || "video";
 $("in-assess-style").addEventListener("change", e => localStorage.setItem("strive-assess-style", e.target.value));
+$("in-posture-debug").value = localStorage.getItem("strive-posture-debug") === "1" ? "1" : "0";
+$("in-posture-debug").addEventListener("change", e => localStorage.setItem("strive-posture-debug", e.target.value));
 $("in-camera").value = localStorage.getItem("strive-cam-source") || "auto";
 $("in-camera").addEventListener("change", e => {
   localStorage.setItem("strive-cam-source", e.target.value);
@@ -2896,14 +2909,8 @@ function syncComfortControls() {
   $("in-volvoice").value = s.volVoice;
   $("in-volmusic").value = s.volMusic;
   $("in-volfx").value = s.volFx;
-  $("in-coach-pick").value = COACHES[s.coach] ? s.coach : "lumi";
   state.tracker?.setSqueezeEase?.(s.squeezeEase);
 }
-$("in-coach-pick").addEventListener("change", e => {
-  saveSetting({ coach: e.target.value });
-  warmVoice(); voiceState();
-  speakLine(COACHES[A11Y.coach].sample, 0.9, false);   // hear the change at once
-});
 $("in-captions").addEventListener("change", e => saveSetting({ captions: e.target.value === "on" }));
 $("in-dwell").addEventListener("change", e => saveSetting({ dwellMs: +e.target.value }));
 $("in-radius").addEventListener("change", e => saveSetting({ radiusScale: +e.target.value }));
@@ -2954,10 +2961,9 @@ $("btn-drawer-intro").addEventListener("click", () => {
 $("btn-drawer-plan").addEventListener("click", () => {
   $("drawer").classList.add("hidden");
   // back to the menu screen it was opened from (never into a running game)
-  const back = ["screen-select", "screen-profile", "screen-collections", "screen-between"].includes(state.screen) ? state.screen : "screen-select";
+  const back = ["screen-select", "screen-profile", "screen-between"].includes(state.screen) ? state.screen : "screen-select";
   renderSchedule(() => { if (back === "screen-select") renderSelect(); show(back); });
 });
-$("btn-drawer-collections").addEventListener("click", () => { $("drawer").classList.add("hidden"); renderCollections(); show("screen-collections"); });
 
 $("btn-quit").addEventListener("click", () => {
   const skipTo = state.warmupThen;   // a warm-up on the way to the assessment: ✕ skips the stretch, not the measurement
@@ -2983,7 +2989,7 @@ function kbdTargets() {
 }
 addEventListener("keydown", e => {
   if (!MENU_KEYS) return;
-  if (!["screen-select", "screen-between", "screen-collections", "screen-schedule"].includes(state.screen)) return;
+  if (!["screen-select", "screen-between", "screen-schedule"].includes(state.screen)) return;
   const els = kbdTargets();
   if (!els.length) return;
   const cur = els.findIndex(el => el.classList.contains("kbd-focus"));
@@ -3008,8 +3014,25 @@ const previewOf = new URLSearchParams(location.search).get("preview");
 if (previewOf === "pongscore") {
   state.patient = "guest"; state.side = "right"; state.roundNumber = 2; state.sessionStars = 420;
   const sample = { game: "pong", hits: 19, misses: 3, hitRate: 19 / 22, stars: 2, gamePoints: 200, seconds: 96, bestRally: 9,
-    points: 3, aiPoints: 1, matchWon: true, trickPoints: 1, trickShots: { curve: 1 }, compEvents: [] };
+    points: 3, aiPoints: 1, matchWon: true, trickPoints: 1, trickShots: { curve: 1 }, compEvents: [], next: "up", lvl: { from: 2, to: 3, of: 10 } };
+  state.plan = { blocks: [{ game: "pong", axis: "fe", minutes: 15 }], idx: 0, startedAt: Date.now() - 5 * 60000 };
   renderBetween(sample, "You won, so the ball comes a little quicker next game, and the star grows into a Bright star.");
+  // a guest has no day to total: sample numbers for the time bar
+  $("rc-time").classList.remove("hidden");
+  $("rc-time").innerHTML = `<div class="rc-time-line"><b>Today</b> 23 of 45 min</div><div class="rc-time-bar"><div style="width:51%"></div></div>`;
+  show("screen-between");
+} else if (previewOf === "score") {
+  // ?preview=score&game=windy|candles|pairs: the same card for another game
+  const g = new URLSearchParams(location.search).get("game") || "windy";
+  state.patient = "guest"; state.side = "right"; state.roundNumber = 2;
+  const S = {
+    windy: { game: "windy", seconds: 90, stars: 1, completed: true, gapsPassed: 14, level: 4, windyLevel: 5, next: "up", lvl: { from: 2, to: 2, of: 16, pips: "● ● ○" } },
+    candles: { game: "candles", seconds: 90, stars: 1, lanternsLit: 9, candles: 11, next: "same", lvl: { from: 6, to: 6, of: 23 } },
+    pairs: { game: "pairs", seconds: 75, stars: 1, pairsFound: 3, turns: 9, boardsCleared: 0, next: "down", lvl: { from: 3, to: 2, of: 8 } },
+  }[g];
+  renderBetween({ compEvents: [], ...S }, "");
+  $("rc-time").classList.remove("hidden");
+  $("rc-time").innerHTML = `<div class="rc-time-line"><b>Today</b> 23 of 45 min</div><div class="rc-time-bar"><div style="width:51%"></div></div>`;
   show("screen-between");
 } else if (previewOf === "reach") {
   // ?preview=reach: the after-assessment screen with four sample
@@ -3085,14 +3108,14 @@ if (previewOf === "pongscore") {
 // seed parameters, so the games have a workspace to lay targets in. A real
 // participant named with &name= keeps their own profile. Targets: a game id
 // (pong, candles, pairs, windy, and any disabled game by its id), assess,
-// select, welcome, warmup, rom, schedule, levels (&game=), duo, profile,
-// collections. Options: &arm=left|right (right), &level=N for the ladder
+// select, welcome, warmup, rom, schedule, levels (&game=), duo, profile.
+// Options: &arm=left|right (right), &level=N for the ladder
 // games, &axis=fe|abd and &mode=solo|bimanual|... for Pong, &fresh=1 to
 // rewrite the synthetic profile. The staff drawer lists these as links.
 const TEST_TARGETS = {
   select: "the hub", welcome: "the welcome screen", warmup: "the warm-up", assess: "the assessment",
   rom: "the after-assessment screen", schedule: "the session plan", levels: "a level map (&game=)",
-  duo: "Pong two-player setup", profile: "the therapist profile", collections: "the collections", board: "this week's board",
+  duo: "Pong two-player setup", profile: "the therapist profile", board: "this week's board",
 };
 function testProfile(arm) {
   const envelope = Array.from({ length: 32 }, (_, i) =>
@@ -3150,7 +3173,6 @@ function testJump(q) {
     case "levels": renderLevelMap(MAP_DEFS[q.get("game")] ? q.get("game") : "windy"); break;
     case "duo": state.pongMode = "duo"; state.pongAxis = "fe"; $("in-pong").value = "duo"; renderDuoSetup(); break;
     case "profile": renderProfile(); show("screen-profile"); break;
-    case "collections": renderCollections(); show("screen-collections"); break;
     case "board": renderLeaderboard(); show("screen-select"); break;
     default: toHub(); speak(`No test target called ${go}.`);
   }

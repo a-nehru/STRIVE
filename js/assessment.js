@@ -46,7 +46,7 @@
 
 import { Coach } from "./coach.js";
 import { audio } from "./audio.js";
-import { CENTER, drawBody, drawHand, drawVideoMirror } from "./engine.js";
+import { CENTER, drawBody, drawHand, drawVideoMirror, drawPersonSlot } from "./engine.js";
 import { A11Y, hushVoice, speakLine, voiceBusy } from "./a11y.js";
 
 const BINS = 32;                         // 11.25° wedges (was 16): a finer outline, chord error under 1%
@@ -56,6 +56,7 @@ const binOf = th => Math.floor((((th % TAU) + TAU) % TAU) / TAU * BINS);
 
 const STILL_R = 0.15;                    // the hand may wander this far (SW, about 6 cm) and still count as resting
 const REC_R = 0.3;                       // min radius (SW) for a reach to count — near the centre the angle is meaningless
+const MOVE_START = 0.3;                  // the shape starts only once the wrist has left its resting place by this much (SW)
 const ENV_FLOOR = 0.45;                  // conservative floor for unmeasured/tiny bins (games need some space)
 const ENV_CAP = 2.6;
 
@@ -140,6 +141,21 @@ const VIDEO_SRCS = {
   left: "assets/music/ROM_Shoulder_Moves_LEFT_arm.mp4",
   right: "assets/music/ROM_Shoulder_Moves_RIGHT_arm.mp4",
 };
+// how long a recording that has started buffering but not reached "can play
+// through" is waited for before the measurement begins anyway
+const VIDEO_READY_MAX_MS = 15000;
+const PRELOADED = new Map();              // src -> hidden <video>, from Assessment.preload
+function videoSrcFor(side) { return VIDEO_SRCS[side] || VIDEO_SRCS[VIDEO_ARM]; }
+function makeAssessVideo(src) {
+  const v = document.createElement("video");
+  v.src = src; v.playsInline = true; v.preload = "auto";
+  v.muted = true;
+  v.style.cssText = "position:fixed;left:-9999px;top:0;width:2px;height:2px;opacity:0;pointer-events:none";
+  v.setAttribute("aria-hidden", "true");
+  document.body.appendChild(v);
+  try { v.load(); } catch {}
+  return v;
+}
 const VIDEO_ARM = "left";                // the fallback recording's arm
 const VIDEO_MIRROR = false;              // burnt-in titles and captions: never mirrored
 // The posture coach speaks its cues (let your shoulder relax, sit tall)
@@ -155,13 +171,22 @@ const VIDEO_CAPTIONED = true;            // it carries its own captions, so the 
 // stage whatever the distance. Only in, never out (k >= 1), capped at
 // ZOOM_MAX, smoothed so a re-snap of the frame is a glide, not a jump.
 const ZOOM_PAD_SW = 0.5, ZOOM_MAX = 2.5, ZOOM_EASE = 0.08;
-const VIDEO_CROP_HALF_W = 2.3;           // patient panel: half-width about the body centre, SW
-const VIDEO_CROP_UP = 2.0, VIDEO_CROP_DOWN = 2.2;   // ...and above / below the shoulder line, SW
-// The picture is drawn in this window (fractions of the frame width, full
-// height): the left part, where the title, the demonstrator, the captions
-// and the move dots are; the empty right part is left out. VIDEO_END is
-// where it is over (after its own "Great job").
-const VIDEO_CROP = { x0: 0, x1: 0.6 };
+// wide enough for a full reach out to the side or overhead with the whole
+// hand in view (Oct 2026, by request: at 2.3 SW the hand left the box at the
+// extremes, and zooming in on a person sitting low cut it tighter still)
+const VIDEO_CROP_HALF_W = 3.0;           // patient panel: half-width about the body centre, SW
+const VIDEO_CROP_UP = 2.9, VIDEO_CROP_DOWN = 2.3;   // ...and above / below the shoulder line, SW
+const VIDEO_CROP_MIN = 0.9;              // the most it zooms in when the person sits near an edge of the picture
+// The recording is drawn whole: the title, the demonstrator, the captions
+// and the move dots fill its left 60%, and the right part is left empty on
+// purpose for the patient (Oct 2026, by request), so their own camera
+// picture, cropped to the person with the skeleton, is drawn in this slot
+// (fractions of the frame). VIDEO_END is where it is over (after its own
+// "Great job").
+// the same size and height as the demonstrator's own box in the recording
+// (x 0.102-0.498, y 0.191-0.883 of the frame, both arms' files), centred in
+// the empty right half, so the two read as a pair (Oct 2026, by request)
+const VIDEO_PERSON_SLOT = { x0: 0.551, x1: 0.947, y0: 0.191, y1: 0.883 };
 const VIDEO_END = 62.3;
 // The recording carries her own voice, so it plays with sound and the app
 // keeps quiet. Set false for a silent recording: the app then speaks each
@@ -229,6 +254,7 @@ export class Assessment {
     // demonstrator box on "Loading" for seconds)
     if (this.style === "video") this._makeVideo();
     this.still = null; this.stillAt = null;
+    this.restAt = null; this.moving = false;
     this.prev = null;
     this.badSince = null;
     this.noHandSince = null;
@@ -444,9 +470,22 @@ export class Assessment {
           this.stillAt = { x: hand.x, y: hand.y };
           this.still = now;
         }
+        // THE RECORDING FIRST (29 Oct 2026, by request: the assessment is
+        // not to begin without its video): a settled hand waits here, saying
+        // so, until the recording can play through. A file that fails to load
+        // goes on as before (the app speaks each move instead); one that
+        // stays part-buffered goes on after VIDEO_READY_MAX_MS.
+        if (now - this.still > 1500 && this.style === "video" && !this._videoReady(now)) {
+          this._prompt("One moment, the video is loading", "Keep your hand resting");
+          break;
+        }
         if (now - this.still > 1500) {
           {
             this.t.setBaseline();
+            // where the wrist rested: nothing is painted until it leaves
+            // this spot (Oct 2026, by request: a hand resting on the chest
+            // painted a wedge from the body centre before any move began)
+            this.restAt = { x: hand.x, y: hand.y }; this.moving = false;
             // the BODY CENTRE is zero: the shoulder midpoint, which is the
             // origin of the shoulder-width frame. Not the resting hand — a
             // hand that rested somewhere else last time must not read as a
@@ -642,6 +681,14 @@ export class Assessment {
     }
   }
 
+  _videoReady(now) {
+    const v = this.vid || this._makeVideo();
+    if (this.vidFailedAt || v.error) return true;
+    if (v.readyState >= 4) return true;
+    this.vidWaitFrom ??= now;
+    return v.readyState >= 3 && now - this.vidWaitFrom > VIDEO_READY_MAX_MS;
+  }
+
   _startVideo(now) {
     this.state = "video"; this.stateT = now;
     this.videoStart = now;
@@ -662,17 +709,24 @@ export class Assessment {
   // decoding can be throttled, and a stalled frame reads as a stalled
   // demonstrator. preload=auto so it is buffered before it is needed.
   _makeVideo() {
-    this.vidSrc = VIDEO_SRCS[this.side] || VIDEO_SRCS[VIDEO_ARM];
-    const v = document.createElement("video");
-    v.src = this.vidSrc; v.playsInline = true; v.preload = "auto";
+    this.vidSrc = videoSrcFor(this.side);
+    // taken from the login's preload when there is one (Oct 2026): it is
+    // fully buffered by the time the patient has settled
+    const v = PRELOADED.get(this.vidSrc) || makeAssessVideo(this.vidSrc);
+    PRELOADED.delete(this.vidSrc);        // stop() removes it from the document
     v.muted = !VIDEO_HAS_VOICE;
-    v.style.cssText = "position:fixed;left:-9999px;top:0;width:2px;height:2px;opacity:0;pointer-events:none";
-    v.setAttribute("aria-hidden", "true");
-    document.body.appendChild(v);
+    if (v.error) this.vidFailedAt ??= performance.now();
     v.addEventListener("error", () => { this.vidFailedAt ??= performance.now(); });
-    try { v.load(); } catch {}
     this.vid = v;
     return v;
+  }
+
+  // the recording for this arm, fetched as soon as the arm is known (the
+  // login), so the measurement never waits on a 10 MB download
+  static preload(side) {
+    const src = videoSrcFor(side);
+    if (!PRELOADED.has(src)) PRELOADED.set(src, makeAssessVideo(src));
+    return PRELOADED.get(src);
   }
 
   _seekPlay(t) {
@@ -924,6 +978,10 @@ export class Assessment {
     const ang = this.t.armAngle(this.side);
     if (ang != null) { this.angMin = Math.min(this.angMin, ang); this.angMax = Math.max(this.angMax, ang); }
 
+    if (!this.moving) {
+      if (this.restAt && Math.hypot(hand.x - this.restAt.x, hand.y - this.restAt.y) < MOVE_START) return;
+      this.moving = true;
+    }
     const dxc = hand.x - CENTER.x, dyc = hand.y - CENTER.y;
     const r = Math.hypot(dxc, dyc);
     if (r <= REC_R) { this.prevTh = null; return; }   // near the centre the angle is meaningless
@@ -1428,71 +1486,46 @@ export class Assessment {
   }
 
   // ---------- the video stage ----------
-  // The layout from the clinical lead's sketch: an instruction box top-left,
-  // the recording large beneath it, and on the right the patient's own
-  // mirror CROPPED to the person, with the skeleton, the painted workspace
-  // and the wrist cursor exactly as the full-screen stage draws them.
+  // The recording fills the screen, and in its empty right part the
+  // patient's own mirror CROPPED to the person, with the skeleton, the
+  // painted workspace and the wrist cursor exactly as the full-screen stage
+  // draws them, and the posture figure in that box's corner.
   _drawVideoStage(ctx, c, now) {
     const W = c.width, H = c.height;
     const g = ctx.createLinearGradient(0, 0, 0, H);
     g.addColorStop(0, "#20204a"); g.addColorStop(1, "#161636");
     ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
 
-    const pad = Math.round(W * 0.022);
-    const boxH = Math.round(H * 0.13);
-    const top = pad, left = pad;
-    const bodyTop = top + boxH + pad, bodyH = H - bodyTop - pad;
-    // the recording's box takes the crop's own shape (no wider than 60% of
-    // the stage), and the patient gets the rest
+    // no instruction box of our own (Oct 2026, by request): the recording
+    // carries the move's title, its caption and the arm; the top strip is
+    // left for the Help and close buttons
+    const pad = Math.round(W * 0.016);
+    const bodyTop = Math.round(H * 0.065), bodyH = H - bodyTop - pad;
+    // the recording, whole, as large as fits
     const v = this.vid;
     const srcW = v?.videoWidth || 1920, srcH = v?.videoHeight || 1080;
-    const cropAspect = (srcW * (VIDEO_CROP.x1 - VIDEO_CROP.x0)) / srcH;
-    const vidW = Math.min(Math.round((W - pad * 3) * 0.6), Math.round(bodyH * cropAspect));
-    const panelX = left + vidW + pad, panelW = W - panelX - pad;
-    const part = VIDEO_PARTS[this.vIdx] || null;
+    let vidW = W - pad * 2, vidH = Math.round(vidW * srcH / srcW);
+    if (vidH > bodyH) { vidH = bodyH; vidW = Math.round(vidH * srcW / srcH); }
+    const vx = Math.round((W - vidW) / 2), vy = bodyTop + Math.round((bodyH - vidH) / 2);
+    const S = VIDEO_PERSON_SLOT;
 
-    // instruction box, across the top: the move she is on, in the words of
-    // its caption, and which arm
-    ctx.save();
-    ctx.fillStyle = "rgba(244,236,221,0.08)";
-    ctx.strokeStyle = "rgba(244,236,221,0.35)"; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.roundRect(left, top, W - pad * 2, boxH, 14); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = "#e8a86a"; ctx.textBaseline = "middle"; ctx.textAlign = "left";
-    const titleF = Math.round(H * 0.034);
-    ctx.font = `800 ${titleF}px Nunito, sans-serif`;
-    const done = this.vIdx >= VIDEO_PARTS.length;
-    ctx.fillText(done ? "Well done!" : this.vWait ? "Finish the move, then we carry on" : part ? `Follow along: ${part.name.toLowerCase()}` : "Follow along", left + 18, top + boxH * 0.3);
-    ctx.textAlign = "right"; ctx.fillStyle = "rgba(244,236,221,0.6)";
-    ctx.font = `700 ${Math.round(H * 0.022)}px Nunito, sans-serif`;
-    ctx.fillText(`${this.side} arm`, W - pad - 18, top + boxH * 0.3);
-    ctx.textAlign = "left"; ctx.fillStyle = "rgba(244,236,221,0.85)";
-    const lineF = Math.round(H * 0.024);
-    ctx.font = `600 ${lineF}px Nunito, sans-serif`;
-    const lines = wrapLines(ctx, done ? VIDEO_DONE : part ? part.say : VIDEO_LEAD, W - pad * 2 - 36);
-    lines.slice(0, 2).forEach((ln, i) => ctx.fillText(ln, left + 18, top + boxH * 0.62 + i * lineF * 1.15));
-    ctx.restore();
-
-    // the recording, cropped to its left part (mirrored for the other arm
-    // only when the recording has no burnt-in text, VIDEO_MIRROR)
+    // the recording (mirrored for the other arm only when it has no
+    // burnt-in text, VIDEO_MIRROR)
     ctx.save();
     ctx.fillStyle = "rgba(10,10,30,0.6)";
-    ctx.beginPath(); ctx.roundRect(left, bodyTop, vidW, bodyH, 14); ctx.fill();
+    ctx.beginPath(); ctx.roundRect(vx, vy, vidW, vidH, 14); ctx.fill();
     ctx.clip();
     if (v && v.readyState >= 2 && v.videoWidth) {
-      const sx = v.videoWidth * VIDEO_CROP.x0, sw = v.videoWidth * (VIDEO_CROP.x1 - VIDEO_CROP.x0), sh = v.videoHeight;
-      const sc = Math.min(vidW / sw, bodyH / sh);
-      const dw = sw * sc, dh = sh * sc;
-      const dx = left + (vidW - dw) / 2, dy = bodyTop + (bodyH - dh) / 2;
       if (VIDEO_MIRROR && !VIDEO_SRCS[this.side]) {
-        ctx.translate(dx + dw, dy); ctx.scale(-1, 1);
-        ctx.drawImage(v, sx, 0, sw, sh, 0, 0, dw, dh);
+        ctx.translate(vx + vidW, vy); ctx.scale(-1, 1);
+        ctx.drawImage(v, 0, 0, vidW, vidH);
       } else {
-        ctx.drawImage(v, sx, 0, sw, sh, dx, dy, dw, dh);
+        ctx.drawImage(v, vx, vy, vidW, vidH);
       }
     } else {
       ctx.fillStyle = "rgba(244,236,221,0.6)"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
       ctx.font = `700 ${Math.round(H * 0.03)}px Nunito, sans-serif`;
-      ctx.fillText(this.vidFailedAt ? "The video could not be played" : "Loading the video…", left + vidW / 2, bodyTop + bodyH / 2);
+      ctx.fillText(this.vidFailedAt ? "The video could not be played" : "Loading the video…", vx + vidW * S.x0 / 2, vy + vidH / 2);
     }
     ctx.restore();
     // the caption: the spoken line, under the picture, for anyone who
@@ -1500,43 +1533,48 @@ export class Assessment {
     // recording carries its own
     if (A11Y.captions && this.caption && !VIDEO_CAPTIONED) {
       ctx.save();
-      ctx.beginPath(); ctx.roundRect(left, bodyTop, vidW, bodyH, 14); ctx.clip();
+      ctx.beginPath(); ctx.roundRect(vx, vy, vidW * S.x0, vidH, 14); ctx.clip();
       const capF = Math.round(H * 0.026);
       ctx.font = `700 ${capF}px Nunito, sans-serif`;
-      const cl = wrapLines(ctx, this.caption, vidW - 40).slice(0, 3);
+      const cl = wrapLines(ctx, this.caption, vidW * S.x0 - 40).slice(0, 3);
       const bandH = cl.length * capF * 1.3 + 22;
       ctx.fillStyle = "rgba(8,6,18,0.78)";
-      ctx.fillRect(left, bodyTop + bodyH - 10 - bandH, vidW, bandH);
+      ctx.fillRect(vx, vy + vidH - 10 - bandH, vidW * S.x0, bandH);
       ctx.fillStyle = "#f4ecdd"; ctx.textAlign = "center"; ctx.textBaseline = "top";
-      cl.forEach((ln, i) => ctx.fillText(ln, left + vidW / 2, bodyTop + bodyH - 10 - bandH + 11 + i * capF * 1.3));
+      cl.forEach((ln, i) => ctx.fillText(ln, vx + vidW * S.x0 / 2, vy + vidH - 10 - bandH + 11 + i * capF * 1.3));
       ctx.restore();
     }
     // progress under the recording: how far through it is, with a tick
     // where each move begins
     {
-      const y = bodyTop + bodyH - 6;
+      const y = vy + vidH - 6;
       ctx.fillStyle = "rgba(244,236,221,0.16)";
-      ctx.fillRect(left, y, vidW, 6);
+      ctx.fillRect(vx, y, vidW, 6);
       const f = v && v.duration > 0 ? Math.max(0, Math.min(1, v.currentTime / VIDEO_END)) : 0;
-      if (f > 0) { ctx.fillStyle = "rgba(232,168,106,0.9)"; ctx.fillRect(left, y, vidW * f, 6); }
+      if (f > 0) { ctx.fillStyle = "rgba(232,168,106,0.9)"; ctx.fillRect(vx, y, vidW * f, 6); }
       ctx.fillStyle = "rgba(20,16,40,0.8)";
-      for (const p of VIDEO_PARTS) ctx.fillRect(left + vidW * (p.t0 / VIDEO_END) - 1, y, 2, 6);
+      for (const p of VIDEO_PARTS) ctx.fillRect(vx + vidW * (p.t0 / VIDEO_END) - 1, y, 2, 6);
     }
 
-    // the patient, cropped to the person
-    const panel = { x: panelX, y: bodyTop, w: panelW, h: bodyH };
-    ctx.save();
-    ctx.fillStyle = "rgba(10,10,30,0.55)";
-    ctx.beginPath(); ctx.roundRect(panel.x, panel.y, panel.w, panel.h, 14); ctx.fill();
-    ctx.clip();
-    this._drawPersonPanel(ctx, c, panel, now);
-    ctx.restore();
-    ctx.fillStyle = "rgba(244,236,221,0.75)";
-    ctx.font = `600 ${Math.round(H * 0.024)}px Nunito, sans-serif`;
-    ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
-    ctx.fillText("You", panel.x + 12, panel.y - 8);
-    ctx.beginPath(); ctx.arc(panel.x + panel.w - 18, panel.y - 15, 6, 0, TAU);
-    ctx.fillStyle = this.t.trackingOk ? "#9fc08a" : "#e8a86a"; ctx.fill();
+    // the patient, cropped to the person, in the recording's empty slot
+    const panel = { x: vx + vidW * S.x0, y: vy + vidH * S.y0, w: vidW * (S.x1 - S.x0), h: vidH * (S.y1 - S.y0) };
+    this._slot = panel;                   // the posture figure sits in its corner (_drawCoach)
+    drawPersonSlot(ctx, panel, this.t.trackingOk, Math.round(H * 0.024), () => this._drawPersonPanel(ctx, c, panel, now));
+    // the recording holds at a move's end until the arm is back: say so on
+    // the patient's own picture, where they are looking
+    if (this.vWait) {
+      const fs = Math.round(H * 0.026);
+      ctx.save();
+      ctx.font = `800 ${fs}px Nunito, sans-serif`;
+      const txt = "Finish the move, then we carry on";
+      const tw = Math.min(panel.w - 24, ctx.measureText(txt).width + fs * 1.6), th = fs * 2;
+      const tx = panel.x + (panel.w - tw) / 2, ty = panel.y + panel.h - th - 14;
+      ctx.fillStyle = "rgba(20,18,48,0.85)";
+      ctx.beginPath(); ctx.roundRect(tx, ty, tw, th, th / 2); ctx.fill();
+      ctx.fillStyle = "#e8a86a"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(txt, tx + tw / 2, ty + th / 2 + 1, tw - fs);
+      ctx.restore();
+    }
   }
 
   // The crop is a window in the tracker's (mirrored, normalised) video
@@ -1555,6 +1593,14 @@ export class Assessment {
     const want = panel.w / panel.h;
     const have = (2 * halfW * sw) / ((up + down) * sh);
     if (have < want) halfW *= want / have; else { const k = have / want; up *= k; down *= k; }
+    // a person sitting low (or high, or at a side) in the camera picture:
+    // zoom in about them, down to VIDEO_CROP_MIN of the size, rather than
+    // slide the window and fill the panel with wall
+    {
+      const room = Math.min(1, (1 - f.y) / down, f.y / up, (1 - f.x) / halfW, f.x / halfW);
+      const k = Math.max(VIDEO_CROP_MIN, room);
+      halfW *= k; up *= k; down *= k;
+    }
     let x0 = f.x - halfW, x1 = f.x + halfW, y0 = f.y - up, y1 = f.y + down;
     // keep the window inside the picture, sliding rather than squashing
     if (x0 < 0) { x1 -= x0; x0 = 0; } if (x1 > 1) { x0 -= x1 - 1; x1 = 1; }
@@ -1868,6 +1914,10 @@ export class Assessment {
       ctx.fillStyle = `rgba(18,12,28,${this.coach.dimming})`;
       ctx.fillRect(0, 0, c.width, c.height);
     }
-    this.coach.draw(ctx, c.width * 0.06, c.height * 0.96, c.height * 0.18, now);
+    // on the video stage the figure sits in the corner of the patient's own
+    // picture, not loose on the dark edge of the screen
+    const sl = this.state === "video" && this._slot;
+    if (sl) this.coach.draw(ctx, sl.x + sl.w * 0.1, sl.y + sl.h - 10, sl.h * 0.2, now);
+    else this.coach.draw(ctx, c.width * 0.06, c.height * 0.96, c.height * 0.18, now);
   }
 }

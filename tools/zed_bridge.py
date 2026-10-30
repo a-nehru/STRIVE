@@ -51,9 +51,10 @@ Keys: Ctrl+C to quit.
 """
 
 import argparse
+import collections
+import json
 import math
 import os
-import json
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -473,15 +474,25 @@ class Tilt:
     rolled clockwise as seen from behind it, so the scene must be turned
     clockwise on screen by phi to level it."""
     MAX_DEG = 30.0        # beyond this something else is wrong; do not "correct"
-    DEAD_DEG = 0.4        # a level camera stays untouched
+    # The turn applied to the picture is held still (27 Oct 2026, by request:
+    # the picture shook and rotated). It switches on past ON_DEG and off
+    # under OFF_DEG, so a camera that reads about the old single 0.4 degree
+    # cut-off no longer flips the turn on and off, and once on it moves only
+    # when the measured roll has drifted STEP_DEG from it, so sensor noise
+    # never turns the picture a little every frame.
+    ON_DEG = 0.8          # a camera rolled less than this stays untouched
+    OFF_DEG = 0.4         # ...and a correction in force is dropped under this
+    STEP_DEG = 0.3        # the applied turn follows the measurement in steps this big
 
     def __init__(self, mode):
         self.mode = mode              # "auto" | "off" | fixed degrees
         self.phi = 0.0                # radians, smoothed
+        self.applied = None           # radians actually turned, or None (level)
         self.raw = None
         self.sensors = None
         if mode not in ("auto", "off"):
             self.phi = math.radians(float(mode))
+            self.applied = self.phi
 
     def update(self, zed):
         if self.mode != "auto":
@@ -509,20 +520,34 @@ class Tilt:
         # slow: a knock to the tripod settles in a couple of seconds, a
         # frame of vibration moves nothing
         self.phi += (raw - self.phi) * 0.02
+        self.settle()
+
+    def settle(self):
+        """Move the applied turn from the smoothed measurement, with hysteresis."""
+        if self.mode != "auto":
+            return
+        a = abs(self.phi)
+        if self.applied is None:
+            if a > math.radians(self.ON_DEG):
+                self.applied = self.phi
+        elif a < math.radians(self.OFF_DEG):
+            self.applied = None
+        elif abs(self.phi - self.applied) > math.radians(self.STEP_DEG):
+            self.applied = self.phi
 
     @property
     def active(self):
-        return self.mode != "off" and abs(self.phi) > math.radians(self.DEAD_DEG)
+        return self.mode != "off" and self.applied is not None
 
     @property
     def deg(self):
-        return round(math.degrees(self.phi), 2)
+        return round(math.degrees(self.applied or 0.0), 2)
 
     def rot(self):
         """(cos, sin) for the clockwise-on-screen turn that levels the picture, or None."""
         if not self.active:
             return None
-        return math.cos(self.phi), math.sin(self.phi)
+        return math.cos(self.applied), math.sin(self.applied)
 
 
 TILT = None
@@ -560,23 +585,36 @@ def mp_curl(world):
 
 
 class HandWorker(threading.Thread):
-    def __init__(self, model="mediapipe"):
+    def __init__(self, model="mediapipe", stereo=True):
         super().__init__(daemon=True)
         # the model behind the common detect(rgb, side, t_ms) interface:
         # "mediapipe" in-process (what shipped), anything else through a
         # worker in tools/.venv-hands (see tools/handmodels)
         from handmodels.client import make_hand_model
-        self.model = make_hand_model(model)
+        # BOTH EYES (29 Oct 2026, by request): the same model runs on a crop
+        # of the left and of the right picture, one instance per eye so each
+        # keeps its own VIDEO-mode tracking state, and the more confident
+        # answer per hand is kept. A hand half hidden or edge-on to one lens
+        # is often clear to the other, 12 cm to the side.
+        self.models = {"left": make_hand_model(model)}
+        if stereo:
+            self.models["right"] = make_hand_model(model)
         self.name_ = model
+        self.wins = {}                      # side -> {view: times its answer was kept}
         self.cv = threading.Condition()
         self.job = None
         self.result = {"hands": [], "at": 0.0}
+        self.sides = {}                     # side -> [dropped as the other hand, seen]
+        self.gap = {}                       # side -> model wrist to ZED wrist, over the crop size
         self.ms = 0.0
 
-    def submit(self, bgra, crops, t_ms):
-        """Latest frame wins: a job not yet started is simply replaced."""
+    def submit(self, frames, crops, t_ms, wrists=None, disp=None):
+        """Latest frame wins: a job not yet started is simply replaced.
+        frames: {view: BGRA}; crops: the LEFT-eye crops; disp: {side: the
+        wrist's stereo disparity in px}, which moves a crop into the right
+        eye (x_right = x_left - disparity, rectified rows are shared)."""
         with self.cv:
-            self.job = (bgra, crops, t_ms)
+            self.job = (frames, crops, t_ms, wrists or {}, disp or {})
             self.cv.notify()
 
     def latest(self):
@@ -588,34 +626,120 @@ class HandWorker(threading.Thread):
             with self.cv:
                 while self.job is None:
                     self.cv.wait()
-                bgra, crops, t_ms = self.job
+                frames, crops, t_ms, wrists, disp = self.job
                 self.job = None
             t0 = time.perf_counter()
-            H, W = bgra.shape[:2]
             hands = []
             for side, (cx, cy, size) in crops.items():
                 size = int(size)
-                x0 = int(min(max(cx - size / 2, 0), max(W - size, 0)))
-                y0 = int(min(max(cy - size / 2, 0), max(H - size, 0)))
-                crop = bgra[y0:y0 + size, x0:x0 + size]
-                if crop.size == 0:
+                best = None
+                for view, model in self.models.items():
+                    bgra = frames.get(view)
+                    if bgra is None:
+                        continue
+                    shift = 0.0
+                    if view == "right":
+                        if disp.get(side) is None:
+                            continue
+                        shift = disp[side]
+                    H, W = bgra.shape[:2]
+                    x0 = int(min(max(cx - shift - size / 2, 0), max(W - size, 0)))
+                    y0 = int(min(max(cy - size / 2, 0), max(H - size, 0)))
+                    crop = bgra[y0:y0 + size, x0:x0 + size]
+                    if crop.size == 0:
+                        continue
+                    try:
+                        rgb = cv2.cvtColor(np.ascontiguousarray(crop), cv2.COLOR_BGRA2RGB)
+                        res = model.detect(rgb, side, int(t_ms))
+                    except Exception as e:
+                        if not getattr(self, "_warned", False):
+                            self._warned = True
+                            print(f"  hand model {self.name_} ({view} eye): {e.__class__.__name__}: {e}")
+                        continue
+                    if not res:
+                        continue
+                    # back into LEFT-eye pixels, where the skeleton lives
+                    pts = [(x0 + shift + p[0], y0 + p[1]) for p in res["pts"]]
+                    # THE OTHER HAND IN THIS CROP (28 Oct 2026): with one hand
+                    # resting out of sight, its crop can hold the other hand,
+                    # and the model reports that one as this side (the left
+                    # wrist bend read 100-180 degrees, the right hand's own
+                    # direction against the left forearm). A hand whose wrist
+                    # is not near this side's ZED wrist is dropped.
+                    st = self.sides.setdefault(side, [0, 0])
+                    st[1] += 1
+                    wr = wrists.get(side)
+                    gap = None if wr is None else round(math.hypot(pts[0][0] - wr[0], pts[0][1] - wr[1]) / size, 2)
+                    if gap is not None and gap > HAND_WRIST_MAX:
+                        st[0] += 1
+                        continue
+                    conf = float(res.get("conf", 1.0) or 0.0)
+                    if best is None or conf > best[0]:
+                        best = (conf, view, pts, res, gap)
+                if best is None:
                     continue
-                try:
-                    rgb = cv2.cvtColor(np.ascontiguousarray(crop), cv2.COLOR_BGRA2RGB)
-                    res = self.model.detect(rgb, side, int(t_ms))
-                except Exception as e:
-                    if not getattr(self, "_warned", False):
-                        self._warned = True
-                        print(f"  hand model {self.name_}: {e.__class__.__name__}: {e}")
-                    continue
-                if not res:
-                    continue
-                pts = [(x0 + p[0], y0 + p[1]) for p in res["pts"]]
+                conf, view, pts, res, gap = best
+                self.gap[side] = gap
+                w = self.wins.setdefault(side, {})
+                w[view] = w.get(view, 0) + 1
                 curl = mp_curl(res["world"]) if res.get("world") else None
                 aperture = hm_aperture(res["world"]) if res.get("world") else None
-                hands.append({"side": side, "px": pts, "curl": curl, "aperture": aperture})
+                hands.append({"side": side, "px": pts, "curl": curl, "aperture": aperture,
+                              "world": res.get("world"), "is_right": res.get("is_right"),
+                              "conf": conf, "view": view})
             self.ms = (time.perf_counter() - t0) * 1000
             self.result = {"hands": hands, "at": time.monotonic()}
+
+
+def wrist_px(body, table):
+    """Each side's ZED wrist in full-resolution pixels, to check that the
+    hand the model found in a crop is the one at this wrist."""
+    kp2 = np.asarray(body.keypoint_2d, dtype=float)
+    out = {}
+    for side, wi in (("left", 15), ("right", 16)):
+        w = kp2[table[wi][0]]
+        if np.isfinite(w).all():
+            out[side] = (float(w[0]), float(w[1]))
+    return out
+
+
+def stereo_disparity(body, table, calib):
+    """Each side's wrist disparity in pixels between the two rectified eyes
+    (fx * baseline / z), so its left-eye crop can be found in the right eye.
+    The 3D keypoints are in the gravity-aligned world frame, whose origin is
+    the left camera, so the distance is the same in either frame and the
+    camera-frame z is that distance over the length of the pixel's ray."""
+    if calib is None:
+        return {}
+    fx, fy, cx, cy, base = calib
+    kp2 = np.asarray(body.keypoint_2d, dtype=float)
+    kp3 = np.asarray(body.keypoint, dtype=float)
+    out = {}
+    for side, wi in (("left", 15), ("right", 16)):
+        zi = table[wi][0]
+        if zi >= len(kp3) or not (np.isfinite(kp2[zi]).all() and np.isfinite(kp3[zi]).all()):
+            continue
+        r = float(np.linalg.norm(kp3[zi][:3]))
+        if r < 0.3:
+            continue
+        u, v = kp2[zi][0], kp2[zi][1]
+        z = r / math.sqrt(((u - cx) / fx) ** 2 + ((v - cy) / fy) ** 2 + 1.0)
+        out[side] = fx * base / z
+    return out
+
+
+def stereo_calib(zed):
+    """(fx, fy, cx, cy, baseline m) of the rectified left eye, or None."""
+    try:
+        cp = zed.get_camera_information().camera_configuration.calibration_parameters
+        lc = cp.left_cam
+        base = abs(float(cp.get_camera_baseline()))
+        if base > 1.0:                       # reported in mm by an older SDK
+            base /= 1000.0
+        return (float(lc.fx), float(lc.fy), float(lc.cx), float(lc.cy), base)
+    except Exception as e:
+        print(f"  stereo hands: no calibration ({e.__class__.__name__}: {e}); left eye only")
+        return None
 
 
 def hand_crops(body, table, shoulders, res_w=REF_WIDTH):
@@ -688,6 +812,49 @@ def body_to_lm3(body, table):
                 lm3[mp_i] = [round(float(v), 4) for v in kp3[zi][:3]]
                 break
     return lm3
+
+
+DEBUG_BEND = False
+# a hand model's wrist further than this share of the crop from the ZED's
+# wrist is the other hand, not this one
+HAND_WRIST_MAX = 0.35
+
+
+def wrist_bend(body, table, side, world):
+    """Wrist flexion (+) / extension (-) in degrees, or None (28 Oct 2026,
+    by request: measure the wrist before building a wrist shot in Pong).
+
+    The forearm is the ZED's elbow -> wrist in metres (camera frame, y down);
+    the hand is the hand model's wrist -> middle knuckle on its 3D points,
+    which are hand-centred but camera-aligned, so the two can be compared.
+    The bend is the hand's angle off the forearm line towards the palm side,
+    the palm's normal taken from the wrist, index and little-finger knuckles
+    (the cross product flips between a left and a right hand)."""
+    if not world or len(world) < 21:
+        return None
+    kp3 = np.asarray(body.keypoint, dtype=float)
+    def joint(mp_i):
+        for zi in table.get(mp_i, []):
+            if zi < len(kp3) and np.isfinite(kp3[zi]).all() and abs(kp3[zi][2]) > 1e-6:
+                return kp3[zi][:3]
+        return None
+    el, wr = (joint(13), joint(15)) if side == "left" else (joint(14), joint(16))
+    if el is None or wr is None:
+        return None
+    f = wr - el
+    if np.linalg.norm(f) < 0.05:
+        return None
+    f = f / np.linalg.norm(f)
+    W = np.asarray(world, dtype=float)
+    h = W[9] - W[0]
+    a, b = W[5] - W[0], W[17] - W[0]
+    n = np.cross(a, b) if side == "left" else np.cross(b, a)    # out of the palm
+    n = n - n.dot(f) * f
+    if np.linalg.norm(n) < 1e-6 or np.linalg.norm(h) < 1e-6:
+        return None
+    n = n / np.linalg.norm(n)
+    wrist_bend.last = (f.round(2).tolist(), (h / np.linalg.norm(h)).round(2).tolist(), n.round(2).tolist())
+    return float(np.degrees(np.arctan2(h.dot(n), h.dot(f))))
 
 
 def body_center_3d(body, shoulders):
@@ -772,9 +939,18 @@ def capture(zed, rt, run, table, shoulders, res_w, res_h, preview_w, jpeg_every,
     bodies = sl.Bodies()
     image = sl.Mat()
     image_full = sl.Mat()
+    image_full_r = sl.Mat()
+    calib = stereo_calib(zed) if HANDS is not None and "right" in HANDS.models else None
     preview_h = int(preview_w * res_h / res_w)
     preview_res = sl.Resolution(preview_w, preview_h)
     n, t0, fps = 0, time.perf_counter(), 0.0
+    # The picture sent with a skeleton is the one the skeleton was computed
+    # on (27 Oct 2026, by request: the skeleton trailed the picture). The SDK
+    # can hand back a body detection older than the frame just grabbed, so
+    # the last few preview pictures are kept by image timestamp and the one
+    # matching bodies.timestamp is sent; /status says how far behind it was.
+    recent = collections.deque(maxlen=8)        # (image ns, preview BGR)
+    lag_ema = None
     # real biacromial width per seat (meters, depth), EMA-smoothed: the game
     # uses seat 0's to convert shoulder-width units to real cm with no tape
     shm_ema = [None] * seats.n
@@ -791,6 +967,7 @@ def capture(zed, rt, run, table, shoulders, res_w, res_h, preview_w, jpeg_every,
             if TILT.raw is not None and not getattr(TILT, "announced", False):
                 TILT.announced = True
                 TILT.phi = TILT.raw            # start on the first reading, not on a fade-in from zero
+                TILT.settle()
                 print(f"  camera roll from the IMU: {math.degrees(TILT.raw):+.1f} deg"
                       f"{' - levelling the picture and the skeleton' if TILT.active else ' - level enough, no correction'}")
             if n % 30 == 0:
@@ -851,7 +1028,13 @@ def capture(zed, rt, run, table, shoulders, res_w, res_h, preview_w, jpeg_every,
                 crops = hand_crops(primary_body, table, shoulders, res_w)
                 if crops:
                     zed.retrieve_image(image_full, sl.VIEW.LEFT, sl.MEM.CPU)
-                    HANDS.submit(image_full.get_data().copy(), crops, int(now * 1000))
+                    frames = {"left": image_full.get_data().copy()}
+                    disp = {}
+                    if calib is not None:
+                        zed.retrieve_image(image_full_r, sl.VIEW.RIGHT, sl.MEM.CPU)
+                        frames["right"] = image_full_r.get_data().copy()
+                        disp = stereo_disparity(primary_body, table, calib)
+                    HANDS.submit(frames, crops, int(now * 1000), wrist_px(primary_body, table), disp)
             rot = TILT.rot() if TILT is not None else None
             hand_payload = []
             for h in HANDS.latest():
@@ -859,11 +1042,18 @@ def capture(zed, rt, run, table, shoulders, res_w, res_h, preview_w, jpeg_every,
                 for (px, py) in h["px"]:
                     lx, ly = level_px(px, py, res_w, res_h, rot)
                     pts.append([round(lx / res_w, 5), round(ly / res_h, 5)])
+                bend = wrist_bend(primary_body, table, h["side"], h.get("world")) if primary_body is not None else None
                 hand_payload.append({"side": h["side"], "pts": pts,
+                                     "bend": round(bend, 1) if bend is not None else None,
+                                     "dbg": [getattr(wrist_bend, "last", None), h.get("is_right")] if DEBUG_BEND else None,
+                                     "conf": round(h["conf"], 3), "view": h["view"],
                                      "curl": round(h["curl"], 4) if h["curl"] is not None else None,
                                      "aperture": round(h["aperture"], 4) if h.get("aperture") is not None else None})
             if n % 30 == 0:
                 STATUS["hand_ms"] = round(HANDS.ms, 1)
+                STATUS["hand_wrong_dropped"] = {k: f"{v[0]}/{v[1]}" for k, v in HANDS.sides.items()}
+                STATUS["hand_wrist_gap"] = dict(HANDS.gap)
+                STATUS["hand_view_wins"] = {k: dict(v) for k, v in HANDS.wins.items()}
         STATUS["seats"] = [e["id"] for e in entries]
         STATUS["sticky"] = [s for s in range(seats.n) if seats.sticky[s]]
         STATUS["bodies_seen"] = len(bodies.body_list)
@@ -887,9 +1077,27 @@ def capture(zed, rt, run, table, shoulders, res_w, res_h, preview_w, jpeg_every,
         best = entries[0] if entries else None
 
         jpg = None
+        img_ns = body_ns = None
+        try:
+            img_ns = zed.get_timestamp(sl.TIME_REFERENCE.IMAGE).get_nanoseconds()
+            body_ns = bodies.timestamp.get_nanoseconds()
+        except Exception:
+            pass
+        zed.retrieve_image(image, sl.VIEW.LEFT, sl.MEM.CPU, preview_res)
+        recent.append((img_ns, cv2.cvtColor(image.get_data(), cv2.COLOR_BGRA2BGR)))
+        if img_ns and body_ns and img_ns >= body_ns:
+            lag = (img_ns - body_ns) / 1e6
+            lag_ema = lag if lag_ema is None else lag_ema + (lag - lag_ema) * 0.05
+            if n % 30 == 0:
+                STATUS["body_lag_ms"] = round(lag_ema, 1)
         if n % jpeg_every == 0:
-            zed.retrieve_image(image, sl.VIEW.LEFT, sl.MEM.CPU, preview_res)
-            frame = cv2.cvtColor(image.get_data(), cv2.COLOR_BGRA2BGR)
+            frame = recent[-1][1]
+            if body_ns and bodies.body_list:
+                # the newest picture taken no later than the skeleton's frame
+                for ts, pic in reversed(recent):
+                    if ts is not None and ts <= body_ns:
+                        frame = pic
+                        break
             if TILT is not None and TILT.active:
                 # the same clockwise-on-screen turn the landmarks get
                 # (OpenCV's angle is counter-clockwise, hence the minus)
@@ -940,6 +1148,9 @@ def main():
     ap.add_argument("--hand-model", choices=["mediapipe", "wilor"], default=cfg.get("hand_model", "mediapipe"),
                     help="which 21-point hand model runs on the wrist crops: mediapipe (CPU, "
                          "in-process) or wilor (CUDA, in tools/.venv-hands; tools/setup_hands_env.cmd)")
+    ap.add_argument("--hand-views", choices=["both", "left"], default="both",
+                    help="run the hand model on both ZED eyes and keep the more confident "
+                         "answer per hand (both), or on the left eye only")
     ap.add_argument("--hands", choices=["auto", "off"], default="auto",
                     help="grasp from the MediaPipe hand model on a crop around each wrist "
                          "(auto: on when the mediapipe package is installed)")
@@ -1033,9 +1244,10 @@ def main():
     SEATS = Seats(max(1, args.bodies), args.seat_grace, args.sig_tol)
     if args.hands == "auto":
         try:
-            HANDS = HandWorker(args.hand_model)
+            HANDS = HandWorker(args.hand_model, stereo=args.hand_views == "both")
             HANDS.start()
-            print(f"  grasp: {args.hand_model} hand model on a crop around each wrist")
+            print(f"  grasp: {args.hand_model} hand model on a crop around each wrist"
+                  f"{', both eyes, the more confident kept' if args.hand_views == 'both' else ', left eye'}")
         except Exception as e:
             HANDS = None
             print(f"  grasp: hand model unavailable ({e.__class__.__name__}: {e}); "

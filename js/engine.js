@@ -83,6 +83,34 @@ const FINGER_CHAINS = [[0, 1, 2, 3, 4], [0, 5, 6, 7, 8], [0, 9, 10, 11, 12], [0,
 // game that tells its hands apart by colour (the Lantern, Oct 2026); closed
 // is then shown by a fuller web and a thicker stroke instead of the sage
 const hexA = (hex, a) => `rgba(${parseInt(hex.slice(1, 3), 16)},${parseInt(hex.slice(3, 5), 16)},${parseInt(hex.slice(5, 7), 16)},${a})`;
+// The patient's own picture in the empty slot a recording leaves for them
+// (the warm-up and the assessment, Oct 2026): a white-edged box like the
+// demonstrator's, `inside` drawing the cropped camera and skeleton clipped
+// to it, and a small "You" tag with the tracking light (sage tracked, amber
+// not) in its top corner.
+export function drawPersonSlot(ctx, panel, trackingOk, fontPx, inside) {
+  const r = Math.round(Math.min(panel.w, panel.h) * 0.06);
+  ctx.save();
+  ctx.fillStyle = "rgba(10,10,30,0.75)";
+  ctx.beginPath(); ctx.roundRect(panel.x, panel.y, panel.w, panel.h, r); ctx.fill();
+  ctx.clip();
+  inside();
+  ctx.restore();
+  ctx.save();
+  ctx.strokeStyle = "rgba(255,255,255,0.95)"; ctx.lineWidth = Math.max(3, Math.round(panel.w * 0.012));
+  ctx.beginPath(); ctx.roundRect(panel.x, panel.y, panel.w, panel.h, r); ctx.stroke();
+  ctx.font = `800 ${fontPx}px Nunito, sans-serif`;
+  const tw = ctx.measureText("You").width, ph = Math.round(fontPx * 1.5);
+  const px = panel.x + r * 0.6, py = panel.y + r * 0.6, pw = tw + ph * 1.3;
+  ctx.fillStyle = "rgba(20,18,48,0.78)";
+  ctx.beginPath(); ctx.roundRect(px, py, pw, ph, ph / 2); ctx.fill();
+  ctx.fillStyle = trackingOk ? "#9fc08a" : "#e8a86a";
+  ctx.beginPath(); ctx.arc(px + ph * 0.5, py + ph / 2, ph * 0.18, 0, TAU); ctx.fill();
+  ctx.fillStyle = "#f4ecdd"; ctx.textAlign = "left"; ctx.textBaseline = "middle";
+  ctx.fillText("You", px + ph * 0.85, py + ph / 2 + 1);
+  ctx.restore();
+}
+
 export function drawHand(ctx, c, t, side, opts = {}) {
   const pts = t._handPts(side);
   const closed = t.handClosed(side);
@@ -394,7 +422,8 @@ export class GameBase {
     // therapist voice: streak praise at milestones
     this.fb.lastEvent = performance.now();
     this.fb.hitStreak++; this.fb.missStreak = 0;
-    if ([5, 10, 15].includes(this.fb.hitStreak)) {
+    // (a game that sets quietPraise says its own few lines and skips these)
+    if (!this.quietPraise && [5, 10, 15].includes(this.fb.hitStreak)) {
       // the chosen coach's words (coachlines.js): a between-rep line, so the
       // relay may write it when it is up; say() keeps its own throttle
       coachSpeak("rep_result", { streak: this.fb.hitStreak, hits: this.stats.hits },

@@ -38,6 +38,7 @@ export async function probeTts() {
 }
 
 export function ttsReady() { return !!(bridge && bridge.ok); }
+export function ttsKnown() { return bridge !== null; }   // probed, present or not
 export function ttsInfo() { return bridge || null; }
 
 function key(coach, text) { return `${coach}\n${text}`; }
@@ -46,7 +47,7 @@ function key(coach, text) { return `${coach}\n${text}`; }
 // (which renders it or reads it from its disk cache). null when the bridge
 // is absent, refuses, or takes longer than LINE_MS. A slow render is NOT
 // aborted: it finishes into the memory cache so the next time is instant.
-export function fetchVoice(coach, text) {
+export function fetchVoice(coach, text, waitMs = LINE_MS) {
   if (!text || !ttsReady()) return Promise.resolve(null);
   const k = key(coach, text);
   if (mem.has(k)) return Promise.resolve(mem.get(k));
@@ -70,7 +71,7 @@ export function fetchVoice(coach, text) {
     finally { pending.delete(k); }
   })();
   pending.set(k, p);
-  const timeout = new Promise(res => setTimeout(() => res(null), LINE_MS));
+  const timeout = new Promise(res => setTimeout(() => res(null), waitMs));
   return Promise.race([p, timeout]);
 }
 

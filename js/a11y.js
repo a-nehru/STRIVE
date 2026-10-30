@@ -4,7 +4,7 @@
 // Kept in its own module so engine.js, coach.js, audio.js and main.js can all
 // read it without import cycles.
 
-import { ttsReady, fetchVoice } from "./tts.js";
+import { ttsReady, ttsKnown, fetchVoice } from "./tts.js";
 
 export const A11Y = {
   captions: true,
@@ -74,8 +74,12 @@ export function coachVoice(id = A11Y.coach) {
   return pick;
 }
 
+// One coach for everyone (27 Oct 2026, by request: the choice of three is
+// gone): Lumi's words and Lumi's voice, whatever an older record saved.
+export const THE_COACH = "lumi";
 export function applySettings(s) {
   Object.assign(A11Y, s);
+  A11Y.coach = THE_COACH;
   // system preference counts as an opt-in for reduced motion
   try { if (matchMedia("(prefers-reduced-motion: reduce)").matches) A11Y.calm = true; } catch {}
   document.body.classList.toggle("hc", !!A11Y.contrast);
@@ -107,6 +111,9 @@ let voiceEl = null;               // the <audio> playing now
 // mid-sentence). `busy` is the seq of the line still being fetched or said,
 // 0 when quiet; `busyCap` lets a stuck engine go after a reading-paced while.
 let busy = 0, busyCap = 0;
+let engine = null;                // "tts" | "browser": fixed for the session by the first line
+const VOICE_WAIT_MS = 12000;      // the cloned voice is waited for this long before the browser reads a line
+
 export function voiceBusy() { return busy !== 0 && busy === voiceSeq && performance.now() < busyCap; }
 // A line that must be heard but should not cut the one being said waits its
 // turn here; one still waiting after maxWaitMs is out of date and dropped.
@@ -135,7 +142,7 @@ function plainText(text) {
 export function speakLine(text, rate = 0.9, caption = true, onend = null, coach = null) {
   const raw = String(text || "").replace(/\s{2,}/g, " ").trim();
   text = plainText(raw);
-  const who = coach || A11Y.coach;
+  const who = THE_COACH;
   const cv = COACH_VOICE[who] || COACH_VOICE.lumi;
   // onend (optional) fires once when the line has been spoken, or after a
   // reading-paced fallback when speech is unavailable or silent, so a caller
@@ -146,7 +153,7 @@ export function speakLine(text, rate = 0.9, caption = true, onend = null, coach 
   const guard = onend ? setTimeout(finish, Math.max(3000, words * 430 / rate) + 1500) : null;
   const seq = ++voiceSeq;
   busy = text ? seq : 0;
-  busyCap = performance.now() + 6000 + Math.max(3000, words * 600 / rate);   // fetch budget + reading time
+  busyCap = performance.now() + VOICE_WAIT_MS + Math.max(3000, words * 600 / rate);   // fetch budget + reading time
   const ended = () => { if (busy === seq) busy = 0; finish(); };
   try { speechSynthesis.cancel(); } catch {}
   stopVoice();
@@ -168,8 +175,13 @@ export function speakLine(text, rate = 0.9, caption = true, onend = null, coach 
     } catch { /* voice optional: the guard timer finishes the line */ }
   };
 
-  if (!ttsReady() || A11Y.volVoice <= 0) { browser(); return; }
-  fetchVoice(who, raw).then(url => {
+  // the same voice all session (27 Oct 2026, by request): the engine is
+  // fixed by the first line spoken once the voice bridge has been asked,
+  // the cloned voice if it was ready then, else the browser's, and a bridge
+  // that finishes loading later does not switch it mid-session
+  if (!engine && ttsKnown()) engine = ttsReady() ? "tts" : "browser";
+  if (engine !== "tts" || !ttsReady() || A11Y.volVoice <= 0) { browser(); return; }
+  fetchVoice(who, raw, VOICE_WAIT_MS).then(url => {
     if (seq !== voiceSeq) return;
     if (!url) { browser(); return; }
     try {

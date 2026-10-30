@@ -12,6 +12,13 @@ import { coachLine } from "./coachlines.js";
 // Oct 2026): lean | hike | rotation | tilt each have a line in Rook's,
 // Lumi's and Maple's voice. Lumi's first lines are the original cues.
 const THRESH = { gentle: 1.0, strict: 0.65 };
+// what a score of 1.0 means in real terms, per slip (tracker.compensation)
+const SCALE = { lean: [0.30, "SW"], hike: [0.22, "SW"], rotation: [18, "%"], tilt: [12, "°"] };
+const NAMES = { lean: "Lean", hike: "Hike", rotation: "Turn", tilt: "Tilt" };
+// staff readout of the four scores under the figure (28 Oct 2026, by
+// request, to check the thresholds): device-level, the staff drawer's
+// "Posture numbers" switch, never on for a patient by default
+export const postureDebug = () => { try { return localStorage.getItem("strive-posture-debug") === "1"; } catch { return false; } };
 
 export class Coach {
   // opts.quiet: watch and log compensation but never speak, dim or show
@@ -222,6 +229,63 @@ export class Coach {
       ctx.moveTo(gx, gy - s * 0.42);
       ctx.lineTo(gx - 9 * Math.cos(angle + 0.5), gy - s * 0.42 - 9 * Math.sin(angle + 0.5));
       ctx.stroke();
+    }
+    ctx.restore();
+    if (postureDebug()) this._drawNumbers(ctx, x, y, h, now);
+  }
+
+  // the four scores as bars with the threshold marked, the real amount beside
+  // each, and the state; below the dock when there is room, else beside it
+  _drawNumbers(ctx, x, y, h, now) {
+    const c = this.t.compensation(this.side);
+    const th = THRESH[this.sens] ?? 1;
+    const fs = Math.max(12, Math.round(h * 0.075)), row = fs * 1.45;
+    const wb = this.t.wristBend?.(this.side);
+    const w = Math.max(h * 0.95, fs * 15), ph = row * (wb ? 7 : 5) + fs * 0.6;
+    const cv = ctx.canvas;
+    let px = x, py = y + 6;
+    if (py + ph > cv.height) { px = x + h * 0.95 + 8; py = y - ph; }
+    if (px + w > cv.width) px = cv.width - w - 4;
+    ctx.save();
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = "rgba(16,12,30,0.82)";
+    ctx.beginPath(); ctx.roundRect(px, py, w, ph, 10); ctx.fill();
+    ctx.font = `600 ${fs}px system-ui, sans-serif`;
+    ctx.textBaseline = "middle";
+    const pad = fs * 0.6, labW = fs * 3.2, valW = fs * 4.6, barW = w - pad * 2 - labW - valW;
+    const max = Math.max(1.5, th * 1.5);
+    const head = this.sens === "off" ? "Coach off"
+      : `${this.state}${this.state === "alert" ? ": " + NAMES[this.type] : ""} · fires at ${th}`
+        + (this.state === "idle" && now < this.cooldownUntil ? " · resting" : "");
+    ctx.fillStyle = "#f4ecdd"; ctx.textAlign = "left";
+    ctx.fillText(head, px + pad, py + pad + fs * 0.5);
+    Object.keys(SCALE).forEach((k, i) => {
+      const v = c[k] || 0, ry = py + pad + row * (i + 1) + fs * 0.5;
+      const over = v > th, bx = px + pad + labW;
+      ctx.fillStyle = over ? "#e8a86a" : "#f4ecdd";
+      ctx.fillText(NAMES[k], px + pad, ry);
+      ctx.fillStyle = "rgba(244,236,221,0.18)"; ctx.fillRect(bx, ry - fs * 0.3, barW, fs * 0.6);
+      ctx.fillStyle = over ? "#e8a86a" : "#9fc08a"; ctx.fillRect(bx, ry - fs * 0.3, barW * Math.min(1, v / max), fs * 0.6);
+      ctx.fillStyle = "#f4ecdd"; ctx.fillRect(bx + barW * th / max - 1, ry - fs * 0.5, 2, fs);
+      const [u, unit] = SCALE[k], real = v * u;
+      ctx.textAlign = "right";
+      ctx.fillText(`${v.toFixed(2)}  ${unit === "SW" ? real.toFixed(2) : Math.round(real)}${unit === "SW" ? " SW" : unit}`, px + w - pad, ry);
+      ctx.textAlign = "left";
+    });
+    // the wrist bend (ZED only): live angle on a -90..+90 bar, the range seen
+    // as a band, and how many new readings a second arrive
+    if (wb) {
+      const ry = py + pad + row * 5 + fs * 0.5, bx = px + pad + labW, mid = bx + barW / 2, k = barW / 180;
+      const clamp = d => Math.max(-90, Math.min(90, d));
+      ctx.fillStyle = "#f4ecdd"; ctx.fillText("Wrist", px + pad, ry);
+      ctx.fillStyle = "rgba(244,236,221,0.18)"; ctx.fillRect(bx, ry - fs * 0.3, barW, fs * 0.6);
+      ctx.fillStyle = "rgba(201,167,255,0.45)"; ctx.fillRect(mid + clamp(wb.lo) * k, ry - fs * 0.3, (clamp(wb.hi) - clamp(wb.lo)) * k, fs * 0.6);
+      ctx.fillStyle = "#f4ecdd"; ctx.fillRect(mid - 1, ry - fs * 0.5, 2, fs);
+      ctx.fillStyle = "#ffd54a"; ctx.fillRect(mid + clamp(wb.deg) * k - 2, ry - fs * 0.55, 4, fs * 1.1);
+      ctx.textAlign = "right";
+      ctx.fillText(`${wb.deg > 0 ? "+" : ""}${Math.round(wb.deg)}°`, px + w - pad, ry);
+      ctx.textAlign = "left"; ctx.fillStyle = "rgba(244,236,221,0.75)";
+      ctx.fillText(`+ bend down  − bend back  ·  seen ${Math.round(wb.lo)}…${Math.round(wb.hi)}°${wb.rate ? `  ·  ${wb.rate.toFixed(1)}/s` : ""}`, px + pad, ry + row);
     }
     ctx.restore();
   }

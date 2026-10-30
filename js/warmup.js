@@ -7,11 +7,13 @@
 // is stored but the play time: it is there to loosen up and to be enjoyed.
 // It opens the day's assessment (main.js startAssessment, once a session,
 // the ✕ skips it) and can be taken from the welcome screen at any time.
-// The video is the star, large on the left, and the patient sees themselves
-// beside it with their skeleton so they can match the picture; a note and
+// The video is drawn whole and as large as fits; its right part is left
+// empty on purpose (Oct 2026, by request) and the patient sees themselves
+// there, cropped to the person with their skeleton (WARMUP_PERSON_SLOT,
+// fractions of the frame), so they can match the picture; a note and
 // a little shower of light mark each new stretch, and a cheer ends it.
 // Captions are the video's own.
-import { drawBody, TAU } from "./engine.js";
+import { drawBody, drawPersonSlot, TAU } from "./engine.js";
 import { audio } from "./audio.js";
 import { A11Y, speakLine, hushVoice } from "./a11y.js";
 
@@ -32,6 +34,9 @@ export const WARMUP_STEPS = [
   { t: 83, name: "Wrist waves. Fingers laced, forward and back." },
   { t: 100, name: "All warmed up. Five stretches done." },
 ];
+// the recording's empty right part: title, demonstrator and captions fill the left 60%
+const WARMUP_PERSON_SLOT = { x0: 0.6, x1: 0.965, y0: 0.08, y1: 0.94 };
+const WARMUP_CROP_SW = 4.4, WARMUP_ZOOM_MAX = 3;   // the person's crop: shoulder widths across, and the most it zooms
 const WARMUP_END_HOLD = 3200;    // ms the cheer stays before what comes next
 
 // hidden, preloaded <video> elements by src: Warmup.preload(side) makes one
@@ -112,13 +117,14 @@ export class Warmup {
     g.addColorStop(0, "#20204a"); g.addColorStop(1, "#161636");
     ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
 
-    // the video, large on the left, in its own 16:9 shape
+    // the video, whole, as large as fits under the prompt
     const pad = Math.round(W * 0.022);
     const top = Math.round(H * 0.16), bodyH = H - top - pad;
     const aspect = v?.videoWidth && v?.videoHeight ? v.videoWidth / v.videoHeight : 16 / 9;
-    const boxW = Math.min(Math.round(W * 0.64), Math.round(bodyH * aspect));
-    const boxH = Math.round(boxW / aspect);
-    const bx = pad, by = top + Math.round((bodyH - boxH) / 2);
+    let boxW = W - pad * 2, boxH = Math.round(boxW / aspect);
+    if (boxH > bodyH) { boxH = bodyH; boxW = Math.round(boxH * aspect); }
+    const bx = Math.round((W - boxW) / 2), by = top + Math.round((bodyH - boxH) / 2);
+    const S = WARMUP_PERSON_SLOT;
     ctx.save();
     ctx.shadowColor = "rgba(0,0,0,0.5)"; ctx.shadowBlur = 30;
     ctx.fillStyle = "rgba(10,10,30,0.7)";
@@ -129,7 +135,7 @@ export class Warmup {
     else {
       ctx.fillStyle = "rgba(244,236,221,0.6)"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
       ctx.font = `700 ${Math.round(H * 0.03)}px Nunito, sans-serif`;
-      ctx.fillText(this.failedAt ? "The video could not be played" : "Loading…", bx + boxW / 2, by + boxH / 2);
+      ctx.fillText(this.failedAt ? "The video could not be played" : "Loading…", bx + boxW * S.x0 / 2, by + boxH / 2);
     }
     ctx.restore();
     if (v && v.duration > 0) {
@@ -140,20 +146,9 @@ export class Warmup {
     ctx.strokeStyle = "rgba(244,236,221,0.35)"; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.roundRect(bx, by, boxW, boxH, 18); ctx.stroke();
 
-    // the patient beside it, cropped to the person, with their skeleton
-    const panel = { x: bx + boxW + pad, y: top, w: W - (bx + boxW + pad) - pad, h: bodyH };
-    ctx.save();
-    ctx.fillStyle = "rgba(10,10,30,0.55)";
-    ctx.beginPath(); ctx.roundRect(panel.x, panel.y, panel.w, panel.h, 18); ctx.fill();
-    ctx.clip();
-    this._drawPersonPanel(ctx, c, panel);
-    ctx.restore();
-    ctx.fillStyle = "rgba(244,236,221,0.75)";
-    ctx.font = `600 ${Math.round(H * 0.024)}px Nunito, sans-serif`;
-    ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
-    ctx.fillText("You", panel.x + 12, panel.y - 8);
-    ctx.beginPath(); ctx.arc(panel.x + panel.w - 18, panel.y - 15, 6, 0, TAU);
-    ctx.fillStyle = this.t.trackingOk ? "#9fc08a" : "#e8a86a"; ctx.fill();
+    // the patient, cropped to the person, in the recording's empty slot
+    const panel = { x: bx + boxW * S.x0, y: by + boxH * S.y0, w: boxW * (S.x1 - S.x0), h: boxH * (S.y1 - S.y0) };
+    drawPersonSlot(ctx, panel, this.t.trackingOk, Math.round(H * 0.024), () => this._drawPersonPanel(ctx, c, panel));
 
     // a new move: a note, a shower of light, and its name if the sound is off
     const tv = v ? v.currentTime : 0;
@@ -162,7 +157,7 @@ export class Warmup {
     if (idx !== this.step && idx >= 0) {
       this.step = idx;
       if (this.spoken) speakLine(WARMUP_STEPS[idx].name, 0.9, A11Y.captions);
-      if (idx > 0) { audio.note(idx % 8); this._shower(bx + boxW / 2, by + boxH * 0.3); }
+      if (idx > 0) { audio.note(idx % 8); this._shower(bx + boxW * S.x0 / 2, by + boxH * 0.3); }
     }
 
     for (const p of this.sparks) { p.x += p.vx; p.y += p.vy; p.vy -= 0.03; p.life -= 0.012; }
@@ -192,15 +187,19 @@ export class Warmup {
     }
   }
 
-  // the camera picture, mirrored and "covering" the panel, slid so the
-  // tracked body sits in the middle; the skeleton goes through the same map
+  // the camera picture, mirrored and "covering" the panel, zoomed in so the
+  // person is WARMUP_CROP_SW shoulder widths across it (a patient a few
+  // metres back still fills the slot), slid so the tracked body sits in the
+  // middle; the skeleton goes through the same map
   _drawPersonPanel(ctx, c, panel) {
     const t = this.t, cam = t.video;
     if (!cam || !(cam.readyState >= 2) || !t.srcW) return;
     const sw = t.srcW, sh = t.srcH;
-    const scale = Math.max(panel.w / sw, panel.h / sh);
-    const dw = sw * scale, dh = sh * scale;
     const f = t.frame || { x: 0.5, y: 0.42 };
+    const cover = Math.max(panel.w / sw, panel.h / sh);
+    const fit = f.sw ? panel.w / (WARMUP_CROP_SW * f.sw * sw) : cover;
+    const scale = Math.max(cover, Math.min(fit, cover * WARMUP_ZOOM_MAX));
+    const dw = sw * scale, dh = sh * scale;
     // in the mirrored drawing, source x_s lands at panel.x + panel.w - ox - x_s·dw;
     // the body (source x = 1 - f.x) should land in the middle
     let ox = panel.w / 2 - (1 - f.x) * dw, oy = panel.h * 0.42 - f.y * dh;

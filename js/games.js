@@ -801,6 +801,13 @@ const RECORD_COL = "#ffd54a";
 // game quickens it by PACE_WIN, a lost one slows it by PACE_LOSE, and the
 // pace the match ends on is what main.js saves for the next time.
 const PACE_K = 0.85, PACE_REACT = 0.3, PACE_WIN = 0.9, PACE_LOSE = 1.1, PACE_MIN = 1.6, PACE_MAX = 5.5;
+// PONG'S LEVELS ARE THE BALL'S SPEED (28 Oct 2026, by request: patients
+// could not follow the ball). Seconds for the ball to cross the court at
+// full speed, level 1 the slowest; everyone starts at level 1, a match won
+// moves up one, a match lost down one (main.js, stored per arm and per
+// Pong). The pace is fixed for the whole match at its level.
+export const PONG_SPEED_LEVELS = [7.0, 6.0, 5.2, 4.5, 3.9, 3.4, 3.0, 2.6, 2.3, 2.0];
+export const PONG_LEVEL_MAX = PONG_SPEED_LEVELS.length;
 const SWEEP_LEGS = 3, SWEEP_MAX_MS = 45000, SWEEP_RING = 0.08;   // the burning-racket game clock (Oct 2026, off by request: the plain clock is clearer)
 // Modes:
 //   solo       patient arm vs gentle (beatable!) AI — points scored both ways
@@ -957,8 +964,30 @@ export class ArcPong extends GameBase {
     this.rally = 0; this.bestRally = 0;
     this.spins = 0; this.bestEver = this.opts.bestRallyEver || 0; this.recordBeat = false; this._spinSaid = false;
     this.score = { us: 0, ai: 0 };
-    this.pace = Math.min(PACE_MAX, Math.max(PACE_MIN, this.params.lifetime || 3));
+    this.pongLevel = this.opts.pongLevel ? Math.max(1, Math.min(PONG_LEVEL_MAX, this.opts.pongLevel)) : null;
+    this.pace = this.pongLevel ? PONG_SPEED_LEVELS[this.pongLevel - 1]
+      : Math.min(PACE_MAX, Math.max(PACE_MIN, this.params.lifetime || 3));
     this.paceStart = this.pace; this.paceLog = []; this.sweepT = null;
+    // MANUAL SPEED (28 Oct 2026, by request): staff change the level live,
+    // with + / - (or ] / [) or by clicking the arrows under the clock; each
+    // change is logged in the round record (levelChanges) and the level the
+    // match ends on is what main.js moves up or down from
+    this.levelStart = this.pongLevel; this.levelChanges = []; this._lvlHit = null;
+    if (this.pongLevel) {
+      this._lvlKey = e => {
+        if (e.key === "+" || e.key === "=" || e.key === "]") { e.preventDefault(); this.setSpeedLevel(this.pongLevel + 1); }
+        else if (e.key === "-" || e.key === "_" || e.key === "[") { e.preventDefault(); this.setSpeedLevel(this.pongLevel - 1); }
+      };
+      this._lvlClick = e => {
+        const H = this._lvlHit, cv = this.canvas; if (!H || !cv) return;
+        const r = cv.getBoundingClientRect();
+        const x = (e.clientX - r.left) * cv.width / r.width, y = (e.clientY - r.top) * cv.height / r.height;
+        if (Math.hypot(x - H.minus.x, y - H.y) < H.r) this.setSpeedLevel(this.pongLevel - 1);
+        else if (Math.hypot(x - H.plus.x, y - H.y) < H.r) this.setSpeedLevel(this.pongLevel + 1);
+      };
+      addEventListener("keydown", this._lvlKey);
+      addEventListener("pointerdown", this._lvlClick);
+    }
     this.games = { us: 0, them: 0, list: [] };   // the match: games won each way, and each game's tally
     this.matchDone = false;
     // the style layer, per player ("us" the patient, "them" the other side:
@@ -1130,7 +1159,23 @@ export class ArcPong extends GameBase {
   }
   stop() {
     if (this._keyDown) { removeEventListener("keydown", this._keyDown); removeEventListener("keyup", this._keyUp); }
+    if (this._lvlKey) { removeEventListener("keydown", this._lvlKey); removeEventListener("pointerdown", this._lvlClick); this._lvlKey = null; }
     super.stop();
+  }
+  // the speed level changed by hand: the ball in flight and the rally's
+  // pace are rescaled at once, so the change is felt on this very ball
+  setSpeedLevel(n) {
+    if (!this.pongLevel) return;
+    const L = Math.max(1, Math.min(PONG_LEVEL_MAX, n)), now = performance.now();
+    if (L === this.pongLevel) return;
+    const from = this.pongLevel, k = this.pace / PONG_SPEED_LEVELS[L - 1];
+    this.pongLevel = L; this.pace = PONG_SPEED_LEVELS[L - 1];
+    if (this.fullVx) this.fullVx *= k;
+    if (this.baseVx) this.baseVx *= k;
+    if (this.ball) { this.ball.vx *= k; if (this.ball.vy) this.ball.vy *= k; }
+    this.levelChanges.push({ from, to: L, atS: Math.round(this.elapsed(now)) });
+    this.flash = { text: `Speed level ${L}`, col: "#ffd98a", until: now + 1400 };
+    audio.note?.(L > from ? 7 : 3);
   }
   extra() {
     return {
@@ -1160,7 +1205,7 @@ export class ArcPong extends GameBase {
       // the pace (seconds across the court at full speed): where the round
       // started, where it ended after each game's win or loss, and the sweep
       sweepT: this.sweepT, paceStart: Math.round(this.paceStart * 100) / 100,
-      pace: Math.round(this.pace * 100) / 100, paceByGame: this.paceLog.map(p => ({ ...p })),
+      pongLevel: this.pongLevel, pongLevelStart: this.levelStart, levelChanges: this.levelChanges.map(x => ({ ...x })), pace: Math.round(this.pace * 100) / 100, paceByGame: this.paceLog.map(p => ({ ...p })),
       // whether that measurement set the ball's pace (first game on this arm)
       calibrated: !!this._calibrated,
       // points taken with a trick shot, and points played in all
@@ -1523,7 +1568,7 @@ export class ArcPong extends GameBase {
     if (us > them) G.us++; else if (them > us) G.them++;
     // a won game quickens the ball for the next, a lost one slows it; the
     // pace the match ends on is saved for the next time (main.js)
-    if (us !== them) this.pace = Math.min(PACE_MAX, Math.max(PACE_MIN, this.pace * (us > them ? PACE_WIN : PACE_LOSE)));
+    if (us !== them && !this.pongLevel) this.pace = Math.min(PACE_MAX, Math.max(PACE_MIN, this.pace * (us > them ? PACE_WIN : PACE_LOSE)));
     this.paceLog.push({ game: G.list.length, won: us > them ? true : us < them ? false : null, pace: Math.round(this.pace * 100) / 100 });
     this.matchDone = G.us >= PONG_GAMES_TO_WIN || G.them >= PONG_GAMES_TO_WIN || G.list.length >= PONG_BEST_OF;
     const n = G.list.length, who = this.isDuo ? p2 : "the star";
@@ -2547,6 +2592,28 @@ export class ArcPong extends GameBase {
     ctx.shadowColor = "rgba(20,16,40,0.9)"; ctx.shadowBlur = 6;
     ctx.font = `800 ${Math.round(c.height * 0.034)}px Nunito, sans-serif`;
     ctx.fillText(smash && left <= 0 ? "SMASH" : `${Math.ceil(left)} s`, c.width / 2, c.height * 0.075);
+    ctx.restore();
+    this._drawSpeedLevel(ctx, c);
+  }
+  // the speed level under the clock, with an arrow either side to change it
+  _drawSpeedLevel(ctx, c) {
+    if (!this.pongLevel) { this._lvlHit = null; return; }
+    const y = c.height * 0.125, fs = Math.round(c.height * 0.026), gap = fs * 4.6, r = fs * 0.95;
+    const minus = { x: c.width / 2 - gap }, plus = { x: c.width / 2 + gap };
+    this._lvlHit = { y, r: r * 1.4, minus, plus };
+    ctx.save();
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.shadowColor = "rgba(20,16,40,0.9)"; ctx.shadowBlur = 6;
+    ctx.font = `800 ${fs}px Nunito, sans-serif`; ctx.fillStyle = "#fff6d8";
+    ctx.fillText(`Speed ${this.pongLevel} of ${PONG_LEVEL_MAX}`, c.width / 2, y);
+    for (const [p, up] of [[minus, false], [plus, true]]) {
+      const on = up ? this.pongLevel < PONG_LEVEL_MAX : this.pongLevel > 1;
+      ctx.beginPath(); ctx.arc(p.x, y, r, 0, Math.PI * 2);
+      ctx.fillStyle = on ? "rgba(244,236,221,0.18)" : "rgba(244,236,221,0.05)"; ctx.fill();
+      ctx.strokeStyle = on ? "rgba(244,236,221,0.7)" : "rgba(244,236,221,0.2)"; ctx.lineWidth = 2; ctx.stroke();
+      ctx.fillStyle = on ? "#fff6d8" : "rgba(255,246,216,0.3)";
+      ctx.fillText(up ? "▶" : "◀", p.x + (up ? 1 : -1), y + 1);
+    }
     ctx.restore();
   }
 
@@ -5612,7 +5679,7 @@ export class Candles extends GameBase {
   _constBox(c) {
     const W = c.width, H = c.height, U = Math.min(W, H);
     const w = Math.min(W * 0.22, U * 0.38), h = Math.min(H * 0.22, U * 0.3);
-    return { x: W - w - Math.max(24, W * 0.02), y: Math.max(H * 0.06, 40), w, h };
+    return { x: W - w - Math.max(24, W * 0.02), y: Math.max(H * 0.08, 72), w, h };   // under the total-time pill
   }
   _drawFigure(ctx, c, fig, shown, bright, scaleIn) {
     const b = this._constBox(c), P = fig.pts.map(([px, py]) => ({ x: b.x + px * b.w, y: b.y + py * b.h }));
@@ -8935,6 +9002,9 @@ class WindyChannel {
 // (Bonk!, Steady!, Nearly there). What happened is still heard and felt: the
 // sounds, the sparks, the shake and the spoken lines stay.
 const WINDY_CLEAN = true;
+// the tilt bubble level under the city (28 Oct 2026, by request: off; the
+// jet itself shows the tilt)
+const WINDY_GAUGE = false;
 // The guided start, slower (24 Oct 2026, by request: it was too fast): a
 // ring must be held for 1.5 s (not half a second), the tilt and the level
 // for 2 s, and between steps there is a WINDY_TUT_PAUSE breath with nothing
@@ -8943,6 +9013,10 @@ const WINDY_TUT_NEED_FIRST = [90, 90, 120, 120, 120], WINDY_TUT_NEED_LEVEL = [90
 const WINDY_TUT_PAUSE = 120;      // frames at 60 Hz: two seconds
 export class WindyCity extends GameBase {
   id = "windy";
+  // Oct 2026, by request (too many lines, cut short): no streak praise, no
+  // spoken combo, one spoken bump and one fall per round; the sounds, the
+  // sparks and the shake say the rest
+  quietPraise = true;
   setup() {
     this.tips = { objective: "Lift both arms together to climb, lower them to dive, and keep them level to fly through the gaps." };
     this.level = Math.max(1, Math.min(WINDY_MAX, this.opts.level || 1));
@@ -9021,12 +9095,14 @@ export class WindyCity extends GameBase {
     const spc = this._spacing();
     for (let i = 0; i < 4; i++) this._spawn(this.canvas.width + 170 * this.k + i * spc);
   }
+  // the guided start says its own steps: no "what to do" reminder over them
+  _feedbackTick(now) { if (!this.tut) super._feedbackTick(now); }
   _endTutorial(skipped) {
     if (!this.tut) return;
     this.tut = null;
     if (this._tutKey) { removeEventListener("keydown", this._tutKey); this._tutKey = null; }
     this._prompt(skipped ? "Here they come" : "You've got it!", "Fly through the gaps");
-    this._speak(skipped ? "Here come the towers. Fly through the gaps." : "You've got it. Here come the towers. Fly through the gaps.");
+    this._speak("Here come the towers. Fly through the gaps.");
     setTimeout(() => { if (this.active) this._prompt(""); }, 3200);
     this.fb.lastEvent = performance.now();
     this._takeOff();
@@ -9103,7 +9179,11 @@ export class WindyCity extends GameBase {
     else { this.crashes++; this.crashBy[what] = (this.crashBy[what] || 0) + 1; audio.windy("hit"); this._toast("Bonk!", "#d97b6c"); this._feedback(what === "drone" ? "Mind the drones" : what === "ground" ? "Lift a little" : "Aim for the gap", "#d97b6c"); }
     const o = this._gapAhead();
     this.miss({ isFar: !!o && o.reach > 0.7 }, true);   // silent: the bonk or the fall is the sound
-    if (this.lives > 0) this.say(kind === "fall" ? "Rook slipped off. Keep the arms level and he stays on." : "A soft bump. The towers are tricky. On we go.");
+    this._saidBump ??= {};
+    if (this.lives > 0 && !this._saidBump[kind]) {
+      this._saidBump[kind] = true;
+      this.say(kind === "fall" ? "Rook slipped off. Keep the arms level and he stays on." : "A soft bump. On we go.");
+    }
   }
   _respawn() {
     if (this.lives <= 0) { this._finish(false); return; }
@@ -9134,12 +9214,12 @@ export class WindyCity extends GameBase {
       const cols = ["#f3b562", "#d97b6c", "#6fa35a", "#5b9bd5", "#f19bb5", "#fff3c4"];
       for (let i = 0; i < 12; i++) this._sparks(this.bx + (Math.random() - 0.3) * this.canvas.width * 0.5, this.canvas.height * (0.15 + Math.random() * 0.5), cols[i % cols.length], 18, 2.2);
       this._prompt(stars === 3 ? "Perfect flight!" : stars === 2 ? "Great flying!" : "Level done!", `${this.passed} gaps flown · level ${this.lvl.stage} ${windyPips(this.level)}`);
-      this.say(stars === 3 ? `A perfect flight, ${this.passed} gaps. Rook is very impressed.` : `Level done. ${this.passed} gaps flown. Lovely flying.`);
+      this.say(stars === 3 ? `A perfect flight, ${this.passed} gaps. Rook is very impressed.` : `Level done. ${this.passed} gaps flown. Lovely flying.`, true);
       this._feedback(`${this.passed} gaps flown`, "#6fa35a");
     } else {
       audio.windy("lose");
       this._prompt("The wind won that one", "Let's try again");
-      this.say("The wind won that one. Let's try again.");
+      this.say("The wind won that one. Let's try again.", true);
     }
   }
 
@@ -9201,7 +9281,7 @@ export class WindyCity extends GameBase {
       if (tiltAbs < WINDY_STEADY_DEG) {
         this.steadyT += 1 / 60;
         const nc = this.steadyT > 12 ? 5 : this.steadyT > 7 ? 4 : this.steadyT > 4 ? 3 : this.steadyT > 2 ? 2 : 1;
-        if (nc > this.combo) { this._toast(["", "", "Steady!", "Lovely and level", "Smooth flying", "Rock steady"][nc], "#f3b562"); this._feedback(["", "", "Steady!", "Level flying", "Smooth", "Rock steady"][nc], "#f3b562"); this._sparks(this.bx, this.board.y, "#f3b562", 8); audio.windy("combo"); if (nc >= 4) this.say("Rock steady. Rook is loving this."); }
+        if (nc > this.combo) { this._toast(["", "", "Steady!", "Lovely and level", "Smooth flying", "Rock steady"][nc], "#f3b562"); this._feedback(["", "", "Steady!", "Level flying", "Smooth", "Rock steady"][nc], "#f3b562"); this._sparks(this.bx, this.board.y, "#f3b562", 8); audio.windy("combo"); }
         this.combo = nc;
       } else if (tiltAbs > WINDY_LOSE_DEG) { this.steadyT = 0; this.combo = 1; }
       else this.steadyT = Math.max(0, this.steadyT - 1 / 60);
@@ -9473,7 +9553,7 @@ export class WindyCity extends GameBase {
       ctx.strokeStyle = "#4f9bd9"; ctx.lineWidth = 3 * k; ctx.lineCap = "round";
       ctx.beginPath(); ctx.moveTo(cx - 12 * k * d, wy + 10 * k); ctx.lineTo(cx + 12 * k * d, wy + 10 * k); ctx.lineTo(cx + 12 * k * d - 5 * k * sg, wy + 6 * k); ctx.moveTo(cx + 12 * k * d, wy + 10 * k); ctx.lineTo(cx + 12 * k * d - 5 * k * sg, wy + 14 * k); ctx.stroke();
     }
-    this._gauge(ctx, c);
+    if (WINDY_GAUGE) this._gauge(ctx, c);
     // toasts: a word or two, mid screen
     let ty = H * 0.3;
     for (const q of this.toasts) {
@@ -9621,7 +9701,7 @@ export const GAMES = [
   // Lantern (Oct 2026, by request): chained reaches along a glowing line, from a candle box and back
   { id: "candles", name: "Lantern", cls: Candles, trains: "Point-to-point reach" },
   // the card-matching Memory game from the mockups (Sep 2026, by request)
-  { id: "pairs", name: "Memory Pairs", cls: MemoryPairs, trains: "Reach and remember" },
+  { id: "pairs", name: "Memory Pairs", cls: MemoryPairs, trains: "Reach and remember", disabled: true },   // off for now (28 Oct 2026, by request)
   // Windy City Flap (Oct 2026, by request): the two arms fly one jet, height from their mean and tilt from their difference
   { id: "windy", name: "Windy City Flap", cls: WindyCity, trains: "Both arms together" },
   // bimanual by definition, so off while every game is for the chosen arm alone

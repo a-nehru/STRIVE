@@ -285,6 +285,18 @@ export const store = {
     if (l.length > 200) l.splice(0, l.length - 200);
     save(db);
   },
+  // Pong's speed level history per participant and arm (28 Oct 2026, by
+  // request: store all the data): every change, by the match (auto) or by
+  // hand on the court or the round card (manual), capped at 500
+  getPongLevelLog(name, side) { return patient(load(), name).pongLevelLog?.[side] || []; },
+  logPongLevel(name, side, entry) {
+    const db = load(); const p = patient(db, name);
+    p.pongLevelLog ??= {};
+    const l = p.pongLevelLog[side] ??= [];
+    l.push({ ...entry, at: new Date().toISOString() });
+    if (l.length > 500) l.splice(0, l.length - 500);
+    save(db);
+  },
   resetRivalry(name, partner) {
     const db = load(); const p = patient(db, name);
     if (p.rivalry) delete p.rivalry[partner];
