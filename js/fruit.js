@@ -8,9 +8,11 @@
 // level 5, bumpers from 7, a narrower box from 10, the top line lower from
 // 13), combos, the shake meter and the shake, the next-fruit bubble, the
 // evolution ring, the Fredoka font and the peach and cocoa palette, and
-// its sounds. The mockup's "glossy" pictures are used when the local,
-// gitignored assets/fruit/glossy.json is there (they have no licence), else
-// the drawn fruit.
+// its sounds. THE PICTURES: on the public site, realistic 3D fruit from
+// Microsoft's Fluent Emoji (MIT, assets/fruit/fluent/, by request 31 Oct:
+// "make it as good as realistic"); the mockup's "glossy" pictures where the
+// local, gitignored assets/fruit/glossy.json is there (they have no licence);
+// the mockup's drawn fruit with faces as the last fallback. T cycles them.
 //
 // What is STRIVE's:
 //  - THE LADDER: eight fruit, strawberry to the pumpkin (the mockup's eleven
@@ -72,11 +74,32 @@ function loadGlossy() {
   return glossyLoading;
 }
 
+// the Fluent Emoji 3D fruit (MIT): [body diameter, body centre x, centre y]
+// in the 256-px picture, measured from its alpha with stems and leaf tips
+// left out, so each fruit's body fills its physics circle
+const FLUENT_FIT = {
+  strawberry: [157.5, 127.5, 128], grape: [166.5, 117, 138.5], orange: [171.5, 127.5, 147], apple: [200, 128, 146],
+  peach: [209, 127.5, 116.5], pineapple: [175, 120.5, 140.5], melon: [175.5, 127.5, 145], pumpkin: [199.5, 127.5, 148],
+};
+const FLUENT_FILL = 1.06;        // a touch over the circle, so touching fruit look touching
+let FLUENT = null;
+function loadFluent(onEach) {
+  if (FLUENT) return FLUENT;
+  FLUENT = {};
+  for (const k of Object.keys(FLUENT_FIT)) {
+    const im = new Image();
+    im.onload = () => onEach?.();
+    im.src = `assets/fruit/fluent/${k}.png`;
+    FLUENT[k] = im;
+  }
+  return FLUENT;
+}
+
 // ---- the board, in the mockup's logical units (400 x 640) ----
 const W = 400, H = 640;
 const BASE_L = 16, BASE_R = 384, BASE_TOP = 120, FLOOR = 624, HOLD_Y = 64;
 const STEP = 1000 / 60;
-const EXT = 1.7;                  // sprite half-size in radii (room for stems and leaves)
+const EXT = 1.9;                  // sprite half-size in radii (room for stems and leaves)
 
 // THE LADDER: r in logical units, pts for making it, col for its sparks,
 // art = which drawn fruit (drawFruit), glossy = the picture's name
@@ -320,9 +343,10 @@ export function fruitLevelDef(n) {
   return { n, goal, count, maxDrop, l, r, top, pegList, pre, news };
 }
 export const fruitName = i => FRUITS[i]?.n || "";
+const plural = nm => /(ch|sh|s|x)$/.test(nm) ? nm + "es" : nm + "s";     // Peach -> Peaches
 function goalPhrase(LV) {
   const nm = fruitName(LV.goal);
-  if (LV.count > 1) return `Make ${LV.count} ${nm}s`;
+  if (LV.count > 1) return `Make ${LV.count} ${plural(nm)}`;
   return `Make ${/^[AEIOU]/.test(nm) ? "an" : "a"} ${nm}`;
 }
 // the level's chapters for the map: grouped by goal fruit
@@ -331,7 +355,7 @@ export function fruitChapters() {
   for (let n = 1; n <= FRUIT_MAX; n++) {
     const g = fruitLevelDef(n).goal, last = out[out.length - 1];
     if (last && last.goal === g) last.to = n;
-    else out.push({ from: n, to: n, goal: g, name: `${fruitName(g)}s`, note: "" });
+    else out.push({ from: n, to: n, goal: g, name: plural(fruitName(g)), note: "" });
   }
   for (const ch of out) {
     const lv = fruitLevelDef(ch.from);
@@ -404,6 +428,8 @@ export class CozyFruit extends GameBase {
     this.wonAt = 0; this.timeAt = 0;
     document.fonts?.load?.(`700 24px Fredoka`).catch(() => {});
     loadGlossy().then(() => { this.spriteS = 0; });       // rebuild the sprites with the pictures
+    loadFluent(() => { this.spriteS = 0; });
+    this.artIdx = 0;
     loadMatter().then(() => { if (this.active) this._initPhysics(); })
       .catch(() => { this.loadFailed = true; });
     this._bindInput();
@@ -590,7 +616,7 @@ export class CozyFruit extends GameBase {
       else if (e.code === "ArrowDown" || e.code === "Enter") { e.preventDefault(); if (!this.shakeMode) this._drop(now, "key"); }
       else if (e.code === "KeyS") this._useShake(now);
       else if (e.code === "KeyN" || e.code === "KeyQ") this._swapNext();
-      else if (e.code === "KeyT" && GLOSSY?.size) { this.kawaii = !this.kawaii; this.spriteS = 0; }
+      else if (e.code === "KeyT") { this.artIdx++; this.spriteS = 0; }
     };
     this._onMouse = e => {
       if (!this.active || this.state !== "play") return;
@@ -775,12 +801,18 @@ export class CozyFruit extends GameBase {
   // ---- layout: the board in the middle, the mockup's side panels ----
   _lay(c) {
     const k = uu(c), Wc = c.width, Hc = c.height;
-    const top = 116 * k, bottom = Hc - 18 * k;
+    // the floor stays above the spoken-line bar (#cue, bottom centre on every screen)
+    const top = 116 * k, bottom = Hc - 112 * k;
     const S = Math.min((bottom - top) / H, (Wc * 0.42) / W);
     const bw = W * S, bh = H * S;
     const ox = (Wc - bw) / 2, oy = bottom - bh;
     const colW = Math.max(160 * k, Math.min(300 * k, ox - 70 * k));
     return { k, S, ox, oy, bw, bh, colW, leftX: ox - 40 * k - colW, rightX: ox + bw + 40 * k };
+  }
+  // the picture set in use: glossy (local file) > Fluent (the repo's) > drawn; T cycles
+  _artStyle() {
+    const styles = [GLOSSY?.size ? "glossy" : null, "fluent", "drawn"].filter(Boolean);
+    return styles[(this.artIdx || 0) % styles.length];
   }
   _sprite(i) {
     const s = this.sprites[i];
@@ -790,11 +822,17 @@ export class CozyFruit extends GameBase {
     const cv = document.createElement("canvas"); cv.width = cv.height = px;
     const x = cv.getContext("2d");
     x.scale(px / (half * 2), px / (half * 2)); x.translate(half, half);
-    const im = !this.kawaii && GLOSSY?.get(f.n);
-    if (im && im.naturalWidth) {
-      const fit = f.r * 2.18 / Math.max(im.naturalWidth, im.naturalHeight);
-      x.imageSmoothingQuality = "high";
-      x.drawImage(im, -im.naturalWidth * fit / 2, -im.naturalHeight * fit / 2, im.naturalWidth * fit, im.naturalHeight * fit);
+    const style = this._artStyle();
+    const gl = style === "glossy" && GLOSSY?.get(f.n);
+    const fl = style !== "drawn" && FLUENT?.[f.art];
+    x.imageSmoothingQuality = "high";
+    if (gl && gl.naturalWidth) {
+      const fit = f.r * 2.18 / Math.max(gl.naturalWidth, gl.naturalHeight);
+      x.drawImage(gl, -gl.naturalWidth * fit / 2, -gl.naturalHeight * fit / 2, gl.naturalWidth * fit, gl.naturalHeight * fit);
+    } else if (fl && fl.complete && fl.naturalWidth) {
+      // the glossy set has no pumpkin: it, and every fruit on the public site, is Fluent's
+      const [d, cx, cy] = FLUENT_FIT[f.art], u = fl.naturalWidth / 256, sc = f.r * 2 * FLUENT_FILL / (d * u);
+      x.drawImage(fl, -cx * u * sc, -cy * u * sc, fl.naturalWidth * sc, fl.naturalHeight * sc);
     } else drawFruit(x, f.art, f.r);
     return (this.sprites[i] = { c: cv, half });
   }
@@ -1171,7 +1209,7 @@ export class CozyFruit extends GameBase {
       edgeLeft: this.edgeL, edgeRight: this.edgeR, acrossPct: xs.length ? Math.round(across / xs.length * 100) : 0,
       aimSpreadSW: Math.round(sd * 100) / 100,
       holdDrops: this.byHow.hold || 0, graspDrops: this.byHow.grasp || 0, keyDrops: this.byHow.key || 0,
-      dropMode: this.dropMode, art: GLOSSY?.size && !this.kawaii ? "glossy" : "drawn",
+      dropMode: this.dropMode, art: this._artStyle(),
       laneSW: { lo: Math.round(ln.lo * 100) / 100, hi: Math.round(ln.hi * 100) / 100 },
       dropLog: this.dropLog,
       // the box, for the next round of the same level (main.js keeps it for

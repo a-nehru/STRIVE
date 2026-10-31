@@ -886,17 +886,21 @@ const CARD_ART = {
         <circle cx="36" cy="-1" r="6" fill="#0E7F7F"/>
       </g>
     </svg></div>`,
-  // Cozy Fruit Merge: a box of fruit growing, in ink on its coral
+  // Cozy Fruit Merge: a box of fruit with one more on its way, in white on
+  // its coral, on the right like the other cards' drawings, so the name
+  // (bottom left) and the movement chip (top left) stay clear of it
   fruit: `<div class="art" data-on="ink" style="background:var(--fruit-solid)">
     <svg viewBox="0 0 300 260" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
-      <path d="M150 72 V104" stroke="#3D2A24" stroke-opacity=".35" stroke-width="5" stroke-dasharray="2 9" stroke-linecap="round"/>
-      <circle cx="150" cy="56" r="14" fill="#fff"/>
-      <path d="M100 98 V196 Q100 214 118 214 H262 Q280 214 280 196 V98" fill="none" stroke="#3D2A24" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" opacity=".55" transform="translate(-40 0)"/>
-      <circle cx="102" cy="190" r="18" fill="#fff" opacity=".75"/><circle cx="140" cy="188" r="22" fill="#fff" opacity=".85"/>
-      <circle cx="188" cy="178" r="32" fill="#fff"/>
-      <path d="M188 142 q8 -14 22 -12" stroke="#3D2A24" stroke-width="5" fill="none" stroke-linecap="round" opacity=".6"/>
-      <circle cx="178" cy="174" r="3.5" fill="#3D2A24"/><circle cx="198" cy="174" r="3.5" fill="#3D2A24"/>
-      <path d="M181 186 q7 6 14 0" stroke="#3D2A24" stroke-width="3" fill="none" stroke-linecap="round"/>
+      <circle cx="226" cy="14" r="10" fill="#fff"/>
+      <path d="M226 28 V38" stroke="#3D2A24" stroke-opacity=".35" stroke-width="4" stroke-dasharray="2 7" stroke-linecap="round"/>
+      <g transform="translate(30 -48) scale(.9)">
+        <path d="M150 90 V170 Q150 186 166 186 H266 Q282 186 282 170 V90" fill="none" stroke="#3D2A24" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" opacity=".5"/>
+        <circle cx="172" cy="166" r="14" fill="#fff" opacity=".75"/><circle cx="202" cy="162" r="18" fill="#fff" opacity=".88"/>
+        <circle cx="246" cy="152" r="28" fill="#fff"/>
+        <path d="M246 120 q7 -12 19 -10" stroke="#3D2A24" stroke-width="4.5" fill="none" stroke-linecap="round" opacity=".6"/>
+        <circle cx="237" cy="148" r="3.2" fill="#3D2A24"/><circle cx="255" cy="148" r="3.2" fill="#3D2A24"/>
+        <path d="M240 159 q6 5 12 0" stroke="#3D2A24" stroke-width="2.8" fill="none" stroke-linecap="round"/>
+      </g>
     </svg></div>`,
   pairs: `<div class="art" style="background:radial-gradient(circle at 50% 45%,#2c3556,#141830)">
     <svg viewBox="0 0 300 400" style="position:absolute;inset:0;width:100%;height:100%">
@@ -2488,7 +2492,7 @@ function roundSummary(round) {
     case "fruit": {
       const n = r.merges || 0;
       head = r.won ? `Level ${r.level} complete!` : n > 0 ? "Fruit merged!" : "A gentle start.";
-      text = r.won ? `You made ${r.goalCount > 1 ? r.goalCount + " " + r.goalFruit.toLowerCase() + "s" : "the " + (r.goalFruit || "fruit").toLowerCase()} in ${plural(r.drops || 0, "drop")}.`
+      text = r.won ? `You made ${r.goalCount > 1 ? r.goalCount + " " + r.goalFruit.toLowerCase().replace(/(ch|sh|s|x)$/, "$1e") + "s" : "the " + (r.goalFruit || "fruit").toLowerCase()} in ${plural(r.drops || 0, "drop")}.`
         : `You merged ${plural(n, "fruit", "fruit")} in ${plural(r.drops || 0, "drop")}. Your box is kept for next time.`;
       if (r.newBest && r.biggestFruit) text += ` Your first ${r.biggestFruit.toLowerCase()}!`;
       glyph = "dot"; count = n; break;
