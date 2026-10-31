@@ -63,6 +63,7 @@ const state = {
   fruitLevelPick: null,   // Cozy Fruit Merge: the same, from the map, the drawer or the plan
   fruitDrop: "hold",      // Cozy Fruit Merge: how a fruit is dropped (hold | grasp | both), the drawer
   fruitBoard: null,       // Cozy Fruit Merge: an unfinished box, kept for the next round of that level
+  fruitTutorial: false,   // Cozy Fruit Merge: run the guided start next round whatever (?go=fruit&tutorial=1)
   pongSpeed: "normal",   // Pong ball-speed dial: chill | normal | frantic (both the single and the two-player game)
   pongPowerups: true,    // Pong: the orbs and their power-ups
   ferryMode: "solo",
@@ -1830,7 +1831,11 @@ function noteMapProgress(round) {
     bag.rally = Math.max(bag.rally || 0, round.bestRally || 0);
   }
   else if (g === "windy") { L = round.level; stars = round.levelStars || 0; best = round.gapsPassed || 0; }
-  else if (g === "fruit") { L = round.level; stars = round.levelStars || 0; best = round.score || 0; bag.bestFruit = Math.max(bag.bestFruit || 0, round.bestFruit || 0); }
+  else if (g === "fruit") {
+    L = round.level; stars = round.levelStars || 0; best = round.score || 0; bag.bestFruit = Math.max(bag.bestFruit || 0, round.bestFruit || 0);
+    // the guided start, finished or skipped, is not offered again on this arm
+    if (round.tutorial === "done" || round.tutorial === "skipped") bag.tutorialDone = { ...(bag.tutorialDone || {}), [round.arm]: true };
+  }
   else { L = round.pairsLevel; const cleared = (round.boardsCleared || 0) > 0; stars = cleared ? ((round.wrongTurns || 0) <= 2 ? 3 : 2) : (round.pairsFound || 0) > 0 ? 1 : 0; best = round.pairsFound || 0; }
   if (!L) return;
   bag.stars[L] = Math.max(bag.stars[L] || 0, stars);
@@ -2188,6 +2193,8 @@ function startGame(id, fresh) {
     drop: id === "fruit" ? state.fruitDrop : undefined,
     board: id === "fruit" ? state.fruitBoard : undefined,
     bestFruit: id === "fruit" ? (store.getProgress(state.patient, "fruitMap")?.bestFruit || 0) : undefined,
+    // the guided start: the first round of the first play on this arm (fruitMap.tutorialDone)
+    tutorial: id === "fruit" ? (state.fruitTutorial || (state.roundNumber === 1 && !store.getProgress(state.patient, "fruitMap")?.tutorialDone?.[state.side])) : undefined,
     // the Lantern's per-level bests and Star Atlas (Pip's flag is set from them)
     lumen: id === "candles" ? store.getProgress(state.patient, "candlesLumen") : undefined,
     starRank: id === "pong" ? (state.starRankPick || store.getLevel(state.patient, "starRank")) : undefined,
@@ -2222,6 +2229,7 @@ function startGame(id, fresh) {
   state.windyLevelPick = null; $("in-windy-level").value = "";
   state.pairsLevelPick = null;
   state.fruitLevelPick = null; $("in-fruit-level").value = "";
+  state.fruitTutorial = false;
   state.starRankPick = null;
   // the webcam follows a second body only while two are playing
   state.tracker.setSecond?.(id === "pong" && state.pongMode === "duo");
@@ -3428,6 +3436,7 @@ function testJump(q) {
       if (go === "pairs") state.pairsLevelPick = level;
       if (go === "fruit") state.fruitLevelPick = level;
     }
+    if (go === "fruit" && q.get("tutorial")) state.fruitTutorial = true;
     startGame(go, true);
     return;
   }

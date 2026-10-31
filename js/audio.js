@@ -639,7 +639,8 @@ class GameAudio {
   // Cozy Fruit Merge (31 Oct 2026): the mockup's own synthesized sounds, on
   // the fx bus. kind: drop | pop (a = the fruit made, 1..7) | harvest | combo
   // (a = the chain) | charge (a shake earned) | shake | wiggle (a = count) |
-  // swap | relief (the full box let go: soft, never a buzzer) | win
+  // swap | relief (the full box let go: soft, never a buzzer) | win | pick (a
+  // fruit picked up: Kenney's pluck, a two-note pluck until it has loaded)
   fruit(kind, a = 0) {
     this._ensure();
     const ctx = this.ctx, t0 = ctx.currentTime;
@@ -659,6 +660,7 @@ class GameAudio {
       case "shake": tone(140, .25, "triangle", .08, 1.4); break;
       case "wiggle": tone(170 + (a % 4) * 25, .07, "triangle", .05, .7); break;
       case "swap": tone(620, .1, "sine", .1, 1.5); break;
+      case "pick": if (!this.sfx("pluck_001", 0.8)) { tone(523, .08, "triangle", .12, 1.5); tone(784, .12, "sine", .1, 1.2, .05); } break;
       case "relief": [523, 440].forEach((f, k) => tone(f, .28, "sine", .08, .98, k * .14)); break;
     }
   }
