@@ -48,6 +48,11 @@ import { Coach } from "./coach.js";
 import { audio } from "./audio.js";
 import { CENTER, drawBody, drawHand, drawVideoMirror, drawPersonSlot } from "./engine.js";
 import { A11Y, hushVoice, speakLine, voiceBusy } from "./a11y.js";
+import { C, ACCENTS, alpha } from "./theme.js";
+import { img, HAND, rrect, wrapText } from "./ui.js";
+// the assessment's accent (theme.js): the target, the painted workspace,
+// the cursor and the grasp ask are violet; the camera stages are Night
+const AC = ACCENTS.assess;
 
 const BINS = 32;                         // 11.25° wedges (was 16): a finer outline, chord error under 1%
 const PAINT_SPREAD = 2;                  // neighbours each side credited with a reach's projection (±33.75°)
@@ -154,6 +159,7 @@ function makeAssessVideo(src) {
   v.setAttribute("aria-hidden", "true");
   document.body.appendChild(v);
   try { v.load(); } catch {}
+  audio.watchMedia(v);                    // her voice ducks the music while it plays
   return v;
 }
 const VIDEO_ARM = "left";                // the fallback recording's arm
@@ -389,12 +395,12 @@ export class Assessment {
       // everything on the stage goes through the zoom about the body centre
       // (ZOOM_*): the picture and the skeleton here, the shape, targets and
       // cursor in _draw, which applies the same transform
-      ctx.fillStyle = "#161636"; ctx.fillRect(0, 0, c.width, c.height);
+      ctx.fillStyle = C.night; ctx.fillRect(0, 0, c.width, c.height);
       const Z = this.state === "demo" ? { k: 1, tx: 0, ty: 0 } : this._zoomOf(c);
       ctx.save(); ctx.translate(Z.tx, Z.ty); ctx.scale(Z.k, Z.k);
       if (!drawVideoMirror(ctx, c, this.t)) {
         const g = ctx.createRadialGradient(c.width / 2, c.height * 0.42, 60, c.width / 2, c.height * 0.42, c.height);
-        g.addColorStop(0, "#3a3168"); g.addColorStop(0.55, "#20204a"); g.addColorStop(1, "#161636");
+        g.addColorStop(0, "#2E3352"); g.addColorStop(0.55, "#1C2038"); g.addColorStop(1, C.night);
         ctx.fillStyle = g; ctx.fillRect(0, 0, c.width, c.height);
       }
       // hands: false — the skeleton's own glowing palm discs would put a
@@ -1400,7 +1406,7 @@ export class Assessment {
     const R = u * 3.1;                                 // the demo arm's reach
 
     ctx.save();
-    ctx.fillStyle = "rgba(18,14,34,0.62)";
+    ctx.fillStyle = "rgba(20,23,42,0.7)";
     ctx.fillRect(0, 0, c.width, c.height);
 
     const shY = cy - u * 1.5;
@@ -1420,7 +1426,7 @@ export class Assessment {
 
     // the traced path, drawn faintly all the way round so the SHAPE reads
     if (d.kind === "circle") {
-      ctx.strokeStyle = "rgba(232,168,106,0.28)";
+      ctx.strokeStyle = alpha(AC.light, 0.35);
       ctx.lineWidth = 3; ctx.setLineDash([10, 12]);
       ctx.beginPath(); ctx.arc(shX, shY, R, 0, TAU); ctx.stroke();
       ctx.setLineDash([]);
@@ -1458,7 +1464,7 @@ export class Assessment {
     const hx = shX + Math.cos(a) * R, hy = shY - Math.sin(a) * R;
     const mx = (shX + hx) / 2, my = (shY + hy) / 2;
     const ex = mx + Math.cos(a) * u * 0.45, ey = my - Math.sin(a) * u * 0.45;
-    ctx.strokeStyle = "#e8a86a";
+    ctx.strokeStyle = AC.light;
     ctx.lineWidth = Math.max(5, u * 0.4);
     ctx.beginPath(); ctx.moveTo(shX, shY); ctx.lineTo(ex, ey); ctx.lineTo(hx, hy); ctx.stroke();
 
@@ -1468,11 +1474,11 @@ export class Assessment {
         const ta = a - d.dir * k * 0.13;
         const px = shX + Math.cos(ta) * R, py = shY - Math.sin(ta) * R;
         ctx.globalAlpha = 0.14 + (1 - k / 9) * 0.8;
-        ctx.fillStyle = k ? "rgba(232,168,106,0.85)" : "#fff6d8";
+        ctx.fillStyle = k ? alpha(AC.light, 0.9) : "#FFFFFF";
         ctx.beginPath(); ctx.arc(px, py, k ? u * 0.16 : u * 0.34, 0, TAU); ctx.fill();
       }
     } else {
-      ctx.fillStyle = "#fff6d8";
+      ctx.fillStyle = "#FFFFFF";
       ctx.beginPath(); ctx.arc(hx, hy, u * 0.34, 0, TAU); ctx.fill();
       // a faint up-and-down arrow beside the path
       ctx.strokeStyle = "rgba(244,236,221,0.45)"; ctx.lineWidth = 4;
@@ -1492,15 +1498,16 @@ export class Assessment {
   // draws them, and the posture figure in that box's corner.
   _drawVideoStage(ctx, c, now) {
     const W = c.width, H = c.height;
-    const g = ctx.createLinearGradient(0, 0, 0, H);
-    g.addColorStop(0, "#20204a"); g.addColorStop(1, "#161636");
-    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    // the Day surface (30 Oct 2026): the recording sits in a card on warm
+    // white, the progress bar violet under it
+    ctx.fillStyle = C.paper; ctx.fillRect(0, 0, W, H);
 
     // no instruction box of our own (Oct 2026, by request): the recording
     // carries the move's title, its caption and the arm; the top strip is
     // left for the Help and close buttons
     const pad = Math.round(W * 0.016);
-    const bodyTop = Math.round(H * 0.065), bodyH = H - bodyTop - pad;
+    const barH = Math.round(H * 0.014), barGap = Math.round(H * 0.018);
+    const bodyTop = Math.round(H * 0.075), bodyH = H - bodyTop - pad - barH - barGap;
     // the recording, whole, as large as fits
     const v = this.vid;
     const srcW = v?.videoWidth || 1920, srcH = v?.videoHeight || 1080;
@@ -1512,8 +1519,10 @@ export class Assessment {
     // the recording (mirrored for the other arm only when it has no
     // burnt-in text, VIDEO_MIRROR)
     ctx.save();
-    ctx.fillStyle = "rgba(10,10,30,0.6)";
-    ctx.beginPath(); ctx.roundRect(vx, vy, vidW, vidH, 14); ctx.fill();
+    ctx.shadowColor = "rgba(30,34,53,0.18)"; ctx.shadowBlur = 28; ctx.shadowOffsetY = 10;
+    ctx.fillStyle = C.nightCard;
+    ctx.beginPath(); ctx.roundRect(vx, vy, vidW, vidH, 24); ctx.fill();
+    ctx.shadowColor = "transparent";
     ctx.clip();
     if (v && v.readyState >= 2 && v.videoWidth) {
       if (VIDEO_MIRROR && !VIDEO_SRCS[this.side]) {
@@ -1523,8 +1532,8 @@ export class Assessment {
         ctx.drawImage(v, vx, vy, vidW, vidH);
       }
     } else {
-      ctx.fillStyle = "rgba(244,236,221,0.6)"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-      ctx.font = `700 ${Math.round(H * 0.03)}px Nunito, sans-serif`;
+      ctx.fillStyle = C.onNight; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.font = `800 ${Math.round(H * 0.034)}px Nunito, sans-serif`;
       ctx.fillText(this.vidFailedAt ? "The video could not be played" : "Loading the video…", vx + vidW * S.x0 / 2, vy + vidH / 2);
     }
     ctx.restore();
@@ -1538,22 +1547,22 @@ export class Assessment {
       ctx.font = `700 ${capF}px Nunito, sans-serif`;
       const cl = wrapLines(ctx, this.caption, vidW * S.x0 - 40).slice(0, 3);
       const bandH = cl.length * capF * 1.3 + 22;
-      ctx.fillStyle = "rgba(8,6,18,0.78)";
+      ctx.fillStyle = C.ink;
       ctx.fillRect(vx, vy + vidH - 10 - bandH, vidW * S.x0, bandH);
-      ctx.fillStyle = "#f4ecdd"; ctx.textAlign = "center"; ctx.textBaseline = "top";
+      ctx.fillStyle = C.onNight; ctx.textAlign = "center"; ctx.textBaseline = "top";
       cl.forEach((ln, i) => ctx.fillText(ln, vx + vidW * S.x0 / 2, vy + vidH - 10 - bandH + 11 + i * capF * 1.3));
       ctx.restore();
     }
     // progress under the recording: how far through it is, with a tick
     // where each move begins
     {
-      const y = vy + vidH - 6;
-      ctx.fillStyle = "rgba(244,236,221,0.16)";
-      ctx.fillRect(vx, y, vidW, 6);
+      const y = vy + vidH + barGap;
+      ctx.fillStyle = alpha(AC.solid, 0.18);
+      rrect(ctx, vx, y, vidW, barH, barH / 2); ctx.fill();
       const f = v && v.duration > 0 ? Math.max(0, Math.min(1, v.currentTime / VIDEO_END)) : 0;
-      if (f > 0) { ctx.fillStyle = "rgba(232,168,106,0.9)"; ctx.fillRect(vx, y, vidW * f, 6); }
-      ctx.fillStyle = "rgba(20,16,40,0.8)";
-      for (const p of VIDEO_PARTS) ctx.fillRect(vx + vidW * (p.t0 / VIDEO_END) - 1, y, 2, 6);
+      if (f > 0) { ctx.fillStyle = AC.solid; rrect(ctx, vx, y, Math.max(barH, vidW * f), barH, barH / 2); ctx.fill(); }
+      ctx.fillStyle = C.paper;
+      for (const p of VIDEO_PARTS) ctx.fillRect(vx + vidW * (p.t0 / VIDEO_END) - 2, y, 4, barH);
     }
 
     // the patient, cropped to the person, in the recording's empty slot
@@ -1569,9 +1578,10 @@ export class Assessment {
       const txt = "Finish the move, then we carry on";
       const tw = Math.min(panel.w - 24, ctx.measureText(txt).width + fs * 1.6), th = fs * 2;
       const tx = panel.x + (panel.w - tw) / 2, ty = panel.y + panel.h - th - 14;
-      ctx.fillStyle = "rgba(20,18,48,0.85)";
+      ctx.fillStyle = C.card;
       ctx.beginPath(); ctx.roundRect(tx, ty, tw, th, th / 2); ctx.fill();
-      ctx.fillStyle = "#e8a86a"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.strokeStyle = AC.solid; ctx.lineWidth = 3; ctx.stroke();
+      ctx.fillStyle = C.ink; ctx.textAlign = "center"; ctx.textBaseline = "middle";
       ctx.fillText(txt, tx + tw / 2, ty + th / 2 + 1, tw - fs);
       ctx.restore();
     }
@@ -1614,7 +1624,7 @@ export class Assessment {
     ctx.translate(panel.x + panel.w, panel.y); ctx.scale(-1, 1);
     ctx.drawImage(cam, (1 - x1) * sw, y0 * sh, cw * sw, ch * sh, 0, 0, panel.w, panel.h);
     ctx.restore();
-    ctx.fillStyle = "rgba(22,22,54,0.22)"; ctx.fillRect(panel.x, panel.y, panel.w, panel.h);
+    ctx.fillStyle = "rgba(20,23,42,0.22)"; ctx.fillRect(panel.x, panel.y, panel.w, panel.h);
 
     // one mapping for everything drawn on the person
     const norm = n => ({ x: panel.x + (n.x - x0) / cw * panel.w, y: panel.y + (n.y - y0) / ch * panel.h });
@@ -1626,28 +1636,28 @@ export class Assessment {
     // hands: true here (the sweep screen says false): the hand model's 21
     // points over the patient's real hand, so the palm and fingers are seen
     // to be tracked while the wrist, the red mark, stays the measured point
-    drawBody(ctx, c, t, { framed: !this.coach.dimming, map, scale: k, hands: true });
+    drawBody(ctx, c, t, { framed: !this.coach.dimming, map, scale: k, hands: true, thinHands: true });
 
     // the painted workspace, the body centre, and the wrist cursor
     ctx.save();
-    ctx.strokeStyle = "rgba(232,168,106,0.7)"; ctx.lineWidth = 3;
+    ctx.strokeStyle = alpha(AC.light, 0.85); ctx.lineWidth = 3;
     ctx.beginPath();
     for (let i = 0; i <= BINS; i++) {
       const q = map(t.relToPx(this._shapePoint(i % BINS), c));
       i === 0 ? ctx.moveTo(q.x, q.y) : ctx.lineTo(q.x, q.y);
     }
     ctx.closePath();
-    ctx.fillStyle = "rgba(232,168,106,0.14)"; ctx.fill(); ctx.stroke();
+    ctx.fillStyle = alpha(AC.solid, 0.2); ctx.fill(); ctx.stroke();
     const o = map(t.relToPx(CENTER, c));
     ctx.fillStyle = "rgba(244,236,221,0.6)";
     ctx.beginPath(); ctx.arc(o.x, o.y, 5, 0, TAU); ctx.fill();
     const hp = t.handPx(this.side, c);
     if (hp) {
       const q = map(hp);
-      ctx.fillStyle = "#e8635a"; ctx.shadowColor = "rgba(232,99,90,0.9)"; ctx.shadowBlur = 18;
-      ctx.beginPath(); ctx.arc(q.x, q.y, 9, 0, TAU); ctx.fill();
-      ctx.shadowBlur = 0; ctx.strokeStyle = "#fff6d8"; ctx.lineWidth = 2.5;
-      ctx.beginPath(); ctx.arc(q.x, q.y, 9, 0, TAU); ctx.stroke();
+      ctx.fillStyle = AC.solid; ctx.shadowColor = alpha(AC.solid, 0.8); ctx.shadowBlur = 14;
+      ctx.beginPath(); ctx.arc(q.x, q.y, 10, 0, TAU); ctx.fill();
+      ctx.shadowBlur = 0; ctx.strokeStyle = "#FFFFFF"; ctx.lineWidth = 3.5;
+      ctx.beginPath(); ctx.arc(q.x, q.y, 10, 0, TAU); ctx.stroke();
     }
     ctx.restore();
   }
@@ -1701,13 +1711,20 @@ export class Assessment {
       ctx.shadowBlur = 0;
 
       if (this.state === "countdown") {
-        const left = Math.max(1, 3 - Math.floor((now - this.stateT) / 1000));
+        // the shared countdown's look (ui.drawCountdown), at the body centre
+        const el = now - this.stateT;
+        const left = Math.max(1, 3 - Math.floor(el / 1000));
+        const R = fs(c.height * 0.11);
         ctx.save();
-        ctx.fillStyle = "rgba(244,236,221,0.95)";
-        ctx.shadowColor = "rgba(232,168,106,0.8)"; ctx.shadowBlur = 30;
-        ctx.font = `800 ${Math.round(fs(c.height * 0.16))}px Nunito, sans-serif`;
+        ctx.lineCap = "round"; ctx.lineWidth = fs(c.height * 0.016);
+        ctx.strokeStyle = alpha(C.nightCard, 0.85);
+        ctx.beginPath(); ctx.arc(gp.x, gp.y, R, 0, TAU); ctx.stroke();
+        ctx.strokeStyle = AC.solid;
+        ctx.beginPath(); ctx.arc(gp.x, gp.y, R, -Math.PI / 2, -Math.PI / 2 + TAU * (1 - (el % 1000) / 1000)); ctx.stroke();
+        ctx.fillStyle = C.onNight;
+        ctx.font = `900 ${Math.round(fs(c.height * 0.15))}px Nunito, sans-serif`;
         ctx.textAlign = "center"; ctx.textBaseline = "middle";
-        ctx.fillText(left, gp.x, gp.y);
+        ctx.fillText(left, gp.x, gp.y + fs(c.height * 0.008));
         ctx.restore();
       }
 
@@ -1720,7 +1737,7 @@ export class Assessment {
           const r = Math.max(0.35, Math.min(want, this._demoR(th), this._screenR(th, c)));
           const p = this.t.relToPx({ x: CENTER.x + Math.cos(th) * r, y: CENTER.y + Math.sin(th) * r }, c);
           const done = this.visited[i] >= 1;
-          ctx.fillStyle = done ? "rgba(232,168,106,0.9)" : "rgba(244,236,221,0.16)";
+          ctx.fillStyle = done ? AC.light : "rgba(246,242,234,0.18)";
           ctx.beginPath(); ctx.arc(p.x, p.y, done ? 4 : 2.5, 0, TAU); ctx.fill();
         }
         // A pacer firefly on the boundary — only until the patient is clearly
@@ -1740,7 +1757,7 @@ export class Assessment {
             const p = this.t.relToPx({ x: CENTER.x + Math.cos(ta) * rr, y: CENTER.y + Math.sin(ta) * rr }, c);
             ctx.globalAlpha = alpha * (1 - k / 4);
             const dg = ctx.createRadialGradient(p.x, p.y, 1, p.x, p.y, 12 - k * 1.8);
-            dg.addColorStop(0, "#fff6d8"); dg.addColorStop(1, "rgba(159,192,138,0.9)");
+            dg.addColorStop(0, "#FFFFFF"); dg.addColorStop(1, alpha(AC.light, 0.95));
             ctx.fillStyle = dg;
             ctx.beginPath(); ctx.arc(p.x, p.y, 10 - k * 1.6, 0, TAU); ctx.fill();
           }
@@ -1776,10 +1793,10 @@ export class Assessment {
         // from then on. No guide lines — the target is the whole instruction.
         const there = e.since != null;
         const g = ctx.createRadialGradient(tp.x, tp.y, 2, tp.x, tp.y, rad);
-        if (there) { g.addColorStop(0, "#e9f7dc"); g.addColorStop(1, "#7fb86a"); }
-        else { g.addColorStop(0, "#dff1ff"); g.addColorStop(1, "#3f8fd6"); }
+        if (there) { g.addColorStop(0, "#E3F6EA"); g.addColorStop(1, "#3E9B62"); }
+        else { g.addColorStop(0, AC.tint); g.addColorStop(1, AC.solid); }
         ctx.fillStyle = g;
-        ctx.shadowColor = there ? "rgba(127,184,106,0.9)" : `rgba(63,143,214,${0.5 + pulse * 0.4})`;
+        ctx.shadowColor = there ? "rgba(62,155,98,0.85)" : alpha(AC.solid, 0.5 + pulse * 0.4);
         ctx.shadowBlur = 28 + pulse * 10;
         ctx.beginPath(); ctx.arc(tp.x, tp.y, rad * (there ? 1 : 0.92 + pulse * 0.08), 0, TAU); ctx.fill();
         ctx.shadowBlur = 0;
@@ -1789,30 +1806,62 @@ export class Assessment {
           if (e.since == null) {
             // time left to get there, as a thin ring draining clockwise
             const f = Math.max(0, 1 - (now - e.start) / TARGET_REACH_MS);
-            ctx.strokeStyle = "rgba(244,236,221,0.35)"; ctx.lineWidth = 4;
+            ctx.strokeStyle = "rgba(246,242,234,0.45)"; ctx.lineWidth = 5;
             ctx.beginPath(); ctx.arc(tp.x, tp.y, rad + 9, -Math.PI / 2, -Math.PI / 2 + TAU * f); ctx.stroke();
           } else {
             // there: the grasp window fills, and the ask is shown one step at a time
             const f = Math.min(1, (now - e.graspAt) / GRASP_MS);
-            ctx.strokeStyle = "#9fc08a"; ctx.lineWidth = 7;
+            ctx.strokeStyle = "#7FD49A"; ctx.lineWidth = 7;
             ctx.beginPath(); ctx.arc(tp.x, tp.y, rad + 9, -Math.PI / 2, -Math.PI / 2 + TAU * f); ctx.stroke();
-            // the ask, as one big hand above the target (Oct 2026, by request:
-            // bigger), and under it what the camera sees right now, so a
-            // squeeze that is not being detected is visible rather than guessed
-            const want = e.gstep === "close" ? "✊" : e.gstep === "done" ? "✓" : "✋";
+            // the ask: one big DRAWN hand in a violet disc above the target, the
+            // word over it, one step at a time (30 Oct 2026, by request: the
+            // emoji hands showed as boxes on some computers, were small and
+            // looked alike from across the room). Kenney Shape Characters'
+            // hands (CC0). Under the target, what the camera sees right now,
+            // so a squeeze that is not being detected is visible.
             const seen = this.t.handClosed(this.side);
-            const matches = e.gstep === "done" || (e.gstep === "close") === !!seen;
-            const big = Math.round(fs(c.height * 0.085));
+            const done = e.gstep === "done";
+            const R = Math.round(fs(c.height * 0.068));
+            const hx = tp.x, hy = tp.y - rad - fs(22) - R;
+            ctx.save();
+            ctx.fillStyle = done ? "rgba(62,155,98,0.35)" : alpha(AC.solid, 0.3);
+            ctx.beginPath(); ctx.arc(hx, hy, R, 0, TAU); ctx.fill();
+            ctx.strokeStyle = done ? "#7FD49A" : AC.light; ctx.lineWidth = fs(6);
+            ctx.stroke();
+            if (done) {
+              ctx.strokeStyle = "#FFFFFF"; ctx.lineWidth = fs(10); ctx.lineCap = "round"; ctx.lineJoin = "round";
+              ctx.beginPath(); ctx.moveTo(hx - R * 0.4, hy + R * 0.02); ctx.lineTo(hx - R * 0.08, hy + R * 0.32); ctx.lineTo(hx + R * 0.44, hy - R * 0.3); ctx.stroke();
+            } else {
+              const im = img(e.gstep === "close" ? HAND.closed("purple") : HAND.open("purple"));
+              if (im) {
+                const iw = R * 1.3, ih = iw * im.naturalHeight / im.naturalWidth;
+                ctx.save();
+                ctx.translate(hx, hy);
+                if (this.side === "left") ctx.scale(-1, 1);       // the patient's own hand, as in the mirror
+                ctx.drawImage(im, -iw / 2, -ih / 2, iw, ih);
+                ctx.restore();
+              }
+            }
+            const word = done ? "That's it" : e.gstep === "close" ? "Close your hand" : e.gstep === "open-first" ? "Open wide" : "Open again";
+            ctx.font = `900 ${Math.round(fs(c.height * 0.036))}px Nunito, sans-serif`;
             ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
-            ctx.font = `${big}px "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif`;
-            ctx.fillStyle = e.gstep === "done" ? "#9fc08a" : "#f4ecdd";
-            ctx.fillText(want, tp.x, tp.y - rad - 30);
-            ctx.font = `800 ${Math.round(fs(c.height * 0.026))}px Nunito, sans-serif`;
-            ctx.fillStyle = matches ? "#9fc08a" : "rgba(244,236,221,0.8)";
-            ctx.fillText(e.gstep === "done" ? "that's it" : e.gstep === "close" ? "close" : e.gstep === "open-first" ? "open wide" : "open again", tp.x, tp.y - rad - big - 38);
-            ctx.font = `700 ${Math.round(fs(c.height * 0.02))}px Nunito, sans-serif`;
-            ctx.fillStyle = seen ? "rgba(232,168,106,0.9)" : "rgba(159,192,138,0.9)";
-            ctx.fillText(seen ? "we see: closed" : "we see: open", tp.x, tp.y + rad + 34);
+            ctx.lineWidth = fs(8); ctx.strokeStyle = "rgba(20,23,42,0.75)"; ctx.lineJoin = "round";
+            ctx.strokeText(word, hx, hy - R - fs(16));
+            ctx.fillStyle = C.onNight;
+            ctx.fillText(word, hx, hy - R - fs(16));
+            // "We see: open / closed" as a pill with a small hand
+            const pf = Math.round(fs(c.height * 0.022));
+            ctx.font = `800 ${pf}px Nunito, sans-serif`;
+            const txt = seen ? "We see: closed" : "We see: open";
+            const ph = pf * 1.9, ic = ph * 0.72, pw = ctx.measureText(txt).width + ic + pf * 1.6;
+            const px = tp.x - pw / 2, py = tp.y + rad + fs(18);
+            ctx.fillStyle = "rgba(34,38,61,0.92)";
+            rrect(ctx, px, py, pw, ph, ph / 2); ctx.fill();
+            const sim = img(seen ? HAND.closed("purple") : HAND.open("purple"));
+            if (sim) ctx.drawImage(sim, px + pf * 0.5, py + (ph - ic) / 2, ic, ic * sim.naturalHeight / sim.naturalWidth);
+            ctx.fillStyle = "#D5D8E6"; ctx.textAlign = "left"; ctx.textBaseline = "middle";
+            ctx.fillText(txt, px + pf * 0.5 + ic + pf * 0.4, py + ph / 2 + 1);
+            ctx.restore();
           }
         }
       }
@@ -1824,10 +1873,10 @@ export class Assessment {
           const th = this._extTheta(done.deg);
           const r = Math.min(done.askSW, this._screenR(th, c));
           const p = this.t.relToPx({ x: CENTER.x + Math.cos(th) * r, y: CENTER.y + Math.sin(th) * r }, c);
-          ctx.fillStyle = done.reached ? "rgba(127,184,106,0.9)" : "rgba(244,236,221,0.3)";
+          ctx.fillStyle = done.reached ? "#7FD49A" : "rgba(246,242,234,0.3)";
           ctx.beginPath(); ctx.arc(p.x, p.y, done.reached ? 10 : 7, 0, TAU); ctx.fill();
           if (done.graspOk) {
-            ctx.strokeStyle = "rgba(127,184,106,0.9)"; ctx.lineWidth = 3;
+            ctx.strokeStyle = "#7FD49A"; ctx.lineWidth = 3;
             ctx.beginPath(); ctx.arc(p.x, p.y, 16, 0, TAU); ctx.stroke();
           }
         }
@@ -1838,15 +1887,15 @@ export class Assessment {
       // outward from the centre as the patient traces each direction; the
       // soft fill is the "area you have painted so far"
       ctx.save();
-      ctx.strokeStyle = "rgba(232,168,106,0.7)"; ctx.lineWidth = 4;
-      ctx.shadowColor = "rgba(232,168,106,0.35)"; ctx.shadowBlur = 10;
+      ctx.strokeStyle = alpha(AC.light, 0.85); ctx.lineWidth = 4;
+      ctx.shadowColor = alpha(AC.solid, 0.35); ctx.shadowBlur = 10;
       ctx.beginPath();
       for (let i = 0; i <= BINS; i++) {
         const p = this.t.relToPx(this._shapePoint(i % BINS), c);
         i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y);
       }
       ctx.closePath();
-      ctx.fillStyle = "rgba(232,168,106,0.14)";
+      ctx.fillStyle = alpha(AC.solid, 0.2);
       ctx.fill();
       ctx.stroke();
       ctx.restore();
@@ -1869,7 +1918,7 @@ export class Assessment {
     // the assessed hand, drawn as a real hand: the 21-point skeleton curls
     // and turns sage as it closes — intuitive grasp feedback. Fallback when
     // the hand model has no detection: the classic firefly dot + ring
-    const handDrawn = drawHand(ctx, c, this.t, this.side, { fallback: false });
+    const handDrawn = drawHand(ctx, c, this.t, this.side, { fallback: false, thin: true });
     const hp = this.t.handPx(this.side, c);   // the cursor sits on the wrist: the point that is scored
     const measuring = this.state === "circle" || this.state === "lift" || this.state === "target";
     // ONE circle on the wrist (Sep 2026, by request): while measuring the
@@ -1878,13 +1927,13 @@ export class Assessment {
     if (hp && !handDrawn && !measuring) {
       const closed = this.t.handClosed(this.side);
       const fg = ctx.createRadialGradient(hp.x, hp.y, 2, hp.x, hp.y, 16);
-      fg.addColorStop(0, "#fff2c2"); fg.addColorStop(1, closed ? "#9fc08a" : "#e8a86a");
+      fg.addColorStop(0, "#FFFFFF"); fg.addColorStop(1, closed ? "#7FD49A" : AC.light);
       ctx.fillStyle = fg;
-      ctx.shadowColor = closed ? "rgba(159,192,138,0.85)" : "rgba(232,168,106,0.7)";
+      ctx.shadowColor = closed ? "rgba(127,212,154,0.8)" : alpha(AC.solid, 0.7);
       ctx.shadowBlur = closed ? 30 : 22;
       ctx.beginPath(); ctx.arc(hp.x, hp.y, 13, 0, TAU); ctx.fill();
       ctx.shadowBlur = 0;
-      ctx.strokeStyle = closed ? "#9fc08a" : "rgba(244,236,221,0.55)";
+      ctx.strokeStyle = closed ? "#7FD49A" : "rgba(246,242,234,0.6)";
       ctx.lineWidth = closed ? 4 : 2.5;
       if (!closed) ctx.setLineDash([6, 7]);
       ctx.beginPath(); ctx.arc(hp.x, hp.y, closed ? 18 : 26, 0, TAU); ctx.stroke();
@@ -1895,12 +1944,12 @@ export class Assessment {
     // cursor dot on top of everything — unmistakable over the video mirror
     if (measuring && hp) {
       ctx.save();
-      ctx.fillStyle = "#e8635a";
-      ctx.shadowColor = "rgba(232,99,90,0.9)"; ctx.shadowBlur = 24;
-      ctx.beginPath(); ctx.arc(hp.x, hp.y, 12, 0, TAU); ctx.fill();
+      ctx.fillStyle = AC.solid;
+      ctx.shadowColor = alpha(AC.solid, 0.9); ctx.shadowBlur = 20;
+      ctx.beginPath(); ctx.arc(hp.x, hp.y, 13, 0, TAU); ctx.fill();
       ctx.shadowBlur = 0;
-      ctx.strokeStyle = "#fff6d8"; ctx.lineWidth = 3;
-      ctx.beginPath(); ctx.arc(hp.x, hp.y, 12, 0, TAU); ctx.stroke();
+      ctx.strokeStyle = "#FFFFFF"; ctx.lineWidth = 4;
+      ctx.beginPath(); ctx.arc(hp.x, hp.y, 13, 0, TAU); ctx.stroke();
       ctx.restore();
     }
 
@@ -1911,13 +1960,14 @@ export class Assessment {
   // the posture coach's dock (bottom-left) and the world dim while it cues
   _drawCoach(ctx, c, now) {
     if (this.coach.dimming) {
-      ctx.fillStyle = `rgba(18,12,28,${this.coach.dimming})`;
+      ctx.fillStyle = `rgba(20,23,42,${this.coach.dimming})`;
       ctx.fillRect(0, 0, c.width, c.height);
     }
-    // on the video stage the figure sits in the corner of the patient's own
-    // picture, not loose on the dark edge of the screen
+    // on the video stage the posture figure alone sits in the corner of the
+    // patient's own picture; elsewhere the full dock (the coach and the
+    // figure) in the bottom-left corner of the camera stage
     const sl = this.state === "video" && this._slot;
-    if (sl) this.coach.draw(ctx, sl.x + sl.w * 0.1, sl.y + sl.h - 10, sl.h * 0.2, now);
-    else this.coach.draw(ctx, c.width * 0.06, c.height * 0.96, c.height * 0.18, now);
+    if (sl) this.coach.draw(ctx, sl.x + sl.w * 0.04, sl.y + sl.h - sl.w * 0.04, sl.h * 0.22, now, { surface: "night", compact: true });
+    else this.coach.draw(ctx, c.width * 0.018, c.height * 0.968, c.height * 0.14, now, { surface: "night" });
   }
 }

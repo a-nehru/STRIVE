@@ -2,8 +2,12 @@
 //
 // The generative engine is proper lo-fi: 68–84 BPM, swung hats, soft kick,
 // brushed rim, jazzy maj9/m9 Rhodes chords, warm master low-pass, vinyl
-// crackle, and chimes that echo through a tape-style delay. If a file exists
-// at assets/music/<gameId>.mp3 it is used instead.
+// crackle, and chimes that echo through a tape-style delay. Recorded tracks
+// (js/tracks.js, 31 Oct 2026) play in its place where a game has them, and
+// the music always steps back while someone is talking (ducking, below).
+
+import { voiceBusy } from "./a11y.js";
+import { TRACKS } from "./tracks.js";
 
 const midi = m => 440 * Math.pow(2, (m - 69) / 12);
 const PENTA = [72, 74, 76, 79, 81, 84, 86, 88].map(midi);   // C major pentatonic, C5 up
@@ -30,14 +34,74 @@ const MOODS = {
   echo:           { bpm: 64, kick: [0, 10], snare: [], padGain: 0.055, bassGain: 0.035, hatGain: 0.014 },
   rainbow:        { bpm: 80, kick: [0, 7, 10], snare: [4, 12], padGain: 0.045, bassGain: 0.05, hatGain: 0.024 },
   windy:          { bpm: 76, kick: [0, 7, 10], snare: [4, 12], padGain: 0.045, bassGain: 0.045, hatGain: 0.022 },
+  // the Lantern's id is "candles" (it fell back to constellations before)
+  candles:        { bpm: 68, kick: [0, 10], snare: [], padGain: 0.055, bassGain: 0.04, hatGain: 0.016 },
+  fruit:          { bpm: 76, kick: [0, 7, 10], snare: [4, 12], padGain: 0.045, bassGain: 0.045, hatGain: 0.02 },
 };
+
+// DUCKING (31 Oct 2026, by request): the music steps back while anyone is
+// talking. Older listeners, and anyone with hearing loss or aphasia, lose
+// speech under background music far sooner than younger ones, so every line
+// the app speaks (both voice engines: voiceBusy in a11y.js) and every
+// recording playing with its sound on (watchMedia: the assessment and the
+// warm-up) pulls the music down, quickly, and lets it back up slowly once
+// it has been quiet for DUCK_HOLD_MS.
+const DUCK_SPEECH = 0.22;     // ≈ -13 dB under a spoken line
+const DUCK_MEDIA = 0.1;       // ≈ -20 dB under a recording with its own voice
+const DUCK_HOLD_MS = 450;
+const DUCK_DOWN_S = 0.08;     // time constant going down
+const DUCK_UP_S = 0.45;       // and coming back up
+// recorded tracks: the level they play at (they are normalised to -20 LUFS),
+// times the patient's music volume; the crossfade when a track takes over
+// from the generated music that covered its loading
+const TRACK_GAIN = 0.55;
+const TRACK_WAIT_MS = 700;    // the generated music starts if a track is not playable by then
+const TRACK_XFADE_S = 0.9;
 const SWING = 0.16;   // fraction of a 16th added to off-beat hats
+// THE SHARED SOUND SET (30 Oct 2026, by request: one look and one sound for
+// every game). Kenney's Interface Sounds and Music Jingles (CC0) under
+// assets/kenney/sounds/; one name per event, so a different pick from the
+// mood board's candidates is a one-line change here. Hits stay the in-key
+// chime (note), a miss the soft low tone: never a buzzer.
+const SFX = {
+  celebrate: "jingles-pizzicato_04",   // a win, a level up, a best: the fanfare
+  levelUp: "maximize_006",
+  tick: "tick_002",
+  click: "click_002",
+  select: "select_003",
+};
 
 class GameAudio {
   constructor() {
     this.ctx = null;
     this.playing = false;
-    this.fileEl = null;
+    this.track = null;            // the recorded track playing now: { el, src, fade, url }
+    this.buffers = {};
+    this.media = new Set();       // recordings whose sound ducks the music (watchMedia)
+    this.rotation = {};           // per game: { order: [urls], pos }
+    this.preloaded = new Map();   // url -> <audio> warming the cache
+    this.trackSeq = 0;
+  }
+
+  // a Kenney sample through the feedback bus; false until it has loaded
+  // (the caller falls back to a generated sound)
+  sfx(name, vol = 0.8) {
+    this._ensure();
+    const file = SFX[name] || name;
+    const buf = this.buffers[file];
+    if (buf === undefined) { this._load(file); return false; }
+    if (!buf) return false;
+    const src = this.ctx.createBufferSource(), g = this.ctx.createGain();
+    src.buffer = buf; g.gain.value = vol;
+    src.connect(g).connect(this.fxBus); src.start();
+    return true;
+  }
+  _load(file) {
+    if (this.buffers[file] !== undefined) return;
+    this.buffers[file] = null;
+    fetch(`assets/kenney/sounds/${file}.ogg`).then(r => r.ok ? r.arrayBuffer() : Promise.reject())
+      .then(b => this.ctx.decodeAudioData(b)).then(buf => { this.buffers[file] = buf; })
+      .catch(() => { this.buffers[file] = null; });
   }
 
   _ensure() {
@@ -52,7 +116,18 @@ class GameAudio {
       // per-bus volume (accessibility): music and feedback sounds separately
       this.musicBus = ctx.createGain(); this.musicBus.gain.value = this._volMusic ?? 1;
       this.fxBus = ctx.createGain(); this.fxBus.gain.value = this._volFx ?? 1;
-      this.musicBus.connect(this.master);
+      // the generated music: musicBus -> its crossfade -> its duck -> master
+      // (and the warm low-pass); a recorded track: its own fade -> trackBus
+      // -> its duck -> straight out, since the master's 2.8 kHz low-pass would
+      // muffle a mixed recording. Both ducks move together.
+      this.genFade = ctx.createGain();
+      this.genDuck = ctx.createGain();
+      this.musicBus.connect(this.genFade).connect(this.genDuck).connect(this.master);
+      this.trackBus = ctx.createGain(); this.trackBus.gain.value = TRACK_GAIN * (this._volMusic ?? 1);
+      this.trackDuck = ctx.createGain();
+      this.trackBus.connect(this.trackDuck).connect(ctx.destination);
+      this.duckLevel = 1; this.quietSince = 0;
+      this._duckTimer = setInterval(() => this._duckTick(), 90);
       this.fxBus.connect(this.master);
       // tape-style delay bus for chimes
       this.delay = ctx.createDelay(1);
@@ -64,35 +139,160 @@ class GameAudio {
       this.delay.connect(dOut).connect(this.master);
     }
     if (this.ctx.state === "suspended") this.ctx.resume();
+    if (!this._preloaded) { this._preloaded = true; for (const f of Object.values(SFX)) this._load(f); }
   }
 
   /* ================= music ================= */
+  // a game's music: its next recorded track (js/tracks.js), or the old
+  // single file assets/music/<gameId>.mp3, else the generated lo-fi. The
+  // generated music covers a track still loading after TRACK_WAIT_MS, and
+  // the track crossfades in over it when it arrives.
   startBgm(gameId = "constellations") {
     this._ensure();
     this.stopBgm();
     this.playing = true;
-    const el = new Audio(`assets/music/${gameId}.mp3`);
-    el.loop = true; el.volume = 0.45 * (this._volMusic ?? 1);
-    el.addEventListener("canplaythrough", () => {
-      if (this.playing && !this.generativeOn) { this.fileEl = el; el.play().catch(() => this._startGenerative(gameId)); }
-    }, { once: true });
-    el.addEventListener("error", () => { if (this.playing) this._startGenerative(gameId); }, { once: true });
-    el.load();
-    this._fileTimer = setTimeout(() => { if (this.playing && !this.fileEl && !this.generativeOn) this._startGenerative(gameId); }, 700);
+    this._playTrack(gameId, true);
   }
 
   stopBgm() {
     this.playing = false;
-    this.generativeOn = false;
     this.song = null;
     clearTimeout(this._fileTimer);
-    clearInterval(this._schedTimer);
     clearInterval(this._songTimer);
+    this._stopGenerative();
+    this.trackSeq++;
+    if (this.track) { this._retire(this.track, 0.12); this.track = null; }
+    if (this.ctx) {
+      // the generated bed may have been faded out under a track: back to full
+      // for whatever plays next (the song mode uses the same bus)
+      const g = this.genFade.gain, t = this.ctx.currentTime;
+      g.cancelScheduledValues(t); g.setValueAtTime(1, t);
+    }
+  }
+
+  // the rotation: a game's tracks shuffled once, played in turn, reshuffled
+  // when they run out, never the same track twice running across the seam
+  _urls(gameId) {
+    const list = TRACKS[gameId];
+    return list?.length ? list.map(t => "assets/music/" + t.file) : [`assets/music/${gameId}.mp3`];
+  }
+  _rot(gameId) {
+    let r = this.rotation[gameId];
+    if (!r || r.pos >= r.order.length) {
+      const last = r ? r.order[r.order.length - 1] : null;
+      const order = [...this._urls(gameId)];
+      for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
+      if (order.length > 1 && order[0] === last) [order[0], order[1]] = [order[1], order[0]];
+      r = this.rotation[gameId] = { order, pos: 0 };
+    }
+    return r;
+  }
+  // warm the cache with each game's next track (the hub calls this), so a
+  // round starts on its track rather than on the generated cover
+  preloadMusic(gameIds) {
+    for (const id of gameIds) if (TRACKS[id]?.length) { const r = this._rot(id); this._preload(r.order[r.pos]); }
+  }
+  _preload(url) {
+    if (!url || this.preloaded.has(url)) return;
+    const a = new Audio(); a.preload = "auto"; a.src = url;
+    this.preloaded.set(url, a);
+  }
+  _playTrack(gameId, first = false, tries = 0) {
+    const r = this._rot(gameId), url = r.order[r.pos++];
+    const seq = ++this.trackSeq;
+    // a preloaded element has its data already; one never played is used once
+    const el = this.preloaded.get(url) || new Audio(url);
+    this.preloaded.delete(url);
+    let began = false;
+    const fail = () => {
+      if (seq !== this.trackSeq || !this.playing) return;
+      // a file that will not load or play: the next one, and the generated
+      // music once every file has failed
+      if (tries + 1 < this._urls(gameId).length) this._playTrack(gameId, first, tries + 1);
+      else if (!this.generativeOn) this._startGenerative(gameId);
+    };
+    const begin = () => {
+      if (began || seq !== this.trackSeq || !this.playing) return;
+      began = true;
+      let src;
+      try { src = this.ctx.createMediaElementSource(el); } catch { fail(); return; }
+      const fade = this.ctx.createGain(); fade.gain.value = 0;
+      src.connect(fade).connect(this.trackBus);
+      const t = { el, src, fade, url };
+      el.play().then(() => {
+        if (seq !== this.trackSeq || !this.playing) { this._retire(t); return; }
+        const prev = this.track;
+        this.track = t;
+        const xf = this.generativeOn ? TRACK_XFADE_S : 0.25;
+        fade.gain.setTargetAtTime(1, this.ctx.currentTime, xf / 3);
+        if (this.generativeOn) this._fadeOutGenerative(xf);
+        if (prev) this._retire(prev);
+        const nx = this.rotation[gameId];
+        if (nx && nx.pos < nx.order.length) this._preload(nx.order[nx.pos]);
+      }).catch(() => { this._retire(t); fail(); });
+    };
+    el.addEventListener("error", fail, { once: true });
+    // one track ends, the next one in the rotation starts
+    el.addEventListener("ended", () => { if (seq === this.trackSeq && this.playing) this._playTrack(gameId); }, { once: true });
+    if (el.readyState >= 3) begin();
+    else el.addEventListener("canplay", begin, { once: true });
+    if (first) this._fileTimer = setTimeout(() => {
+      if (this.playing && !this.track && !this.generativeOn) this._startGenerative(gameId);
+    }, TRACK_WAIT_MS);
+  }
+  // fade a track out and let it go
+  _retire(t, s = 0.15) {
+    if (!t) return;
+    try { t.fade.gain.setTargetAtTime(0, this.ctx.currentTime, s); } catch {}
+    setTimeout(() => {
+      try { t.el.pause(); t.el.removeAttribute("src"); t.el.load(); } catch {}
+      try { t.src.disconnect(); t.fade.disconnect(); } catch {}
+    }, s * 5000);
+  }
+  _fadeOutGenerative(s) {
+    this.genFade.gain.setTargetAtTime(0, this.ctx.currentTime, s / 3);
+    const id = this._genId = (this._genId || 0) + 1;
+    setTimeout(() => { if (id === this._genId && this.track) this._stopGenerative(); }, s * 1000 + 1200);
+  }
+  _stopGenerative() {
+    this.generativeOn = false;
+    clearInterval(this._schedTimer);
     if (this.vinylSrc) { try { this.vinylSrc.stop(); } catch {} this.vinylSrc = null; }
-    if (this.fileEl) { this.fileEl.pause(); this.fileEl = null; }
+  }
+
+  // ---- ducking ----
+  // a recording whose own sound should duck the music while it plays (the
+  // assessment's and the warm-up's videos)
+  watchMedia(el) { if (el) this.media.add(el); }
+  _duckTick() {
+    let want = 1;
+    for (const el of this.media) {
+      if (!el.src && !el.currentSrc) { this.media.delete(el); continue; }
+      if (!el.paused && !el.ended && !el.muted && el.volume > 0) want = DUCK_MEDIA;
+    }
+    if (want === 1 && voiceBusy()) want = DUCK_SPEECH;
+    // back up only after a breath of quiet, so a pause between two lines
+    // does not pump the music up and down
+    const now = performance.now();
+    if (want < 1) this.quietSince = 0;
+    else if (this.duckLevel < 1) {
+      this.quietSince ||= now;
+      if (now - this.quietSince < DUCK_HOLD_MS) return;
+    }
+    if (want === this.duckLevel) return;
+    const t = this.ctx.currentTime, tc = want < this.duckLevel ? DUCK_DOWN_S : DUCK_UP_S;
+    this.duckLevel = want;
+    for (const g of [this.genDuck.gain, this.trackDuck.gain]) {
+      g.cancelScheduledValues(t); g.setValueAtTime(g.value, t); g.setTargetAtTime(want, t, tc);
+    }
   }
 
   _startGenerative(gameId) {
+    this._genId = (this._genId || 0) + 1;           // a pending fade-out no longer stops it
+    const g = this.genFade.gain, t0 = this.ctx.currentTime;
+    g.cancelScheduledValues(t0); g.setValueAtTime(1, t0);
+    clearInterval(this._schedTimer);
+    if (this.vinylSrc) { try { this.vinylSrc.stop(); } catch {} this.vinylSrc = null; }
     this.generativeOn = true;
     this.mood = MOODS[gameId] || MOODS.constellations;
     this.prog = PROGS[Math.floor(Math.random() * PROGS.length)];
@@ -254,7 +454,7 @@ class GameAudio {
 
   // per-bus volume from the patient's saved settings
   setVolumes({ music, fx } = {}) {
-    if (music != null) { this._volMusic = music; if (this.musicBus) this.musicBus.gain.value = music; if (this.fileEl) this.fileEl.volume = 0.45 * music; }
+    if (music != null) { this._volMusic = music; if (this.musicBus) this.musicBus.gain.value = music; if (this.trackBus) this.trackBus.gain.value = TRACK_GAIN * music; }
     if (fx != null) { this._volFx = fx; if (this.fxBus) this.fxBus.gain.value = fx; }
   }
 
@@ -276,11 +476,24 @@ class GameAudio {
     this._ensure();
     this._noise(this.ctx.currentTime, 0.4, 600, 1, 0.09);
   }
+  // the fanfare: only for a win, a level up or a best (roundEnd decides)
   fanfare() {
     this._ensure();
+    if (this.sfx("celebrate", 0.75)) return;
     const t = this.ctx.currentTime;
     [0, 2, 4, 5, 7].forEach((p, i) => this._tone(PENTA[p % PENTA.length], t + i * 0.13, 0.5, "sine", 0.12, 0.015, true));
   }
+  // the end of a round: the fanfare when it went well, else a calm two-note
+  // close (it used to be the fanfare after a lost match too)
+  roundEnd(good) {
+    if (good) { this.fanfare(); return; }
+    this._ensure();
+    const t = this.ctx.currentTime;
+    this._tone(PENTA[2], t, 0.5, "sine", 0.08, 0.02, true);
+    this._tone(PENTA[0], t + 0.22, 0.7, "sine", 0.07, 0.02, true);
+  }
+  levelUp() { if (!this.sfx("levelUp", 0.7)) this.fanfare(); }
+  click() { this.sfx("click", 0.6); }
   bounce() {   // soft wall tick for pong
     this._ensure();
     this._tone(392, this.ctx.currentTime, 0.08, "sine", 0.05, 0.005);
@@ -368,9 +581,9 @@ class GameAudio {
         if (b) [0, 4, 7, 12].forEach((s, i) => this._tone(semi(base * 2, s), t + 0.1 + i * 0.07, 0.3, "triangle", 0.06, 0.01));
         break;
       }
-      case "wrong":
-        this._tone(196, t, 0.22, "square", 0.04, 0.01);
-        this._tone(155, t + 0.08, 0.3, "square", 0.035, 0.01);
+      case "wrong":       // the wrong lantern: the soft miss, never a buzzer (30 Oct 2026)
+        this._tone(196, t, 0.25, "triangle", 0.05, 0.02);
+        this._tone(174.61, t + 0.1, 0.3, "triangle", 0.045, 0.02);
         break;
       case "puff": this._noise(t, 0.45, 500, 0.6, 0.18, this.fxBus); break;
       case "moth":
@@ -414,13 +627,39 @@ class GameAudio {
     switch (kind) {
       case "start": this._noise(t, 0.4, 900, 0.7, 0.06, this.fxBus); sweep(300, 0.4, "sine", 0.08, 900); break;
       case "feather": sweep(1320, 0.12, "sine", 0.12); sweep(1760, 0.16, "sine", 0.1, null, 0.06); break;
-      case "hit": sweep(220, 0.3, "sawtooth", 0.1, 70); this._noise(t, 0.2, 700, 0.8, 0.12, this.fxBus); break;
+      case "hit": sweep(220, 0.3, "triangle", 0.1, 90); this._noise(t, 0.16, 500, 0.8, 0.06, this.fxBus); break;
       case "fall": sweep(660, 0.5, "triangle", 0.12, 110); break;
       case "combo": sweep(784, 0.1, "triangle", 0.1); sweep(1175, 0.14, "triangle", 0.1, null, 0.08); break;
-      case "tick": sweep(1000, 0.04, "square", 0.04); break;
+      case "tick": sweep(1000, 0.05, "sine", 0.05); break;
       case "star": sweep([784, 988, 1319][Math.max(0, Math.min(2, a))], 0.3, "triangle", 0.16); break;
       case "win": [523, 659, 784, 1047, 1319].forEach((f, i) => sweep(f, 0.22, "triangle", 0.13, null, i * 0.1)); break;
       case "lose": [392, 330, 262].forEach((f, i) => sweep(f, 0.3, "triangle", 0.1, null, i * 0.18)); break;
+    }
+  }
+  // Cozy Fruit Merge (31 Oct 2026): the mockup's own synthesized sounds, on
+  // the fx bus. kind: drop | pop (a = the fruit made, 1..7) | harvest | combo
+  // (a = the chain) | charge (a shake earned) | shake | wiggle (a = count) |
+  // swap | relief (the full box let go: soft, never a buzzer) | win
+  fruit(kind, a = 0) {
+    this._ensure();
+    const ctx = this.ctx, t0 = ctx.currentTime;
+    // the mockup's tone(f, dur, type, vol, slide, delay)
+    const tone = (f, dur, type = "sine", vol = .18, slide = 1, delay = 0) => {
+      const t = t0 + delay, o = ctx.createOscillator(), g = ctx.createGain();
+      o.type = type; o.frequency.setValueAtTime(f, t); o.frequency.exponentialRampToValueAtTime(f * slide, t + dur);
+      g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + .012); g.gain.exponentialRampToValueAtTime(.0001, t + dur);
+      o.connect(g); g.connect(this.fxBus); o.start(t); o.stop(t + dur + .03);
+    };
+    switch (kind) {
+      case "drop": tone(260, .09, "sine", .12, .55); break;
+      case "pop": { const f = 900 - a * 70; tone(f, .16, "sine", .2, 1.7); tone(f * 1.5, .1, "triangle", .06, 1.3, .02); break; }
+      case "harvest": case "win": [523, 659, 784, 1047].forEach((f, k) => tone(f, .22, "triangle", .12, 1, k * .09)); break;
+      case "combo": tone(500 + a * 90, .12, "triangle", .07, 1.4, .05); break;
+      case "charge": tone(880, .15, "sine", .1, 1.5); tone(1320, .2, "sine", .08, 1.2, .1); break;
+      case "shake": tone(140, .25, "triangle", .08, 1.4); break;
+      case "wiggle": tone(170 + (a % 4) * 25, .07, "triangle", .05, .7); break;
+      case "swap": tone(620, .1, "sine", .1, 1.5); break;
+      case "relief": [523, 440].forEach((f, k) => tone(f, .28, "sine", .08, .98, k * .14)); break;
     }
   }
   serveTick(final = false) {

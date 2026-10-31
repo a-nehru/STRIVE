@@ -27,6 +27,7 @@ from handmodels import HAND_MODELS, BODY_MODELS          # noqa: E402
 from handmodels.base import curl, aperture              # noqa: E402
 from handmodels.client import RemoteModel               # noqa: E402
 from model_lab import cut, crops_from_lm                # noqa: E402
+import armfit                                           # noqa: E402
 
 
 def pct(a, b):
@@ -154,6 +155,10 @@ def main():
             "seen = frames with a detection; jitter = mean frame-to-frame move of the landmarks' centroid (a still hand should read near 0); "
             "curl about 2 open / 1 fist; CoV = bone length spread (a constant bone reads 0).", ""]
     report = "\n".join(head + rows) + "\n"
+    # the ZED body's upper-limb plausibility (armfit.py, PhysScore's arm checks), raw and bone-fitted
+    n3, raw3, fit3, lens = armfit.score_recording(d)
+    if n3:
+        report += "\n" + armfit.report_md(os.path.basename(os.path.abspath(d)), n3, raw3, fit3, lens)
     open(os.path.join(d, "report.md"), "w").write(report)
     print(report)
     for m in list(models.values()) + ([cropper] if cropper is not None and cropper not in models.values() else []):

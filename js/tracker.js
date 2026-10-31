@@ -2,8 +2,11 @@
 // coordinate frame. Units: shoulder-widths (SW) for distance, degrees vs the
 // trunk axis for arm elevation. Two time scales on the body anchor:
 //   slow filter  -> legitimate repositioning (targets follow the body)
-//   fast vs slow -> compensation signal (Posture Coach)
 //   large/sustained change -> relocation (graceful pause + re-baseline)
+// Compensation (Posture Coach) is measured against the patient's own posture
+// at rest, with CompNet's rules (js/compensation.js, 31 Oct 2026).
+
+import { compFeatures, compScores, COMP_EMA } from "./compensation.js";
 
 // MediaPipe is loaded at init, not as a static import: a static import that
 // fails (CDN blocked, no internet) takes the whole app down with it, and the
@@ -91,6 +94,9 @@ const HAND_ZED = 0.8;
 // from the last matched frame, so a scoot or a big reach passes easily while
 // a different person standing somewhere else never does.
 const NUM_POSES = 3;
+// tracker samples (~30 a second) the trained arm must rest before the
+// compensation baseline drifts toward the current posture (js/compensation.js)
+const RESTING_SAMPLES = 45;
 // One complete part of a multipart/x-mixed-replace stream, or null when the
 // buffer does not hold a whole frame yet: {frame: Uint8Array, rest: Uint8Array}.
 // Reads the part header's Content-Length (the bridge always sends one); a
@@ -217,6 +223,7 @@ export class Tracker {
     // segment's depth from its foreshortening (see armVec3).
     this._segLen = { left: { upper: null, fore: null }, right: { upper: null, fore: null } };
     this.pts3 = null;          // metric XYZ per landmark (ZED only), meters
+    this._comp = { at: null, side: null, ema: null, rest: 0, lastW: null, out: null };
     this.at3 = 0;
   }
 
@@ -759,7 +766,9 @@ export class Tracker {
       if (!this.pts[k]) this.pts[k] = { x: raw[k].x, y: raw[k].y };
       mix(this.pts[k], raw[k], this.source === "zed" ? HAND_ZED : HAND);
       this.pts[k].ok = true;
+      this.pts[k].at = now;
     }
+    if (this._baselinePending) this.setBaseline();
 
     // hand open/closed: prefer the 21-point hand model's finger curl (fixed,
     // scale-invariant hysteresis); fall back to the self-calibrating pose-
@@ -1285,7 +1294,11 @@ export class Tracker {
 
   // ---- compensation & relocation signals --------------------------
   setBaseline() {
-    if (!this.anchor) return;
+    // asked for before the first body was seen (a round started while the
+    // models were still loading): taken on the first frame with a body, or
+    // the posture coach would have nothing to measure against all round
+    if (!this.anchor) { this._baselinePending = true; return; }
+    this._baselinePending = false;
     // snap the stable frame to the current body (round start / after a pause)
     this.frame = { x: this.anchor.x, y: this.anchor.y, sw: this.shoulderW, torso: this._torsoLen() };
     this._scaleSince = null;
@@ -1296,7 +1309,9 @@ export class Tracker {
       earShR: this._earShoulder("right"),
       tilt: this._trunkTilt(),
       at: performance.now(),
+      comp: compFeatures(this),          // the posture the compensation rules measure against
     };
+    this._comp.ema = null;
   }
   // trunk axis angle vs vertical, degrees (0 = upright, + = tilted)
   _trunkTilt() {
@@ -1309,17 +1324,37 @@ export class Tracker {
     return Math.hypot(e.x - s.x, e.y - s.y) / this.shoulderW;
   }
 
-  // returns { lean, hike, rotation, tilt } as 0..1-ish severities (0 = clean)
+  // returns { lean, hike, rotation, tilt }, 1.0 = at the threshold (0 = clean).
+  // CompNet's rules (js/compensation.js, 31 Oct 2026): each sign against the
+  // patient's own posture at rest, smoothed once per tracker sample. The
+  // baseline is set at the round's start (setBaseline) and drifts toward the
+  // current posture only while the trained arm rests (hanging or on the
+  // table, still for RESTING_SAMPLES): shifting in the chair is absorbed
+  // between reaches, and a lean held DURING a reach stays a lean.
   compensation(side) {
-    if (!this.baseline || !this.anchorFast) return { lean: 0, hike: 0, rotation: 0, tilt: 0 };
-    const lean = Math.hypot(this.anchorFast.x - this.anchor.x, this.anchorFast.y - this.anchor.y) / this.shoulderW / 0.30;
-    const es = this._earShoulder(side);
-    const bes = side === "left" ? this.baseline.earShL : this.baseline.earShR;
-    const hike = (es != null && bes != null) ? Math.max(0, (bes - es) / 0.22) : 0;
-    const rotation = Math.abs(this.shoulderWFast - this.shoulderW) / this.shoulderW / 0.18;
-    // trunk tilt: the spine angling sideways from its baseline (~12° = 1.0)
-    const tilt = this.baseline.tilt != null ? Math.abs(this._trunkTilt() - this.baseline.tilt) / 12 : 0;
-    return { lean, hike, rotation, tilt };
+    const zero = { lean: 0, hike: 0, rotation: 0, tilt: 0 };
+    if (!this.baseline) return zero;
+    const c = this._comp;
+    if (c.out && c.at === this.lastSeen && c.side === side) return c.out;
+    const f = compFeatures(this);
+    if (!f) return c.out || zero;
+    const b = this.baseline.comp ??= { ...f };
+    // a sign that arrives after the baseline (3D, an ear coming into view) is adopted as it is
+    for (const k of ["rotDeg", "fwdM", "earShL", "earShR", "tilt", "armL", "armR"]) if (b[k] == null && f[k] != null) b[k] = f[k];
+    const raw = compScores(f, b, side);
+    // the arm at rest: the wrist well below the shoulder and still
+    const w = this.wrist(side), s = this.shoulder(side);
+    const still = w?.ok && c.lastW && Math.hypot(w.x - c.lastW.x, w.y - c.lastW.y) / f.sw < 0.02;
+    c.lastW = w ? { x: w.x, y: w.y } : null;
+    c.rest = still && s && (w.y - s.y) / f.sw > 0.4 ? c.rest + 1 : 0;
+    if (c.rest > RESTING_SAMPLES) {
+      for (const k of Object.keys(f)) if (typeof b[k] === "number" && typeof f[k] === "number") b[k] += (f[k] - b[k]) * 0.03;
+    }
+    if (!c.ema) c.ema = { ...raw };
+    else for (const k of Object.keys(raw)) c.ema[k] += (raw[k] - c.ema[k]) * COMP_EMA;
+    c.out = { ...c.ema, src3: f.src3 };
+    c.at = this.lastSeen; c.side = side;
+    return c.out;
   }
 
   // large sustained move / scale change -> pause & re-baseline.

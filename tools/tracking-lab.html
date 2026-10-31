@@ -62,6 +62,7 @@
       <h2>ZED settings (switch live)</h2>
       <label>Body model <select id="zed-model"></select></label>
       <label>Depth mode <select id="zed-depth"></select></label>
+      <label>Body fitting <select id="zed-fitting"><option value="on">On (the SDK's fixed-length skeleton)</option><option value="off">Off (raw 3D, for tools/armfit.py)</option></select></label>
       <label>Picture <select id="zed-res"></select> <select id="zed-fps"></select></label>
       <div class="row" style="margin-top:8px"><button id="zed-apply">Switch the ZED</button><span id="zed-state" class="hint"></span></div>
       <div class="hint">FAST / MEDIUM / ACCURATE are the SDK's own body models (BODY_38, body fitting on). A model's first use optimises it for the GPU, which takes minutes; the picture freezes meanwhile. HD2K (2208x1242) only runs at 15 fps.</div>
@@ -188,9 +189,10 @@ function renderStatus() {
     fill($("#zed-model"), src.choices.model, src.model);
     fill($("#zed-depth"), src.choices.depth, src.depth);
     fill($("#zed-res"), src.choices.res, src.res);
+    if (!$("#zed-fitting").dataset.touched) $("#zed-fitting").value = src.fitting === false ? "off" : "on";
     const fpsFor = src.choices.fps[$("#zed-res").value] || [15];
     fill($("#zed-fps"), fpsFor.map(String), String(src.fps));
-    $("#zed-state").textContent = src.state === "ok" ? `running ${src.model} · ${src.depth} · ${src.res}@${src.fps}` : src.state;
+    $("#zed-state").textContent = src.state === "ok" ? `running ${src.model} · ${src.depth} · ${src.res}@${src.fps}${src.fitting === false ? " · fitting off" : ""}` : src.state;
     $("#zed-state").className = src.state === "ok" ? "hint ok" : (src.state.startsWith("failed") ? "hint no" : "hint warn");
   }
   const r = s.recording;
@@ -231,11 +233,11 @@ $("#apply").onclick = async () => {
   renderStatus(); $("#applied").textContent = "applied"; setTimeout(() => $("#applied").textContent = "", 1500);
   log("set " + q);
 };
-for (const id of ["zed-model", "zed-depth", "zed-res", "zed-fps"]) $("#" + id).addEventListener("change", e => { e.target.dataset.touched = "1"; if (id === "zed-res") { delete $("#zed-fps").dataset.touched; } });
+for (const id of ["zed-model", "zed-depth", "zed-res", "zed-fps", "zed-fitting"]) $("#" + id).addEventListener("change", e => { e.target.dataset.touched = "1"; if (id === "zed-res") { delete $("#zed-fps").dataset.touched; } });
 $("#zed-apply").onclick = async () => {
-  const q = `model=${$("#zed-model").value}&depth=${$("#zed-depth").value}&res=${$("#zed-res").value}&fps=${$("#zed-fps").value}`;
+  const q = `model=${$("#zed-model").value}&depth=${$("#zed-depth").value}&res=${$("#zed-res").value}&fps=${$("#zed-fps").value}&fitting=${$("#zed-fitting").value}`;
   const r = await (await fetch(BASE + "/zed?" + q)).json();
-  for (const id of ["zed-model", "zed-depth", "zed-res", "zed-fps"]) delete $("#" + id).dataset.touched;
+  for (const id of ["zed-model", "zed-depth", "zed-res", "zed-fps", "zed-fitting"]) delete $("#" + id).dataset.touched;
   log("zed " + q + (r.ok ? "" : " -> " + r.error)); $("#zed-state").textContent = r.state || r.error;
 };
 $("#use").onclick = async () => {

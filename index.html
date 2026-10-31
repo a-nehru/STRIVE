@@ -4,7 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>STRIVE</title>
-<link rel="stylesheet" href="css/style.css?v=98">
+<!-- Nunito, self-hosted (SIL OFL 1.1, assets/fonts/OFL.txt): fetched at once so the first screen is in it -->
+<link rel="preload" href="assets/fonts/Nunito-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="css/style.css?v=99">
 </head>
 <body>
 
@@ -151,29 +153,32 @@
       </div>
       <button class="login-skip" id="btn-login-back3">Back</button>
     </div>
+    <!-- how the picture is doing, in one line, at the card's foot (it used to
+         float under the card and ran into it and into the captions) -->
+    <div class="track-status" id="login-track"></div>
   </div>
 
-  <div class="track-status" id="login-track"></div>
   <div class="brand-foot">Developed by Synapse Lab · Shirley Ryan AbilityLab</div>
 </div>
 
 <!-- P1 welcome -->
 <div id="screen-welcome" class="screen">
-  <div class="blob b1"></div><div class="blob b2"></div>
   <canvas id="welcome-canvas"></canvas>
-  <div class="star-tw" style="left:8vw;top:10vh;width:6px;height:6px"></div>
-  <div class="star-tw" style="left:84vw;top:16vh;width:5px;height:5px;animation-delay:.8s"></div>
-  <div class="star-tw" style="left:40vw;top:7vh;width:4px;height:4px;animation-delay:1.4s"></div>
-  <div id="welcome-firefly" style="left:64vw;top:56vh"></div>
   <div class="brand-title">STRIVE</div>
-  <div class="headline">Ready when you are</div>
-  <div class="subline">Sit facing the camera and we'll get you settled</div>
-  <div class="welcome-actions">
-    <button class="btn" id="btn-welcome-start">Start</button>
-    <button class="btn ghost-light" id="btn-welcome-warmup" title="A short stretch with the demonstration video, before we play">Warm up first</button>
-    <button class="btn ghost-light" id="btn-welcome-help">Ask for help</button>
-  </div>
   <div class="track-status" id="welcome-track"></div>
+  <!-- the words on a card at the bottom, so the picture of the person stays clear above it -->
+  <div class="welcome-card">
+    <canvas class="coach-canvas" id="welcome-coach" aria-hidden="true"></canvas>
+    <div class="welcome-words">
+      <div class="headline">Ready when you are</div>
+      <div class="subline">Sit facing the camera and we'll get you settled</div>
+      <div class="welcome-actions">
+        <button class="btn big" id="btn-welcome-start">Start</button>
+        <button class="btn big ghost-light" id="btn-welcome-warmup" title="A short stretch with the demonstration video, before we play">Warm up first</button>
+        <button class="btn big ghost-light" id="btn-welcome-help">Ask for help</button>
+      </div>
+    </div>
+  </div>
   <div class="brand-foot">Developed by Synapse Lab · Shirley Ryan AbilityLab</div>
 </div>
 
@@ -187,14 +192,30 @@
 
 <!-- P3 game select -->
 <div id="screen-select" class="screen hidden">
-  <h1>What shall we play today?</h1>
-  <div class="select-sub">Click a card to choose it</div>
-  <div class="today-strip hidden" id="today-strip"></div>
-  <div class="village" id="village">
+  <!-- the hub (30 Oct 2026 look): a greeting, the coach with a word, today's
+       workout on a card, the games as coloured tiles, the lantern street.
+       The level maps, the two-player setup and the board reuse #cards; the
+       screen carries the class "sub" then and the hub-only parts step aside. -->
+  <header class="hub-head">
+    <div class="hub-titles">
+      <h1>What shall we play today?</h1>
+      <div class="select-sub hub-only">Your therapy, in play</div>
+    </div>
+    <div class="hub-coach hub-only">
+      <div class="bubble" id="hub-bubble">What shall we play today?</div>
+      <canvas class="coach-canvas" id="hub-coach" aria-hidden="true"></canvas>
+    </div>
+  </header>
+  <section class="workout hub-only hidden" id="hub-workout" aria-label="Today's workout">
+    <div class="workout-label">Today's workout</div>
+    <div class="today-strip hidden" id="today-strip"></div>
+    <div class="plan-strip hidden" id="plan-strip"></div>
+  </section>
+  <div class="hub-label hub-only">Click a card to choose it</div>
+  <div class="cards" id="cards"></div>
+  <div class="village hub-only" id="village">
     <canvas id="village-canvas"></canvas>
   </div>
-  <div class="plan-strip hidden" id="plan-strip"></div>
-  <div class="cards" id="cards"></div>
   <div class="menu-actions">
     <button class="btn ghost-light" id="btn-select-help">Ask for help</button>
     <button class="btn ghost-light" id="btn-select-board">This week's board</button>
@@ -207,7 +228,7 @@
   <canvas id="canvas"></canvas>
   <div id="prompt"></div>
   <div id="cue" class="hidden"></div>
-  <div id="paused" class="hidden">One moment.<br>Settle in, and we'll continue</div>
+  <div id="paused" class="hidden"><div class="paused-card">One moment.<br>Settle in, and we'll continue</div></div>
   <div id="assess-hand-btns" class="hidden">
     <button class="btn big" id="btn-hand-left">Left arm</button>
     <button class="btn big" id="btn-hand-right">Right arm</button>
@@ -227,10 +248,16 @@
       <div class="rc-level hidden" id="rc-level"></div>
       <div class="rc-stars" id="rc-stars"></div>
     </div>
+    <!-- the coach and the headline, then the one number the game trains,
+         its last seven games, and what comes next (30 Oct 2026 look) -->
     <div class="rc-main">
+      <canvas class="coach-canvas rc-coach" id="rc-coach" aria-hidden="true"></canvas>
       <div class="rc-head" id="rc-head"></div>
-      <div class="rc-next" id="rc-next"></div>
     </div>
+    <div class="rc-hero hidden" id="rc-hero"></div>
+    <div class="rc-trend hidden" id="rc-trend"></div>
+    <div class="rc-next" id="rc-next"></div>
+    <div class="rc-feel">
     <div class="rc-ask">How does your arm feel? <span class="rc-opt">(optional)</span></div>
     <div class="faces">
       <button class="face f-fine" data-feel="fine"><span class="disc">
@@ -242,6 +269,7 @@
       <button class="face f-hurts" data-feel="hurts"><span class="disc">
         <svg viewBox="0 0 48 48" width="64" height="64"><g fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><circle cx="18" cy="20" r="2.5" fill="currentColor" stroke="none"/><circle cx="30" cy="20" r="2.5" fill="currentColor" stroke="none"/><path d="M16 33 Q24 26 32 33"/></g></svg>
       </span><span class="lbl">Hurts</span></button>
+    </div>
     </div>
     <div class="rc-note" id="rc-note"></div>
     <div class="rc-actions">
@@ -412,6 +440,18 @@
       <select id="in-windy-level"><option value="">The ladder's level</option></select>
     </label>
   </div>
+  <div class="dwr-game" data-for="fruit">
+    <label>Cozy Fruit drop
+      <select id="in-fruit-drop">
+        <option value="hold">Hold the hand still</option>
+        <option value="grasp">Squeeze, then open the hand</option>
+        <option value="both">Either</option>
+      </select>
+    </label>
+    <label>Cozy Fruit level (next round only)
+      <select id="in-fruit-level"><option value="">The ladder's level</option></select>
+    </label>
+  </div>
   <div class="dwr-game" data-for="rhythm">
     <label>Melody Tiles song
       <select id="in-song"></select>
@@ -495,9 +535,9 @@
 <button id="btn-help" class="hidden" title="Ask your therapist for help">Help</button>
 <div id="today-pill" class="hidden" aria-live="off"></div>
 
-<div id="loading" class="hidden"><div class="spinner"></div><div id="loading-text">Waking up the camera&hellip;</div>
-  <div id="loading-error" class="hidden"><button class="btn big" id="btn-loading-retry">Try again</button><button class="btn ghost-light" id="btn-loading-continue">Continue without the camera</button></div></div>
+<div id="loading" class="hidden"><div class="loading-card"><div class="spinner"></div><div id="loading-text">Waking up the camera&hellip;</div>
+  <div id="loading-error" class="hidden"><button class="btn big" id="btn-loading-retry">Try again</button><button class="btn big ghost-light" id="btn-loading-continue">Continue without the camera</button></div></div></div>
 
-<script type="module" src="js/main.js?v=98"></script>
+<script type="module" src="js/main.js?v=99"></script>
 </body>
 </html>

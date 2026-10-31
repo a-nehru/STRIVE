@@ -39,3 +39,7 @@ tools/backups/
 tools/smoke/
 # personal scratch notes
 NOTES.md
+# Cozy Fruit Merge's glossy fruit pictures (from github.com/tahayagmur/Merge-Fruit:
+# no licence, and its site says "all rights reserved"): local builds only.
+# Delete this line to commit them.
+assets/fruit/glossy.json

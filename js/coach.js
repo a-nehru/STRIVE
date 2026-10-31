@@ -7,13 +7,22 @@
 import { audio } from "./audio.js";
 import { speakLine, voiceBusy } from "./a11y.js";
 import { coachLine } from "./coachlines.js";
+import { C } from "./theme.js";
+import { rrect } from "./ui.js";
+import { Character } from "./cast.js";
+import { COMP_T } from "./compensation.js";
 
 // The cue's words come from the chosen coach's phrasebook (coachlines.js,
 // Oct 2026): lean | hike | rotation | tilt each have a line in Rook's,
 // Lumi's and Maple's voice. Lumi's first lines are the original cues.
 const THRESH = { gentle: 1.0, strict: 0.65 };
-// what a score of 1.0 means in real terms, per slip (tracker.compensation)
-const SCALE = { lean: [0.30, "SW"], hike: [0.22, "SW"], rotation: [18, "%"], tilt: [12, "°"] };
+// an alert clears only once the slip is back under this share of the
+// threshold (compensation.js's hysteresis), so a posture hovering at the
+// line does not flicker the cue on and off
+const RELEASE = 0.7;
+// what a score of 1.0 means in real terms, per slip (tracker.compensation,
+// js/compensation.js): the main measure of each
+const SCALE = { lean: [COMP_T.fwdRatio * 100, "% wider"], hike: [COMP_T.hike, "SW"], rotation: [COMP_T.rotDeg, "°"], tilt: [COMP_T.tiltDeg, "°"] };
 const NAMES = { lean: "Lean", hike: "Hike", rotation: "Turn", tilt: "Tilt" };
 // staff readout of the four scores under the figure (28 Oct 2026, by
 // request, to check the thresholds): device-level, the staff drawer's
@@ -36,13 +45,30 @@ export class Coach {
     this.cooldownUntil = 0;
     this.events = [];
     this.alertStart = 0;
+    // per round, per slip: the largest score and the time spent over the
+    // threshold, for the therapist (the round record's compStats): the data a
+    // per-patient threshold would be tuned on
+    this.stats = { lean: { max: 0, overMs: 0 }, hike: { max: 0, overMs: 0 }, rotation: { max: 0, overMs: 0 }, tilt: { max: 0, overMs: 0 } };
+    this._lastU = null;
+  }
+  summary() {
+    const out = {};
+    for (const [k, v] of Object.entries(this.stats)) out[k] = { max: Math.round(v.max * 100) / 100, overS: Math.round(v.overMs / 100) / 10 };
+    return out;
   }
 
   update(now) {
     if (this.sens === "off") { this.state = "idle"; return; }
     const c = this.t.compensation(this.side);
-    const worst = Object.entries(c).sort((a, b) => b[1] - a[1])[0];
+    const worst = Object.entries(c).filter(([k]) => k in this.stats).sort((a, b) => b[1] - a[1])[0];
     const over = worst[1] > THRESH[this.sens];
+    const dt = this._lastU == null ? 0 : Math.min(200, now - this._lastU);
+    this._lastU = now;
+    for (const k of Object.keys(this.stats)) {
+      const v = c[k] || 0, st = this.stats[k];
+      if (v > st.max) st.max = v;
+      if (v > THRESH[this.sens]) st.overMs += dt;
+    }
 
     if (this.state === "idle") {
       if (over && now > this.cooldownUntil) {
@@ -58,7 +84,7 @@ export class Coach {
         }
       } else if (!over) this.overSince = null;
     } else if (this.state === "alert") {
-      if (!over) {
+      if (worst[1] < THRESH[this.sens] * RELEASE) {
         this.state = "recover"; this.stateT = now;
         this.events.push({ type: this.type, at: new Date().toISOString(), durationMs: Math.round(now - this.alertStart) });
         this.cooldownUntil = now + 5000;
@@ -79,48 +105,78 @@ export class Coach {
     if (!el) return;
     el.textContent = text;
     el.classList.toggle("hidden", !show);
+    el.classList.toggle("posture", !!show);     // the dashed attention ring and "!" (css #cue.posture)
   }
 
-  // Draw the LIVE skeleton in a dock box. (x, y) = bottom-left of dock, h = height.
-  draw(ctx, x, y, h, now) {
-    const p = this.t.pts;
-    if (!p || !p.shL || !p.shR) return;
+  // THE DOCK (30 Oct 2026, by request: one look for every game): a card in a
+  // bottom corner with the coach character beside the patient's LIVE
+  // posture figure. The figure is the movement channel (framework P5): faint
+  // while posture is good; on a slip the slipping segment turns the attention
+  // colour, a dashed upright ghost shows the correction, the card gets a
+  // dashed attention ring and the character looks focused; on recovery it
+  // beams. (x, y) = bottom-left of the card, h = its height; opts.surface
+  // "night" for dark stages, opts.compact for the figure alone (in the
+  // assessment's video slot).
+  draw(ctx, x, y, h, now, opts = {}) {
+    const night = opts.surface === "night";
+    const compact = !!opts.compact;
     const alert = this.state === "alert";
     const recover = this.state === "recover";
+    const w = compact ? h * 0.95 : h * 2.25;
+    const r = h * 0.2;
+    // the card
+    ctx.save();
+    if (!night) { ctx.shadowColor = "rgba(30,34,53,0.14)"; ctx.shadowBlur = 18; ctx.shadowOffsetY = 6; }
+    ctx.fillStyle = night ? (compact ? "rgba(34,38,61,0.85)" : C.nightCard) : (compact ? "rgba(255,255,255,0.88)" : C.card);
+    rrect(ctx, x, y - h, w, h, r); ctx.fill();
+    ctx.restore();
+    if (alert && !this.quiet) {
+      ctx.save();
+      ctx.strokeStyle = C.attention; ctx.lineWidth = Math.max(3, h * 0.03); ctx.setLineDash([h * 0.07, h * 0.05]);
+      rrect(ctx, x + 2, y - h + 2, w - 4, h - 4, r); ctx.stroke();
+      ctx.restore();
+    }
+    // the character
+    if (!compact) {
+      this.face ??= new Character({ who: "coach" });
+      if (alert && !this.quiet) this.face.setMood("focused");
+      else this.face.setMood("neutral");
+      if (recover && this._beamed !== this.stateT) { this._beamed = this.stateT; this.face.flashMood("happy", 1400); }
+      this.face.draw(ctx, x + h * 0.56, y - h * 0.09, h * 0.72, now);
+    }
+    // the posture figure
+    const fx = compact ? x : x + h * 1.12;
+    this._drawFigure(ctx, fx, y, h, now, night, alert && !this.quiet, recover);
+    if (postureDebug()) this._drawNumbers(ctx, x, y, h, now);
+  }
 
+  _drawFigure(ctx, x, y, h, now, night, alert, recover) {
+    const p = this.t.pts;
+    if (!p || !p.shL || !p.shR) return;
     // transform: body-relative (SW units) -> dock pixels
     const sw = this.t.shoulderW;
-    const s = h / 3.6;                                  // px per shoulder-width in dock
-    const cx = x + h * 0.45, cy = y - h * 0.62;          // dock center ~ shoulder line
+    const s = h / 4.8;                                  // px per shoulder-width in dock
+    const cx = x + h * 0.48, cy = y - h * 0.64;          // shoulder line: head and hanging arms both fit the card
     const P = pt => ({ x: cx + (pt.x - this.t.anchorFast.x) / sw * s, y: cy + (pt.y - this.t.anchorFast.y) / sw * s });
-
     const shL = P(p.shL), shR = P(p.shR);
     const shMid = { x: (shL.x + shR.x) / 2, y: (shL.y + shR.y) / 2 };
     const hipMid = p.hipL && p.hipR ? P({ x: (p.hipL.x + p.hipR.x) / 2, y: (p.hipL.y + p.hipR.y) / 2 }) : { x: shMid.x, y: shMid.y + s * 1.4 };
     const head = p.earL && p.earR
       ? P({ x: (p.earL.x + p.earR.x) / 2, y: (p.earL.y + p.earR.y) / 2 })
       : { x: shMid.x, y: shMid.y - s * 0.55 };
-
+    const base = night ? C.onNight : C.ink;
+    const faint = night ? "rgba(246,242,234,0.5)" : "rgba(30,34,53,0.42)";
+    const slip = C.attention, good = C.ok;
+    const idle = !alert && !recover;
+    const spineColor = alert && (this.type === "lean" || this.type === "rotation" || this.type === "tilt") ? slip : recover ? good : base;
+    const shoulderColor = alert && (this.type === "hike" || this.type === "rotation") ? slip : recover ? good : base;
     ctx.save();
-    ctx.lineCap = "round";
-    const idleA = 0.28 + Math.sin(now / 900) * 0.04;
-    const baseA = alert || recover ? 1 : idleA;
-    const cream = "#f4ecdd";
-    const amber = "#e8a86a";
-    const green = "#9fc08a";
-    const spineColor = alert && (this.type === "lean" || this.type === "rotation" || this.type === "tilt") ? amber : recover ? green : cream;
-    const shoulderColor = alert && (this.type === "hike" || this.type === "rotation") ? amber : recover ? green : cream;
-
-    // dock backing so the skeleton reads against any scene
-    ctx.globalAlpha = baseA * 0.35;
-    ctx.fillStyle = "rgba(16,12,30,0.55)";
-    ctx.beginPath(); ctx.roundRect(x, y - h, h * 0.95, h, 14); ctx.fill();
-
+    ctx.lineCap = "round"; ctx.lineJoin = "round";
+    ctx.globalAlpha = idle ? 0.6 : 1;
     if (alert) {
-      // ghost of CORRECT posture: vertical spine + level shoulders (dashed white)
-      ctx.globalAlpha = 0.75;
-      ctx.strokeStyle = "rgba(255,255,255,0.7)";
-      ctx.lineWidth = 3; ctx.setLineDash([5, 6]);
+      // the upright ghost: vertical spine, level shoulders, dashed
+      ctx.strokeStyle = night ? "rgba(246,242,234,0.55)" : "rgba(30,34,53,0.35)";
+      ctx.lineWidth = Math.max(2, h * 0.02); ctx.setLineDash([h * 0.035, h * 0.04]);
       const spineLen = Math.hypot(hipMid.x - shMid.x, hipMid.y - shMid.y);
       const shHalf = Math.hypot(shR.x - shL.x, shR.y - shL.y) / 2;
       ctx.beginPath(); ctx.moveTo(hipMid.x, hipMid.y); ctx.lineTo(hipMid.x, hipMid.y - spineLen); ctx.stroke();
@@ -128,111 +184,30 @@ export class Coach {
       ctx.beginPath(); ctx.arc(hipMid.x, hipMid.y - spineLen - s * 0.5, s * 0.3, 0, 7); ctx.stroke();
       ctx.setLineDash([]);
     }
-
-    // ---- the LIVE skeleton ----
-    ctx.globalAlpha = baseA;
-    ctx.lineWidth = 5;
-    if (alert) { ctx.shadowColor = amber; ctx.shadowBlur = 10 + Math.sin(now / 280) * 6; }
-    if (recover) { ctx.shadowColor = green; ctx.shadowBlur = 12; }
-
-    const seg = (a, b, color) => {
-      ctx.strokeStyle = color;
-      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
-    };
-    // spine + shoulders + hips
+    ctx.lineWidth = Math.max(3, h * 0.035);
+    const seg = (a, b, color) => { ctx.strokeStyle = color; ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); };
     seg(shMid, hipMid, spineColor);
     seg(shL, shR, shoulderColor);
-    if (p.hipL && p.hipR) seg(P(p.hipL), P(p.hipR), cream);
-    // arms (tracked side slightly brighter), wrist → palm included
+    if (p.hipL && p.hipR) seg(P(p.hipL), P(p.hipR), base);
     for (const [sh, el, wr, sideName] of [[p.shL, p.elL, p.wrL, "left"], [p.shR, p.elR, p.wrR, "right"]]) {
-      const emph = sideName === this.side;
-      const col = emph ? cream : "rgba(244,236,221,0.55)";
-      if (el?.ok) {
-        seg(P(sh), P(el), col);
-        if (wr?.ok) {
-          seg(P(el), P(wr), col);
-          const pm = this.t.palm(sideName);
-          if (pm) {
-            seg(P(wr), P(pm), col);
-            const pp = P(pm);
-            if (this.t.handClosed(sideName)) {
-              // caught a firefly! glowing hand + orbiting sparkles
-              ctx.save();
-              ctx.shadowColor = amber; ctx.shadowBlur = 10;
-              ctx.fillStyle = amber;
-              ctx.beginPath(); ctx.arc(pp.x, pp.y, 5, 0, 7); ctx.fill();
-              ctx.fillStyle = "#fff6d8";
-              ctx.beginPath(); ctx.arc(pp.x, pp.y, 2.2, 0, 7); ctx.fill();
-              ctx.restore();
-              ctx.fillStyle = "rgba(255,246,216,0.9)";
-              for (let k = 0; k < 3; k++) {
-                const a = now / 500 + k * 2.1;
-                ctx.beginPath(); ctx.arc(pp.x + Math.cos(a) * 9, pp.y + Math.sin(a) * 9, 1.3, 0, 7); ctx.fill();
-              }
-            } else {
-              ctx.fillStyle = col;
-              ctx.beginPath(); ctx.arc(pp.x, pp.y, 3.5, 0, 7); ctx.fill();
-            }
-          }
-        }
+      const col = sideName === this.side ? base : faint;
+      if (!el?.ok) continue;
+      seg(P(sh), P(el), col);
+      if (!wr?.ok) continue;
+      seg(P(el), P(wr), col);
+      const pm = this.t.palm(sideName);
+      if (pm) {
+        seg(P(wr), P(pm), col);
+        const pp = P(pm);
+        ctx.fillStyle = this.t.handClosed(sideName) ? good : col;
+        ctx.beginPath(); ctx.arc(pp.x, pp.y, Math.max(3, h * 0.03), 0, 7); ctx.fill();
       }
     }
-    // head
-    ctx.strokeStyle = cream;
+    ctx.strokeStyle = base;
     ctx.beginPath(); ctx.arc(head.x, head.y, s * 0.32, 0, 7); ctx.stroke();
-
-    // friendly face — blinks, smiles, worries with you, beams on recovery
-    {
-      const fr = s * 0.32;
-      ctx.save();
-      ctx.globalAlpha = Math.min(1, baseA + 0.25);
-      ctx.lineWidth = 2.2;
-      ctx.lineCap = "round";
-      const ex = fr * 0.4, ey = head.y - fr * 0.12;
-      const blink = !alert && !recover && (now % 3600) < 130;
-      if (recover) {          // happy closed eyes  ^ ^
-        ctx.strokeStyle = green;
-        for (const dx of [-ex, ex]) { ctx.beginPath(); ctx.arc(head.x + dx, ey + fr * 0.12, fr * 0.17, Math.PI, 0); ctx.stroke(); }
-      } else if (blink) {
-        ctx.strokeStyle = cream;
-        for (const dx of [-ex, ex]) { ctx.beginPath(); ctx.moveTo(head.x + dx - fr * 0.13, ey); ctx.lineTo(head.x + dx + fr * 0.13, ey); ctx.stroke(); }
-      } else {
-        ctx.fillStyle = alert ? amber : cream;
-        for (const dx of [-ex, ex]) { ctx.beginPath(); ctx.arc(head.x + dx, ey, fr * 0.11, 0, 7); ctx.fill(); }
-      }
-      ctx.strokeStyle = alert ? amber : recover ? green : cream;
-      ctx.beginPath();
-      if (alert) ctx.arc(head.x, head.y + fr * 0.42, fr * 0.14, 0, 7);                       // little "o" — oops!
-      else if (recover) ctx.arc(head.x, head.y + fr * 0.05, fr * 0.5, Math.PI * 0.15, Math.PI * 0.85);  // big smile
-      else ctx.arc(head.x, head.y + fr * 0.12, fr * 0.38, Math.PI * 0.2, Math.PI * 0.8);      // gentle smile
-      ctx.stroke();
-      if (!alert) {           // soft rosy cheeks
-        ctx.fillStyle = "rgba(232,168,106,0.4)";
-        for (const dx of [-fr * 0.62, fr * 0.62]) { ctx.beginPath(); ctx.arc(head.x + dx, head.y + fr * 0.3, fr * 0.13, 0, 7); ctx.fill(); }
-      }
-      ctx.restore();
-    }
-
-    ctx.shadowBlur = 0;
-    if (alert) {
-      // green nudge arrow: from current head toward the ghost's upright head
-      const spineLen = Math.hypot(hipMid.x - shMid.x, hipMid.y - shMid.y);
-      const gx = hipMid.x, gy = hipMid.y - spineLen - s * 0.5;
-      const nudge = Math.sin(now / 400) * 0.5 + 0.5;
-      ctx.globalAlpha = 0.5 + nudge * 0.5;
-      ctx.strokeStyle = green; ctx.lineWidth = 3.5;
-      ctx.beginPath(); ctx.moveTo(head.x, head.y - s * 0.5); ctx.quadraticCurveTo((head.x + gx) / 2, gy - s * 0.4, gx, gy - s * 0.42); ctx.stroke();
-      const angle = Math.atan2((gy - s * 0.42) - (gy - s * 0.4), gx - (head.x + gx) / 2);
-      ctx.beginPath();
-      ctx.moveTo(gx, gy - s * 0.42);
-      ctx.lineTo(gx - 9 * Math.cos(angle - 0.5), gy - s * 0.42 - 9 * Math.sin(angle - 0.5));
-      ctx.moveTo(gx, gy - s * 0.42);
-      ctx.lineTo(gx - 9 * Math.cos(angle + 0.5), gy - s * 0.42 - 9 * Math.sin(angle + 0.5));
-      ctx.stroke();
-    }
     ctx.restore();
-    if (postureDebug()) this._drawNumbers(ctx, x, y, h, now);
   }
+
 
   // the four scores as bars with the threshold marked, the real amount beside
   // each, and the state; below the dock when there is room, else beside it
@@ -256,7 +231,8 @@ export class Coach {
     const max = Math.max(1.5, th * 1.5);
     const head = this.sens === "off" ? "Coach off"
       : `${this.state}${this.state === "alert" ? ": " + NAMES[this.type] : ""} · fires at ${th}`
-        + (this.state === "idle" && now < this.cooldownUntil ? " · resting" : "");
+        + (this.state === "idle" && now < this.cooldownUntil ? " · resting" : "")
+        + ` · ${c.src3 === "zed" ? "3D (ZED)" : "2D"}`;
     ctx.fillStyle = "#f4ecdd"; ctx.textAlign = "left";
     ctx.fillText(head, px + pad, py + pad + fs * 0.5);
     Object.keys(SCALE).forEach((k, i) => {

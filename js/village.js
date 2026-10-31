@@ -72,9 +72,10 @@ export function drawVillage(canvas, v, opts = {}) {
   const now = opts.now ?? (typeof performance !== "undefined" ? performance.now() : 0);
   const R = rng(1234567);
 
-  // sky
+  // sky (the night surface of js/theme.js: the street is a night scene in a
+  // card on the light hub, 30 Oct 2026)
   const sky = ctx.createLinearGradient(0, 0, 0, H);
-  sky.addColorStop(0, "#0f1030"); sky.addColorStop(0.75, "#1e1c42"); sky.addColorStop(1, "#2a2448");
+  sky.addColorStop(0, "#181C33"); sky.addColorStop(0.66, "#3A4170"); sky.addColorStop(1, "#454D80");
   ctx.fillStyle = sky; ctx.fillRect(0, 0, W, H);
 
   // stars: one per lantern, for ever
@@ -90,7 +91,7 @@ export function drawVillage(canvas, v, opts = {}) {
 
   // hills
   const horizon = H * 0.66;
-  for (const [amp, col, ph] of [[14, "#17173a", 0.4], [9, "#121233", 2.1]]) {
+  for (const [amp, col, ph] of [[14, "#252A48", 0.4], [9, "#1C2038", 2.1]]) {
     ctx.fillStyle = col;
     ctx.beginPath(); ctx.moveTo(0, H);
     for (let x = 0; x <= W; x += 8) ctx.lineTo(x, horizon - amp * Math.sin(x / 140 + ph) - amp * 0.5 * Math.sin(x / 57 + ph * 2));
@@ -115,7 +116,7 @@ export function drawVillage(canvas, v, opts = {}) {
 
   // the road
   const roadY = H * 0.86;
-  ctx.fillStyle = "#1c1a3e";
+  ctx.fillStyle = "#171A2E";
   ctx.fillRect(0, roadY - 10, W, H - roadY + 10);
   ctx.strokeStyle = "rgba(244,236,221,0.12)"; ctx.lineWidth = 2; ctx.setLineDash([10, 14]);
   ctx.beginPath(); ctx.moveTo(0, roadY + 8); ctx.lineTo(W, roadY + 8); ctx.stroke(); ctx.setLineDash([]);

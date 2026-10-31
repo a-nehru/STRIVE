@@ -1,5 +1,6 @@
-import { Tracker } from "./tracker.js?v=72";
+import { Tracker } from "./tracker.js?v=73";
 import { Assessment } from "./assessment.js";
+import { FRUIT_MAX, fruitChapters } from "./fruit.js";
 import { GAMES, STAR_RANKS, PONG_LEVEL_MAX, CANDLE_MAX, LUMEN_STAGES, WINDY_MAX, PAIR_MAX, windyLabel, windyStageOf, windySubOf, windyPips } from "./games.js";
 import { Warmup } from "./warmup.js";
 import { probeLauncher, launcherInfo, backupNow, listBackups, restoreBackup, backupState, startAutoBackup } from "./backup.js";
@@ -14,6 +15,23 @@ import { coachLine, phrasebookLines } from "./coachlines.js";
 import { probeCoach, coachRelayReady, coachRelayInfo } from "./coachline.js";
 import { probeTts, ttsReady, ttsInfo, prerenderVoice } from "./tts.js";
 import { probeMail, sendMail, mailTarget, mailReady, diagnostics, progressReport, setReminder, pushSnapshot } from "./mail.js";
+import { applyThemeCSS, accentOf } from "./theme.js";
+import { mountCharacter } from "./cast.js";
+
+// THE LOOK (30 Oct 2026, by request): one set of tokens for the stylesheet
+// and the canvas (js/theme.js), written to :root before anything is drawn
+applyThemeCSS();
+// a game's accent as the CSS custom properties a card or panel reads
+// (--acc, --acc-deep, --acc-tint, --acc-on)
+function setAccent(el, gameId) {
+  const a = accentOf(gameId);
+  el.style.setProperty("--acc", a.solid);
+  el.style.setProperty("--acc-deep", a.deep);
+  el.style.setProperty("--acc-tint", a.tint);
+  el.style.setProperty("--acc-on", a.on);
+  return a;
+}
+const accentVars = gameId => { const a = accentOf(gameId); return `--acc:${a.solid};--acc-deep:${a.deep};--acc-tint:${a.tint};--acc-on:${a.on}`; };
 
 // "12 min" / "1 h 05 min"
 const fmtDur = ms => { const m = Math.round(ms / 60000); return m >= 60 ? `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, "0")} min` : `${m} min`; };
@@ -42,6 +60,9 @@ const state = {
   candlesLevelPick: null, // Lantern: a level chosen on the level map or in the drawer for the NEXT round only (testing); else the ladder
   windyLevelPick: null,   // Windy City Flap: the same, from the drawer
   pairsLevelPick: null,   // Memory Pairs: the same, from the session plan
+  fruitLevelPick: null,   // Cozy Fruit Merge: the same, from the map, the drawer or the plan
+  fruitDrop: "hold",      // Cozy Fruit Merge: how a fruit is dropped (hold | grasp | both), the drawer
+  fruitBoard: null,       // Cozy Fruit Merge: an unfinished box, kept for the next round of that level
   pongSpeed: "normal",   // Pong ball-speed dial: chill | normal | frantic (both the single and the two-player game)
   pongPowerups: true,    // Pong: the orbs and their power-ups
   ferryMode: "solo",
@@ -55,6 +76,26 @@ const state = {
   plan: null,          // the session plan being played: { blocks, idx, startedAt } (null when playing freely)
 };
 
+// THE COACH, drawn in code (js/cast.js, 30 Oct 2026 look): beside its word
+// on the hub, on the welcome card, and beside the headline on the round
+// card, where its face follows the round. Each lives in its own small
+// canvas and rests while its screen is hidden.
+const coachChar = {
+  hub: mountCharacter($("hub-coach"), { who: "coach", mood: "neutral" }),
+  welcome: mountCharacter($("welcome-coach"), { who: "coach", mood: "neutral" }),
+  card: mountCharacter($("rc-coach"), { who: "coach", mood: "happy" }),
+};
+// The cue pill shows the games' praise and the posture coach's cues. A
+// posture cue wears a dashed ring and a "!" (never colour alone): the coach
+// writes the pill while it is in "alert", the games' praise never does.
+{
+  const cue = $("cue");
+  new MutationObserver(() => {
+    const co = state.current?.coach;
+    cue.classList.toggle("posture", !!co && co.state === "alert" && !cue.classList.contains("hidden"));
+  }).observe(cue, { childList: true, characterData: true, subtree: true, attributes: true, attributeFilter: ["class"] });
+}
+
 function show(id) {
   for (const s of SCREENS) $(s).classList.add("hidden");
   $(id).classList.remove("hidden");
@@ -64,6 +105,13 @@ function show(id) {
   // and the menu carry their own inline buttons instead
   $("btn-help").classList.toggle("hidden", ["screen-login", "screen-welcome", "screen-intro", "screen-select", "screen-schedule"].includes(id));
   updateTodayPill();
+}
+
+// what is on the stage, for the stylesheet: the words over a game sit under
+// the canvas's top band, the warm-up's in the top strip it keeps free
+function stageMode(mode, game = "") {
+  $("stage").dataset.mode = mode;
+  $("stage").dataset.game = game;
 }
 
 function resize() { const c = $("canvas"); c.width = innerWidth; c.height = innerHeight; }
@@ -79,6 +127,9 @@ const speak = text => speakLine(text, 0.9, true);
 function loadSettings(name) {
   const s = store.getSettings(name);
   applySettings(s);
+  // with captions on, the menu screens keep a strip at the bottom for them,
+  // so a spoken line never lands on a card or a button (style.css)
+  document.body.classList.toggle("captions", !!A11Y.captions);
   audio.setVolumes({ music: s.volMusic, fx: s.volFx });
   syncComfortControls();
   warmVoice();
@@ -411,7 +462,9 @@ function framingMessage(t) {
 }
 
 // ZED path with more than one person in view: a ring on each person's
-// shoulders, sage on the one being followed, amber on the rest, so staff can
+// shoulders, a solid green ring and "Following" on the one being followed,
+// a dashed amber ring and "Click to follow" on the rest (the dash and the
+// word, not the colour, tell them apart), so staff can
 // click the patient once and the bridge follows them from then on. Returns
 // the hit boxes for the click handler. Mirrored like everything else drawn
 // over the camera picture.
@@ -424,20 +477,25 @@ function drawPeopleMarkers(ctx, c, t) {
     const r = Math.max(36, Math.min(160, p.sw * c.width * 0.8));
     const followed = p.seat === 0;
     ctx.save();
+    // a white halo under the ring, so it reads on a dark picture and a light one
     ctx.beginPath(); ctx.arc(px.x, px.y, r, 0, Math.PI * 2);
-    ctx.strokeStyle = followed ? "rgba(159,192,138,0.95)" : "rgba(232,168,106,0.9)";
-    ctx.lineWidth = followed ? 5 : 3;
-    if (!followed) ctx.setLineDash([10, 8]);
+    ctx.strokeStyle = "rgba(255,255,255,0.9)"; ctx.lineWidth = followed ? 11 : 9;
+    if (!followed) ctx.setLineDash([16, 10]);
+    ctx.stroke();
+    ctx.strokeStyle = followed ? "#2E7D4F" : "#A65600";
+    ctx.lineWidth = followed ? 6 : 4;
     ctx.stroke();
     ctx.setLineDash([]);
-    ctx.font = "600 18px system-ui, sans-serif";
-    ctx.textAlign = "center";
+    ctx.font = "800 20px Nunito, system-ui, sans-serif";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
     const label = followed ? "Following" : "Click to follow";
-    const tw = ctx.measureText(label).width + 22;
-    ctx.fillStyle = "rgba(16,16,40,0.75)";
-    ctx.beginPath(); ctx.roundRect(px.x - tw / 2, px.y - r - 34, tw, 28, 8); ctx.fill();
-    ctx.fillStyle = followed ? "#9fc08a" : "#e8a86a";
-    ctx.fillText(label, px.x, px.y - r - 14);
+    const tw = ctx.measureText(label).width + 32, th = 36, ty = px.y - r - 26;
+    ctx.shadowColor = "rgba(30,34,53,0.22)"; ctx.shadowBlur = 8; ctx.shadowOffsetY = 2;
+    ctx.fillStyle = "#FFFFFF";
+    ctx.beginPath(); ctx.roundRect(px.x - tw / 2, ty - th / 2, tw, th, th / 2); ctx.fill();
+    ctx.shadowColor = "transparent";
+    ctx.fillStyle = followed ? "#2E7D4F" : "#1E2235";
+    ctx.fillText(label, px.x, ty + 1);
     ctx.restore();
     boxes.push({ id: p.id, x: px.x, y: px.y, r, at: { x: p.x, y: p.y } });
   }
@@ -534,6 +592,7 @@ function watchWelcome() {
       return;
     }
 
+    coachChar.welcome.setMood(msg ? "neutral" : "happy");
     if (msg) {
       framedSince = null;
       setText(head, "Let's get you settled");
@@ -574,6 +633,7 @@ function watchWelcome() {
 function startWarmup(then = null) {
   if (!state.tracker) return;
   const next = then || (() => { renderSelect(); show("screen-select"); speak("What shall we play today?"); });
+  stageMode("warmup");
   show("stage");
   const w = new Warmup(state.tracker, $("canvas"), { side: state.side, endLine: then ? "Lovely. Nice and loose. Now let's measure your reach." : null });
   state.current = w;
@@ -719,16 +779,43 @@ const CARD_ART = {
       <ellipse cx="150" cy="200" rx="24" ry="30" fill="#e8a86a"/><ellipse cx="150" cy="192" rx="12" ry="14" fill="#fff6d8"/>
       <ellipse cx="90" cy="90" rx="12" ry="15" fill="#e8a86a" opacity=".5"/><ellipse cx="220" cy="120" rx="10" ry="13" fill="#e8a86a" opacity=".38"/>
     </svg></div>`,
-  pong: `<div class="art" style="background:radial-gradient(circle at 50% 50%,#3a4f6a,#1c2740)">
-    <svg viewBox="0 0 300 400" style="position:absolute;inset:0;width:100%;height:100%">
-      <rect x="36" y="130" width="13" height="90" rx="7" fill="#8f76b0"/><rect x="252" y="180" width="13" height="90" rx="7" fill="#e8b98a"/>
-      <circle cx="150" cy="200" r="13" fill="#fff6d8"/><circle cx="150" cy="200" r="42" fill="rgba(159,192,138,.18)"/>
+  // THE ENABLED CARDS (30 Oct 2026 look): the game's accent, flat, with a
+  // simple white drawing (the Lantern's in ink on its amber); the name sits
+  // bottom left and the movement chip top left, so the drawing keeps clear
+  // of both. data-on="ink" turns the name ink on the lighter accent.
+  pong: `<div class="art" style="background:var(--pong-solid)">
+    <svg viewBox="0 0 300 260" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+      <path d="M150 58 V184" stroke="#fff" stroke-opacity=".3" stroke-width="5" stroke-dasharray="10 12" stroke-linecap="round"/>
+      <rect x="44" y="66" width="18" height="86" rx="9" fill="#fff" opacity=".55"/>
+      <rect x="238" y="90" width="18" height="86" rx="9" fill="#fff"/>
+      <circle cx="120" cy="96" r="8" fill="#fff" opacity=".22"/><circle cx="148" cy="108" r="10" fill="#fff" opacity=".38"/><circle cx="177" cy="121" r="12" fill="#fff" opacity=".6"/>
+      <circle cx="210" cy="134" r="16" fill="#fff"/>
     </svg></div>`,
-  assess: `<div class="art" style="background:radial-gradient(circle at 50% 42%,#3a3168,#20204a 60%,#161636)">
-    <svg viewBox="0 0 300 400" style="position:absolute;inset:0;width:100%;height:100%">
-      <circle cx="150" cy="190" r="85" fill="none" stroke="rgba(244,236,221,.3)" stroke-width="3" stroke-dasharray="8 9"/>
-      <circle cx="150" cy="190" r="85" fill="none" stroke="rgba(232,168,106,.65)" stroke-width="6" stroke-dasharray="360 180"/>
-      <circle cx="235" cy="180" r="9" fill="#fff6d8"/>
+  // Pong Abd-Add: the court on its side, the patient's paddle along the bottom
+  pongAbd: `<div class="art" style="background:var(--pong-solid)">
+    <svg viewBox="0 0 300 260" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+      <path d="M58 124 H262" stroke="#fff" stroke-opacity=".3" stroke-width="5" stroke-dasharray="10 12" stroke-linecap="round"/>
+      <rect x="96" y="64" width="94" height="18" rx="9" fill="#fff" opacity=".55"/>
+      <rect x="168" y="168" width="94" height="18" rx="9" fill="#fff"/>
+      <circle cx="170" cy="96" r="8" fill="#fff" opacity=".22"/><circle cx="182" cy="112" r="10" fill="#fff" opacity=".38"/><circle cx="194" cy="129" r="12" fill="#fff" opacity=".6"/>
+      <circle cx="208" cy="148" r="15" fill="#fff"/>
+    </svg></div>`,
+  // Pong for two: both paddles solid, a ball between them
+  pongDuo: `<div class="art" style="background:var(--pong-solid)">
+    <svg viewBox="0 0 300 260" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+      <path d="M150 58 V184" stroke="#fff" stroke-opacity=".3" stroke-width="5" stroke-dasharray="10 12" stroke-linecap="round"/>
+      <rect x="44" y="76" width="18" height="86" rx="9" fill="#fff"/>
+      <rect x="238" y="70" width="18" height="86" rx="9" fill="#fff"/>
+      <circle cx="98" cy="128" r="8" fill="#fff" opacity=".22"/><circle cx="124" cy="122" r="10" fill="#fff" opacity=".38"/><circle cx="151" cy="115" r="12" fill="#fff" opacity=".6"/>
+      <circle cx="184" cy="108" r="16" fill="#fff"/>
+    </svg></div>`,
+  // the measurement: a target in the assessment's violet
+  assess: `<div class="art" style="background:var(--assess-solid)">
+    <svg viewBox="0 0 300 260" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+      <circle cx="206" cy="104" r="56" fill="none" stroke="#fff" stroke-opacity=".35" stroke-width="10"/>
+      <circle cx="206" cy="104" r="33" fill="none" stroke="#fff" stroke-opacity=".7" stroke-width="10"/>
+      <circle cx="206" cy="104" r="12" fill="#fff"/>
+      <path d="M92 70 Q120 44 154 58" fill="none" stroke="#fff" stroke-opacity=".55" stroke-width="6" stroke-linecap="round" stroke-dasharray="2 12"/>
     </svg></div>`,
   rhythm: `<div class="art" style="background:linear-gradient(180deg,#241b3f,#33255c 60%,#1b1433)">
     <svg viewBox="0 0 300 400" style="position:absolute;inset:0;width:100%;height:100%">
@@ -788,16 +875,28 @@ const CARD_ART = {
       <text x="150" y="368" text-anchor="middle" font-family="Nunito" font-size="26" font-weight="800"
         fill="rgba(244,236,221,.55)">both hands</text>
     </svg></div>`,
-  windy: `<div class="art" style="background:linear-gradient(180deg,#4f8ccc,#8fc1e6 55%,#f8ebcf)">
-    <svg viewBox="0 0 300 400" style="position:absolute;inset:0;width:100%;height:100%">
-      <ellipse cx="90" cy="110" rx="60" ry="22" fill="#fff" opacity=".85"/><ellipse cx="220" cy="170" rx="50" ry="18" fill="#fff" opacity=".7"/>
-      <rect x="20" y="300" width="50" height="100" fill="#ecd3b2"/><rect x="90" y="250" width="60" height="150" fill="#dcb59a"/><rect x="175" y="280" width="45" height="120" fill="#d4c6ae"/><rect x="240" y="320" width="55" height="80" fill="#e8dcc0"/>
-      <rect x="0" y="380" width="300" height="20" fill="#82b862"/>
-      <path d="M95 225 L205 225 Q222 228 222 236 Q222 244 205 246 L95 246 Z" fill="#2b3550"/>
-      <rect x="100" y="230" width="100" height="4" fill="#d9483b"/>
-      <circle cx="150" cy="208" r="13" fill="#2f3340"/><path d="M137 208 A13 13 0 0 1 163 208 Z" fill="#d9483b"/>
-      <circle cx="146" cy="211" r="2" fill="#fbf4e4"/><circle cx="154" cy="211" r="2" fill="#fbf4e4"/>
-      <path d="M85 236 L62 231 L62 241 Z" fill="#ff8a4c"/>
+  // Windy City Flap: a skyline and Rook's jet, in white on teal
+  windy: `<div class="art" style="background:var(--windy-solid)">
+    <svg viewBox="0 0 300 260" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+      <g fill="#fff" opacity=".2"><rect x="30" y="118" width="34" height="62" rx="5"/><rect x="72" y="92" width="40" height="88" rx="5"/><rect x="120" y="126" width="30" height="54" rx="5"/><rect x="158" y="104" width="36" height="76" rx="5"/><rect x="202" y="132" width="28" height="48" rx="5"/><rect x="238" y="112" width="34" height="68" rx="5"/></g>
+      <g transform="translate(196 94) rotate(-6)">
+        <path d="M-46 -10 L-64 -32 L-44 -32 L-26 -10 Z" fill="#fff"/>
+        <rect x="-60" y="-14" width="122" height="28" rx="14" fill="#fff"/>
+        <path d="M-8 6 L-26 28 L2 28 L16 6 Z" fill="#fff" opacity=".85"/>
+        <circle cx="36" cy="-1" r="6" fill="#0E7F7F"/>
+      </g>
+    </svg></div>`,
+  // Cozy Fruit Merge: a box of fruit growing, in ink on its coral
+  fruit: `<div class="art" data-on="ink" style="background:var(--fruit-solid)">
+    <svg viewBox="0 0 300 260" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+      <path d="M150 72 V104" stroke="#3D2A24" stroke-opacity=".35" stroke-width="5" stroke-dasharray="2 9" stroke-linecap="round"/>
+      <circle cx="150" cy="56" r="14" fill="#fff"/>
+      <path d="M100 98 V196 Q100 214 118 214 H262 Q280 214 280 196 V98" fill="none" stroke="#3D2A24" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" opacity=".55" transform="translate(-40 0)"/>
+      <circle cx="102" cy="190" r="18" fill="#fff" opacity=".75"/><circle cx="140" cy="188" r="22" fill="#fff" opacity=".85"/>
+      <circle cx="188" cy="178" r="32" fill="#fff"/>
+      <path d="M188 142 q8 -14 22 -12" stroke="#3D2A24" stroke-width="5" fill="none" stroke-linecap="round" opacity=".6"/>
+      <circle cx="178" cy="174" r="3.5" fill="#3D2A24"/><circle cx="198" cy="174" r="3.5" fill="#3D2A24"/>
+      <path d="M181 186 q7 6 14 0" stroke="#3D2A24" stroke-width="3" fill="none" stroke-linecap="round"/>
     </svg></div>`,
   pairs: `<div class="art" style="background:radial-gradient(circle at 50% 45%,#2c3556,#141830)">
     <svg viewBox="0 0 300 400" style="position:absolute;inset:0;width:100%;height:100%">
@@ -824,16 +923,18 @@ const CARD_ART = {
       <text x="150" y="316" text-anchor="middle" font-family="Nunito" font-size="30" font-weight="800"
         fill="rgba(244,236,221,.55)">1 . 2 . 3</text>
     </svg></div>`,
-  candles: `<div class="art" style="background:linear-gradient(180deg,#12122c,#1e1c42 70%,#2a2448)">
-    <svg viewBox="0 0 300 400" style="position:absolute;inset:0;width:100%;height:100%">
-      <path d="M70 330 L110 150 L200 210 L240 90" fill="none" stroke="#ffd98a" stroke-width="5" stroke-linecap="round" stroke-dasharray="14 12" opacity=".85"/>
-      <ellipse cx="110" cy="150" rx="18" ry="23" fill="#ffd98a"/><ellipse cx="110" cy="146" rx="8" ry="10" fill="#fff6d8"/>
-      <ellipse cx="200" cy="210" rx="18" ry="23" fill="#ffd98a"/><ellipse cx="200" cy="206" rx="8" ry="10" fill="#fff6d8"/>
-      <ellipse cx="240" cy="90" rx="18" ry="23" fill="rgba(45,42,80,.95)" stroke="rgba(232,168,106,.7)" stroke-width="2"/>
-      <rect x="40" y="320" width="60" height="38" rx="6" fill="#3b2a2a" stroke="rgba(244,236,221,.35)" stroke-width="2"/>
-      <rect x="52" y="298" width="7" height="24" rx="2" fill="#f4ecdd"/><rect x="66" y="298" width="7" height="24" rx="2" fill="#f4ecdd"/><rect x="80" y="298" width="7" height="24" rx="2" fill="#f4ecdd"/>
-      <path d="M69 286 Q76 276 69 266 Q62 276 69 286 Z" fill="#ffd98a"/>
-      <rect x="200" y="320" width="60" height="38" rx="6" fill="#3b2a2a" stroke="rgba(244,236,221,.2)" stroke-width="2"/>
+  // the Lantern: a lantern in ink with its window lit, on amber (ink words)
+  candles: `<div class="art" data-on="ink" style="background:var(--candles-solid)">
+    <svg viewBox="0 0 300 260" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+      <g transform="translate(212 132) scale(.7)">
+        <path d="M-22 -80 Q0 -108 22 -80" fill="none" stroke="#1E2235" stroke-width="9" stroke-linecap="round"/>
+        <rect x="-30" y="-82" width="60" height="18" rx="8" fill="#1E2235"/>
+        <rect x="-46" y="-64" width="92" height="124" rx="26" fill="#1E2235"/>
+        <rect x="-24" y="-42" width="48" height="80" rx="16" fill="#FFE2A8"/>
+        <path d="M0 22 C-15 8 -10 -10 0 -24 C10 -10 15 8 0 22 Z" fill="#E0952A"/>
+        <rect x="-34" y="60" width="68" height="12" rx="6" fill="#1E2235"/>
+      </g>
+      <g fill="#1E2235" opacity=".45"><path d="M96 92 l4 10 10 4 -10 4 -4 10 -4 -10 -10 -4 10 -4z"/><path d="M134 66 l3 7 7 3 -7 3 -3 7 -3 -7 -7 -3 7 -3z"/></g>
     </svg></div>`,
   lens: `<div class="art" style="background:radial-gradient(circle at 50% 45%,#3d3a68,#171736)">
     <svg viewBox="0 0 300 400" style="position:absolute;inset:0;width:100%;height:100%">
@@ -998,15 +1099,48 @@ function renderVillage() {
     drawVillage(cv, v);
     if (!A11Y.calm) villageAnim = requestAnimationFrame(frame);
   };
-  frame();
+  // the first frame waits one tick: renderSelect runs before show() makes
+  // the hub visible, and a hidden hub draws nothing (the street stayed blank)
+  villageAnim = requestAnimationFrame(frame);
+}
+
+// the greeting at the top of the hub, by the time of day
+function hubGreeting() {
+  const h = new Date().getHours();
+  const g = h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
+  return state.patient && state.patient !== "guest" ? `${g}, ${state.patient}` : g;
+}
+// a padlock in ink, drawn (a clinic PC may render no emoji)
+const LOCK_SVG = `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4.5" y="10.5" width="15" height="11" rx="3" fill="currentColor"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></svg>`;
+// the hub's sub-screens (level maps, the two-player setup, the board) reuse
+// #cards: their title replaces the greeting and the hub's own parts step aside
+function subView(title) {
+  const scr = $("screen-select");
+  scr.classList.add("sub");
+  scr.scrollTop = 0;
+  document.querySelector("#screen-select h1").textContent = title;
+}
+// a pill under a sub-screen's panel: the way on (in the game's colour) or back
+function pillBtn(label, sub, onClick, gameId = null) {
+  const b = document.createElement("button");
+  b.className = "btn big sub-btn " + (gameId ? "acc" : "ghost");
+  b.dataset.dwell = "1";
+  if (gameId) setAccent(b, gameId);
+  b.innerHTML = `<span>${label}</span>` + (sub ? `<small>${sub}</small>` : "");
+  b.addEventListener("click", onClick);
+  return b;
 }
 
 function renderSelect() {
   const wrap = $("cards");
   wrap.innerHTML = "";
+  $("screen-select").classList.remove("sub");
   renderVillage();
   renderToday();
-  document.querySelector("#screen-select h1").textContent = "What shall we play today?";
+  // each enabled game's next music track starts downloading while the
+  // patient chooses, so the round opens on it (audio.js, js/tracks.js)
+  audio.preloadMusic(["assessment", ...GAMES.filter(g => !g.disabled).map(g => g.id)]);
+  document.querySelector("#screen-select h1").textContent = hubGreeting();
   const prof = store.getProfile(state.patient, state.side);
 
   const mk = (id, name, locked, onClick, trains, lockText = "Measure your reach first") => {
@@ -1016,7 +1150,7 @@ function renderSelect() {
     b.innerHTML = CARD_ART[id] + `<div class="dwell-fill"></div>` +
       (trains ? `<div class="trains">${trains}</div>` : "") +
       `<div class="title">${name}</div>` +
-      (locked ? `<div class="lock">🔒<span>${lockText}</span></div>` : "");
+      (locked ? `<div class="lock">${LOCK_SVG}<span>${lockText}</span></div>` : "");
     if (!locked) b.addEventListener("click", onClick);
     wrap.appendChild(b);
     return b;
@@ -1039,9 +1173,9 @@ function renderSelect() {
       // assessment measured
       const go = axis => () => { state.pongMode = "solo"; state.pongAxis = axis; $("in-pong").value = "solo"; renderLevelMap("pong"); };
       gameBtns.pong = mk("pong", "Pong FE", !!gameLock, go("fe"), "Up and down", gameLock);
-      gameBtns["pong-abd"] = mk("pong", "Pong Abd-Add", !!gameLock, go("abd"), "Side to side", gameLock);
+      gameBtns["pong-abd"] = mk("pongAbd", "Pong Abd-Add", !!gameLock, go("abd"), "Side to side", gameLock);
       // and the same game for two (Oct 2026, by request): a tile of its own
-      gameBtns["pong-duo"] = mk("pong", "Pong: two players", !!gameLock,
+      gameBtns["pong-duo"] = mk("pongDuo", "Pong: two players", !!gameLock,
         () => { state.pongMode = "duo"; state.pongAxis = "fe"; $("in-pong").value = "duo"; renderDuoSetup(); }, "Play together", gameLock);
       continue;
     }
@@ -1054,6 +1188,10 @@ function renderSelect() {
   // with its start button, which is the recommended action once the arm is
   // measured today (the plan's games wait for the measurement like the cards)
   const planBtn = renderPlanStrip(gameLock);
+  // today's workout card holds the day's minutes and the plan: shown when either is
+  $("hub-workout").classList.toggle("hidden", $("today-strip").classList.contains("hidden") && $("plan-strip").classList.contains("hidden"));
+  // the coach's word beside it: what to do first, else the old question
+  $("hub-bubble").textContent = gameLock ? `${gameLock}.` : "What shall we play today?";
   // default-first: one clearly recommended card, pre-focused so a single
   // Enter continues the flow (no measurement today → assess; else the plan;
   // else last played game; else the first game)
@@ -1100,10 +1238,12 @@ function todayStats(name = state.patient) {
 // the hub's strip (26 Oct 2026, by request): no other text, just the
 // minutes against the goal, and a flag at the end of the bar saying the
 // goal is there
-const TODAY_FLAG = `<svg class="today-flag" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 22V3" stroke="#f4ecdd" stroke-width="2.2" stroke-linecap="round"/><path d="M6 4h12l-3 4 3 4H6z" fill="#e8a86a"/></svg>`;
+const TODAY_FLAG = `<svg class="today-flag" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 22V3" stroke="#1E2235" stroke-width="2.4" stroke-linecap="round"/><path d="M6 4h12l-3 4 3 4H6z" fill="#E0952A" stroke="#1E2235" stroke-width="1.4" stroke-linejoin="round"/></svg>`;
+// (30 Oct 2026 look: under the card's "Today's workout", so the line is the
+// minutes alone, big, with the bar beside it)
 function todayHubHTML(t) {
   const f = Math.min(1, t.goal ? t.minutes / t.goal : 0);
-  return `<div class="today-line"><b>Today:</b> ${t.minutes} of ${t.goal} min</div>`
+  return `<div class="today-line"><b>${t.minutes}</b> of ${t.goal} minutes</div>`
     + `<div class="today-track"><div class="today-bar"><div style="width:${Math.round(f * 100)}%"></div></div>${TODAY_FLAG}</div>`;
 }
 function todayHTML(t, compact = false) {
@@ -1150,6 +1290,7 @@ function planLevels(game) {
   if (game === "windy") return Array.from({ length: WINDY_MAX }, (_, i) => ({ v: i + 1, name: `Level ${windyStageOf(i + 1)} · part ${windySubOf(i + 1)} of 3${windyStageOf(i + 1) > 12 ? " · endless" : ""}` }));
   if (game === "candles") return Array.from({ length: CANDLE_MAX }, (_, i) => { const st = LUMEN_STAGES.find(s => i + 1 >= s.from && i + 1 <= s.to); return { v: i + 1, name: `Level ${i + 1}${st ? ` · ${st.name}` : ""}` }; });
   if (game === "pairs") return Array.from({ length: PAIR_MAX }, (_, i) => ({ v: i + 1, name: `Level ${i + 1}` }));
+  if (game === "fruit") return fruitChapters().flatMap(ch => Array.from({ length: ch.to - ch.from + 1 }, (_, j) => ({ v: ch.from + j, name: `Level ${ch.from + j} · ${ch.name}` })));
   return [];
 }
 
@@ -1197,7 +1338,7 @@ function drawPlan() {
   planDraft.forEach((b, i) => {
     const seg = document.createElement("div");
     seg.className = "plan-seg";
-    seg.style.setProperty("--art", "none");
+    setAccent(seg, b.game);
     const head = document.createElement("div"); head.className = "plan-seg-head";
     const name = document.createElement("b"); name.textContent = planName(b); head.appendChild(name);
     const mins = document.createElement("span"); mins.className = "plan-seg-min"; mins.textContent = `${PLAN_BLOCK_MIN} min`; head.appendChild(mins);
@@ -1240,7 +1381,7 @@ function drawPlan() {
       if (planDraft.length >= PLAN_MAX_BLOCKS) { speak(`${PLAN_MAX_BLOCKS * PLAN_BLOCK_MIN} minutes is the most for one session.`); return; }
       planDraft.push({ game: c.game, axis: c.axis, level: null, minutes: PLAN_BLOCK_MIN });
       drawPlan();
-    }, CARD_ART[c.game] || CARD_ART.pong);
+    }, CARD_ART[c.key === "pong-abd" ? "pongAbd" : c.game] || CARD_ART.pong);
     card.classList.add("plan-pick");
     if (n) card.classList.add("on");
     if (planDraft.length >= PLAN_MAX_BLOCKS) card.classList.add("full");
@@ -1265,10 +1406,11 @@ function renderPlanStrip(gameLock) {
   const plan = store.getSchedule(state.patient);
   if (!plan?.blocks?.length) { strip.classList.add("hidden"); strip.innerHTML = ""; return null; }
   strip.classList.remove("hidden");
-  const text = plan.blocks.map(b => `${planName(b)}${b.level ? ` level ${b.game === "windy" ? windyStageOf(b.level) : b.level}` : ""} ${b.minutes || PLAN_BLOCK_MIN} min`).join(" · ");
-  strip.innerHTML = `<div>Today's plan: ${text}</div>`;
+  // the blocks as chips in their games' colours (30 Oct 2026 look)
+  const chips = plan.blocks.map(b => `<span class="plan-chip" style="${accentVars(b.game)}"><i></i>${planName(b)}${b.level ? ` level ${b.game === "windy" ? windyStageOf(b.level) : b.level}` : ""} <small>${b.minutes || PLAN_BLOCK_MIN} min</small></span>`).join("");
+  strip.innerHTML = `<div class="plan-what">Today's plan: ${chips}</div>`;
   const btn = document.createElement("button");
-  btn.className = "btn"; btn.dataset.dwell = "1";
+  btn.className = "btn big"; btn.dataset.dwell = "1";
   btn.textContent = gameLock ? gameLock : "Start the plan";
   btn.disabled = !!gameLock;
   if (!gameLock) btn.addEventListener("click", startPlan);
@@ -1292,6 +1434,7 @@ function startPlanBlock(i) {
     if (b.game === "windy") state.windyLevelPick = b.level;
     else if (b.game === "candles") state.candlesLevelPick = b.level;
     else if (b.game === "pairs") state.pairsLevelPick = b.level;
+    else if (b.game === "fruit") state.fruitLevelPick = b.level;
   }
   startGame(b.game, true);
 }
@@ -1372,7 +1515,7 @@ function pongCard(label, sub, onClick, art = CARD_ART.pong) {
 function renderPongModes() {
   const wrap = $("cards");
   wrap.innerHTML = "";
-  document.querySelector("#screen-select h1").textContent = "How shall we play Pong?";
+  subView("How shall we play Pong?");
   const mk = (label, sub, onClick) => {
     const b = document.createElement("button");
     b.className = "gcard";
@@ -1393,7 +1536,7 @@ function renderPongModes() {
     if (id === "duo" && !duoAvailable()) b.classList.add("locked");
     if (id === state.pongMode || (!focusBtn && id === "solo")) focusBtn = b;
   }
-  mk("↩ Back", "All games", renderSelect);
+  wrap.appendChild(pillBtn("↩ Back", "All games", renderSelect));
   focusHint(focusBtn);   // current mode pre-focused: Enter just plays
 }
 
@@ -1410,8 +1553,7 @@ function renderPongModes() {
 function renderDuoSetup() {
   const wrap = $("cards");
   wrap.innerHTML = "";
-  const h1 = document.querySelector("#screen-select h1");
-  h1.textContent = "Who is playing together?";
+  subView("Who is playing together?");
   const partners = store.getPartners(state.patient);
   const patients = store.listPatients().map(p => p.name).filter(n => n !== state.patient && n !== "guest" && !partners[n]);
   const names = [...Object.keys(partners), ...patients];
@@ -1473,9 +1615,9 @@ function renderDuoSetup() {
     $("duo-reset-no").addEventListener("click", () => { $("duo-reset").classList.remove("hidden"); $("duo-reset-confirm").classList.add("hidden"); });
   }
 
-  const play = pongCard("Play", "Start the game", () => { if (commitP2()) startGame("pong", true); });
+  const play = pillBtn("Play", "Start the game", () => { if (commitP2()) startGame("pong", true); }, "pong");
   wrap.appendChild(play);
-  wrap.appendChild(pongCard("↩ Back", "All games", renderSelect));
+  wrap.appendChild(pillBtn("↩ Back", "All games", renderSelect));
   focusHint(play);
 }
 
@@ -1488,7 +1630,7 @@ function renderPartnerMeasure() {
   const wrap = $("cards");
   wrap.innerHTML = "";
   const d = state.duo, side = d.p2Side;
-  document.querySelector("#screen-select h1").textContent = `${d.p2}, let's measure your arm`;
+  subView(`${d.p2}, let's measure your arm`);
   wrap.innerHTML = `<div class="duo-setup">
     <p class="duo-big">Stand beside ${state.patient}, facing the camera. Raise your <b>${side}</b> arm out and up as high as is
       comfortable, then lower it again. <b>Three times.</b></p>
@@ -1507,7 +1649,7 @@ function renderPartnerMeasure() {
     } else speakLine("I could not see the arm clearly. We can try again, or play with a full-range lane.");
     renderDuoSetup();
   };
-  wrap.appendChild(pongCard("↩ Back", "Without measuring", () => { stop(); done = true; renderDuoSetup(); }));
+  wrap.appendChild(pillBtn("↩ Back", "Without measuring", () => { stop(); done = true; renderDuoSetup(); }));
   speakLine(`${d.p2}, raise your ${side} arm as high as is comfortable, then lower it. Three times.`);
   timer = setInterval(() => {
     if (state.screen !== "screen-select") { stop(); return; }
@@ -1571,6 +1713,13 @@ const MAP_DEFS = {
     chapters: () => STAR_RANKS.map((r, i) => ({ from: i + 1, to: i + 1, name: r.name, note: "" })),
     label: n => `${n}`,
   },
+  // Cozy Fruit Merge: a chapter per goal fruit, the new ideas named on it
+  fruit: {
+    title: "Cozy Fruit Merge: which level?", bag: "fruitMap", levelKey: "fruitLevel", pick: "fruitLevelPick",
+    count: () => FRUIT_MAX,
+    chapters: () => fruitChapters(),
+    label: n => `${n}`,
+  },
   pairs: {
     title: "Memory Pairs: which board?", bag: "pairsMap", levelKey: "pairsLevel", pick: "pairsLevelPick",
     count: () => PAIR_MAX,
@@ -1610,8 +1759,15 @@ function levelMapSVG(def, cur, prog, around = null) {
   }
   for (const ch of chapters) {
     const p = nodes.find(q => q.L === ch.from); if (!p) continue;
-    svg += `<text class="chap" x="${p.x}" y="${p.y - 44}" text-anchor="middle">${ch.name}</text>`;
-    if (ch.note && !around) svg += `<text class="chapnote" x="${p.x}" y="${p.y - 28}" text-anchor="middle">${ch.note}</text>`;
+    // (above the current node's halo, r + 9 = 35 units, so it never cuts the
+    // note; a label that would run past the drawing's edge is anchored to it)
+    const lab = (cls, text, y, em) => {
+      const half = text.length * em * 0.29;
+      const [x, anchor] = p.x + half > W - 6 ? [W - 6, "end"] : p.x - half < 6 ? [6, "start"] : [p.x, "middle"];
+      return `<text class="${cls}" x="${x}" y="${y}" text-anchor="${anchor}">${text}</text>`;
+    };
+    svg += lab("chap", ch.name, p.y - 58, 19);
+    if (ch.note && !around) svg += lab("chapnote", ch.note, p.y - 40, 14);
   }
   for (const p of nodes) {
     const st = stars[p.L] || 0, played = !!best[p.L] || st > 0, isCur = p.L === cur, ahead = p.L > cur && !played;
@@ -1630,11 +1786,11 @@ function renderLevelMap(gameId) {
   const def = MAP_DEFS[gameId]; if (!def) return;
   const wrap = $("cards");
   wrap.innerHTML = "";
-  document.querySelector("#screen-select h1").textContent = typeof def.title === "function" ? def.title() : def.title;
+  subView(typeof def.title === "function" ? def.title() : def.title);
   const cur = store.getLevel(state.patient, def.levelKey);
   const prog = store.getProgress(state.patient, def.bag) || {};
   const played = Object.keys(prog.best || {}).length, starSum = Object.values(prog.stars || {}).reduce((a, b) => a + (b || 0), 0);
-  let html = `<div class="duo-setup lvl-map">`;
+  let html = `<div class="duo-setup lvl-map" style="${accentVars(gameId)}">`;
   html += levelMapSVG(def, cur, prog);
   html += gameId === "pong"
     ? `<p class="hint">Next opponent: <b>${STAR_RANKS[cur - 1]?.name || "Little star"}</b>${prog.rally ? ` · your longest rally ever: <b>${prog.rally}</b>` : ""}. Win a match to move up the ladder; click any star to play it.</p>`
@@ -1649,16 +1805,16 @@ function renderLevelMap(gameId) {
   });
   const sub = gameId === "candles" ? (LUMEN_STAGES.find(st => cur >= st.from && cur <= st.to)?.name || "")
     : gameId === "windy" ? windyNoteOf(windyStageOf(cur)) : "";
-  const play = pongCard(gameId === "pong" ? `Play · vs the ${STAR_RANKS[cur - 1]?.name || "Little star"}` : `Continue · Level ${gameId === "windy" ? windyStageOf(cur) : cur}`, sub, () => { state[def.pick] = null; startGame(gameId, true); }, CARD_ART[gameId]);
+  const play = pillBtn(gameId === "pong" ? `Play · vs the ${STAR_RANKS[cur - 1]?.name || "Little star"}` : `Continue · Level ${gameId === "windy" ? windyStageOf(cur) : cur}`, sub, () => { state[def.pick] = null; startGame(gameId, true); }, gameId);
   wrap.appendChild(play);
-  wrap.appendChild(pongCard("↩ Back", "All games", renderSelect, CARD_ART[gameId]));
+  wrap.appendChild(pillBtn("↩ Back", "All games", renderSelect));
   focusHint(play);
 }
 function renderLanternLevels() { renderLevelMap("candles"); }
 // stars and bests on a ladder game's map, from the round that just ended
 function noteMapProgress(round) {
   const g = round.game;
-  if (g !== "windy" && g !== "pairs" && g !== "pong") return;
+  if (g !== "windy" && g !== "pairs" && g !== "pong" && g !== "fruit") return;
   const bag = store.getProgress(state.patient, MAP_DEFS[g].bag) || { stars: {}, best: {}, plays: {} };
   bag.stars ??= {}; bag.best ??= {}; bag.plays ??= {};
   let L, stars, best;
@@ -1670,6 +1826,7 @@ function noteMapProgress(round) {
     bag.rally = Math.max(bag.rally || 0, round.bestRally || 0);
   }
   else if (g === "windy") { L = round.level; stars = round.levelStars || 0; best = round.gapsPassed || 0; }
+  else if (g === "fruit") { L = round.level; stars = round.levelStars || 0; best = round.score || 0; bag.bestFruit = Math.max(bag.bestFruit || 0, round.bestFruit || 0); }
   else { L = round.pairsLevel; const cleared = (round.boardsCleared || 0) > 0; stars = cleared ? ((round.wrongTurns || 0) <= 2 ? 3 : 2) : (round.pairsFound || 0) > 0 ? 1 : 0; best = round.pairsFound || 0; }
   if (!L) return;
   bag.stars[L] = Math.max(bag.stars[L] || 0, stars);
@@ -1755,6 +1912,7 @@ function startAssessment(opts = {}) {
   // The warm-up no longer opens the measurement (Oct 2026, by request: "no
   // need warm up before ROM"); it stays optional from the welcome screen's
   // "Warm up first" button.
+  stageMode("assess");
   show("stage");
   audio.startBgm("assessment");
   const a = new Assessment(state.tracker, $("canvas"), arm, state.coachSens, {
@@ -1838,7 +1996,9 @@ function romLiveLoop() {
   const W = Math.max(2, Math.round(box.width)), H = Math.max(2, Math.round(box.height));
   if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
   const ctx = c.getContext("2d");
-  ctx.fillStyle = "#161636"; ctx.fillRect(0, 0, W, H);
+  // (30 Oct 2026 look: a white stage, the figure in ink, the shapes in the
+  // assessment's violet, last time dashed in grey)
+  ctx.fillStyle = "#FFFFFF"; ctx.fillRect(0, 0, W, H);
   const arm = state.side;
   const prof = store.getProfile(state.patient, arm);
   if (!prof?.envelope) return;
@@ -1869,15 +2029,14 @@ function romLiveLoop() {
   // request: nobody moves in a perfect circle and staying inside one is not
   // the goal)
   if (prev?.envelope) shape(prev.envelope, prev.envPts, () => {
-    ctx.strokeStyle = "rgba(244,236,221,0.45)"; ctx.lineWidth = 2; ctx.setLineDash([8, 8]); ctx.stroke(); ctx.setLineDash([]);
+    ctx.strokeStyle = "#5F6378"; ctx.lineWidth = 3; ctx.setLineDash([10, 9]); ctx.stroke(); ctx.setLineDash([]);
   });
   shape(prof.envelope, prof.envPts, () => {
-    ctx.fillStyle = "rgba(232,168,106,0.16)"; ctx.fill();
-    ctx.strokeStyle = "rgba(232,168,106,0.85)"; ctx.lineWidth = 4;
-    ctx.shadowColor = "rgba(232,168,106,0.35)"; ctx.shadowBlur = 10; ctx.stroke();
+    ctx.fillStyle = "rgba(107,79,200,0.14)"; ctx.fill();
+    ctx.strokeStyle = "#6B4FC8"; ctx.lineWidth = 5; ctx.lineJoin = "round"; ctx.stroke();
   });
   const o = P(cen);
-  ctx.shadowBlur = 0; ctx.fillStyle = "rgba(244,236,221,0.7)";
+  ctx.fillStyle = "#1E2235";
   ctx.beginPath(); ctx.arc(o.x, o.y, 5, 0, TAU); ctx.fill();
   ctx.restore();
 }
@@ -1893,7 +2052,7 @@ function romFigure(ctx, P0, arm, prof) {
   const P = (x, y) => P0({ x: cen.x + x, y: cen.y + y });
   const torso = prof.torsoSW || 1.05;
   ctx.save();
-  ctx.strokeStyle = "rgba(244,236,221,0.28)"; ctx.lineWidth = 3; ctx.lineCap = "round"; ctx.lineJoin = "round";
+  ctx.strokeStyle = "rgba(30,34,53,0.55)"; ctx.lineWidth = 3; ctx.lineCap = "round"; ctx.lineJoin = "round";
   const shL = P(-0.5, 0), shR = P(0.5, 0), hipL = P(-0.32, -torso), hipR = P(0.32, -torso);
   ctx.beginPath(); ctx.moveTo(shL.x, shL.y); ctx.lineTo(shR.x, shR.y); ctx.lineTo(hipR.x, hipR.y); ctx.lineTo(hipL.x, hipL.y); ctx.closePath(); ctx.stroke();
   const neck = P(0, 0.12), head = P(0, 0.42);
@@ -1901,8 +2060,8 @@ function romFigure(ctx, P0, arm, prof) {
   const hr = Math.abs(P(0.22, 0).x - P(0, 0).x);
   ctx.beginPath(); ctx.arc(head.x, head.y, hr, 0, TAU); ctx.stroke();
   const mine = arm === "right" ? shR : shL;
-  ctx.fillStyle = "#e8a86a";
-  ctx.beginPath(); ctx.arc(mine.x, mine.y, 7, 0, TAU); ctx.fill();
+  ctx.fillStyle = "#4A3593"; ctx.strokeStyle = "#FFFFFF"; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.arc(mine.x, mine.y, 8, 0, TAU); ctx.fill(); ctx.stroke();
   ctx.restore();
 }
 
@@ -2012,6 +2171,7 @@ function startGame(id, fresh) {
     level: id === "lens" ? store.getLevel(state.patient, "scratchLevel")
       : id === "dots" ? store.getLevel(state.patient, "dotsLevel")
       : id === "pairs" ? (state.pairsLevelPick || store.getLevel(state.patient, "pairsLevel"))
+      : id === "fruit" ? (state.fruitLevelPick || store.getLevel(state.patient, "fruitLevel"))
       : id === "candles" ? (state.candlesLevelPick || store.getLevel(state.patient, "candlesLevel"))
       : id === "windy" ? (state.windyLevelPick || store.getLevel(state.patient, "windyLevel")) : undefined,
     mode: id === "pong" ? state.pongMode
@@ -2020,6 +2180,10 @@ function startGame(id, fresh) {
       : id === "ferry" ? state.ferryMode
       : undefined,
     axis: id === "pong" ? state.pongAxis : undefined,
+    // Cozy Fruit Merge: how to drop, the box left unfinished, the biggest fruit ever made
+    drop: id === "fruit" ? state.fruitDrop : undefined,
+    board: id === "fruit" ? state.fruitBoard : undefined,
+    bestFruit: id === "fruit" ? (store.getProgress(state.patient, "fruitMap")?.bestFruit || 0) : undefined,
     // the Lantern's per-level bests and Star Atlas (Pip's flag is set from them)
     lumen: id === "candles" ? store.getProgress(state.patient, "candlesLumen") : undefined,
     starRank: id === "pong" ? (state.starRankPick || store.getLevel(state.patient, "starRank")) : undefined,
@@ -2053,9 +2217,11 @@ function startGame(id, fresh) {
   state.candlesLevelPick = null; $("in-candles-level").value = "";   // a picked level is for one round
   state.windyLevelPick = null; $("in-windy-level").value = "";
   state.pairsLevelPick = null;
+  state.fruitLevelPick = null; $("in-fruit-level").value = "";
   state.starRankPick = null;
   // the webcam follows a second body only while two are playing
   state.tracker.setSecond?.(id === "pong" && state.pongMode === "duo");
+  stageMode("game", id);
   show("stage");
   // Melody Tiles owns its song clock (audio.startSong inside the game);
   // everything else gets the per-game lo-fi mood (or assets/music/<id>.mp3)
@@ -2094,9 +2260,12 @@ function onRoundEnd(round) {
   }
   // the ladder level before this round is banked, so the card can say
   // whether the next one is a level up, the same, or a little easier
-  const LADDER = { windy: "windyLevel", candles: "candlesLevel", pairs: "pairsLevel", lens: "scratchLevel", dots: "dotsLevel" };
+  const LADDER = { windy: "windyLevel", candles: "candlesLevel", pairs: "pairsLevel", lens: "scratchLevel", dots: "dotsLevel", fruit: "fruitLevel" };
   const ladderKey = LADDER[round.game];
-  const ladderPlayed = ladderKey ? (round.game === "windy" ? round.level : round.game === "candles" ? round.levelPlayed : null) ?? store.getLevel(state.patient, ladderKey) : null;
+  const ladderPlayed = ladderKey ? (round.game === "windy" || round.game === "fruit" ? round.level : round.game === "candles" ? round.levelPlayed : null) ?? store.getLevel(state.patient, ladderKey) : null;
+  // Cozy Fruit Merge: an unfinished box is kept for the next round of the
+  // same level this session; it is game state, not part of the record
+  if (round.game === "fruit") { state.fruitBoard = round.board || null; delete round.board; }
   // Scratch Cards: bank the level the round ended on
   if (round.game === "lens" && round.scratchLevel) {
     store.setLevel(state.patient, "scratchLevel", round.scratchLevel, 6);
@@ -2108,6 +2277,9 @@ function onRoundEnd(round) {
   // Windy City Flap: up a level on a finished flight, down one at most when the hearts ran out
   if (round.game === "windy" && round.windyLevel) {
     store.setLevel(state.patient, "windyLevel", round.windyLevel, WINDY_MAX);
+  }
+  if (round.game === "fruit" && round.fruitLevel) {
+    store.setLevel(state.patient, "fruitLevel", round.fruitLevel, FRUIT_MAX);
   }
   if (round.game === "dots" && round.dotsLevel) {
     store.setLevel(state.patient, "dotsLevel", round.dotsLevel, 6);
@@ -2201,7 +2373,7 @@ function onRoundEnd(round) {
       round.next = dir(round[ladderKey] - ladderPlayed);
       // Windy City's steps show as their stage (the patient never sees "2.1")
       const show = n => round.game === "windy" ? windyStageOf(n) : n;
-      const of = { windy: windyStageOf(WINDY_MAX), candles: CANDLE_MAX, pairs: PAIR_MAX, lens: 6, dots: 6 }[round.game];
+      const of = { windy: windyStageOf(WINDY_MAX), candles: CANDLE_MAX, pairs: PAIR_MAX, lens: 6, dots: 6, fruit: FRUIT_MAX }[round.game];
       round.lvl ??= { from: show(ladderPlayed), to: show(round[ladderKey]), of,
         pips: round.game === "windy" ? windyPips(round[ladderKey]) : null };
     }
@@ -2313,6 +2485,14 @@ function roundSummary(round) {
       text = `You found ${plural(n, "pair")} in ${plural(r.turns || 0, "turn")}${r.boardsCleared ? ` and cleared ${plural(r.boardsCleared, "board")}` : ""}.`;
       glyph = "card"; count = n; break;
     }
+    case "fruit": {
+      const n = r.merges || 0;
+      head = r.won ? `Level ${r.level} complete!` : n > 0 ? "Fruit merged!" : "A gentle start.";
+      text = r.won ? `You made ${r.goalCount > 1 ? r.goalCount + " " + r.goalFruit.toLowerCase() + "s" : "the " + (r.goalFruit || "fruit").toLowerCase()} in ${plural(r.drops || 0, "drop")}.`
+        : `You merged ${plural(n, "fruit", "fruit")} in ${plural(r.drops || 0, "drop")}. Your box is kept for next time.`;
+      if (r.newBest && r.biggestFruit) text += ` Your first ${r.biggestFruit.toLowerCase()}!`;
+      glyph = "dot"; count = n; break;
+    }
     case "windy": {
       const n = r.gapsPassed || 0;
       head = r.completed ? "Nice flying!" : n > 0 ? "A windy ride!" : "A bumpy start.";
@@ -2373,9 +2553,57 @@ function roundSummary(round) {
 
 // what the next round brings, in one line under the headline
 const RC_NEXT = { up: "Level up next game!", same: "Same level next game", down: "A little easier next game" };
-const RC_STAR = `<svg viewBox="0 0 24 24" width="34" height="34" aria-hidden="true"><polygon points="12,2 14.9,8.6 22,9.3 16.5,14 18.3,21 12,17.3 5.7,21 7.5,14 2,9.3 9.1,8.6" fill="#e8a86a"/></svg>`;
+const RC_STAR = `<svg viewBox="0 0 24 24" width="34" height="34" aria-hidden="true"><polygon points="12,2 14.9,8.6 22,9.3 16.5,14 18.3,21 12,17.3 5.7,21 7.5,14 2,9.3 9.1,8.6" fill="#F2B33D" stroke="#8A5300" stroke-width="1.2" stroke-linejoin="round"/></svg>`;
+
+// THE ONE NUMBER (30 Oct 2026 look, docs/design-system-proposal.md §9): the
+// thing each game trains, big on the round card in the game's colour, and
+// the same number over this game's last seven rounds on this arm. Never a
+// points total.
+const HERO = {
+  pong: { of: r => r.hits, label: "returns" },
+  candles: { of: r => r.lanternsLit, label: "lanterns lit" },
+  windy: { of: r => r.gapsPassed, label: "gaps flown" },
+  pairs: { of: r => r.pairsFound, label: "pairs found" },
+  fruit: { of: r => r.merges, label: "fruit merged" },
+};
+const heroOf = r => HERO[r.game] || { of: x => x.hits, label: "targets reached" };
+// the rounds a trend compares: the same game on the same arm (and for Pong
+// the same court, and two-player only with two-player)
+function sameKind(a, b) {
+  if (a.game !== b.game || (a.arm || state.side) !== (b.arm || state.side)) return false;
+  if (a.game === "pong") return (a.axis || "fe") === (b.axis || "fe") && (a.pongMode === "duo") === (b.pongMode === "duo");
+  return true;
+}
+// the last seven values, this round's last; `history` replaces the stored
+// rounds (the previews). A practice round is not stored, so it is added.
+function heroSeries(round, history = null) {
+  const h = heroOf(round);
+  const list = (history ?? (store.getPatient(state.patient)?.sessions || [])).filter(r => sameKind(r, round));
+  const last = list[list.length - 1];
+  if (!history && !(last && last.date === round.date)) list.push(round);
+  if (history) list.push(round);
+  return list.map(r => h.of(r)).filter(v => Number.isFinite(v)).slice(-7);
+}
+function trendSVG(vals) {
+  const W = 760, H = 104, L = 22, R = 120, T = 42, B = 16, n = vals.length;
+  const lo = Math.min(...vals), hi = Math.max(...vals);
+  const x = i => n === 1 ? L + 16 : L + i * (W - L - R) / (n - 1);
+  const y = v => hi === lo ? (T + H - B) / 2 : T + (1 - (v - lo) / (hi - lo)) * (H - T - B);
+  const now = vals[n - 1], best = n > 1 && now > Math.max(...vals.slice(0, -1));
+  let out = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMinYMid meet" role="img" aria-label="Last ${n} games: ${vals.join(", ")}">`;
+  out += `<line class="base" x1="${L}" x2="${W - R + 20}" y1="${H - 4}" y2="${H - 4}"/>`;
+  if (n > 1) out += `<polyline class="tl" points="${vals.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ")}"/>`;
+  vals.forEach((v, i) => {
+    const last = i === n - 1;
+    out += `<circle class="d${last ? " now" : ""}" cx="${x(i).toFixed(1)}" cy="${y(v).toFixed(1)}" r="${last ? 17 : 10}"><title>${v}</title></circle>`;
+  });
+  out += `<text class="v" x="${(x(n - 1) + 28).toFixed(1)}" y="${(y(now) + 10).toFixed(1)}">${now}${best ? " · best" : ""}</text>`;
+  if (n === 1) out += `<text class="one" x="${L + 150}" y="${(y(now) + 8).toFixed(1)}">The line starts next time.</text>`;
+  return { svg: out + `</svg>`, best };
+}
+
 let _rcStarTimer = null;
-function renderBetween(round, note) {
+function renderBetween(round, note, opts = {}) {
   // stars, top right: the total, counting up from before this round, with
   // the round's own stars rising off it
   const p = store.getPatient(state.patient);
@@ -2391,6 +2619,21 @@ function renderBetween(round, note) {
     else setTimeout(() => { _rcStarTimer = setInterval(step, Math.max(120, 900 / n)); }, 500);
   }
   $("rc-head").textContent = roundSummary(round).head;
+  // the game's colour on the card (level chip, the number, Play again)
+  setAccent(document.querySelector("#screen-between .round-card"), round.game);
+  // the one number, and its last seven games
+  const hero = heroOf(round), heroN = hero.of(round);
+  $("rc-hero").classList.toggle("hidden", !Number.isFinite(heroN));
+  $("rc-hero").innerHTML = Number.isFinite(heroN) ? `<div class="rc-hero-n">${heroN}</div><div class="rc-hero-l">${hero.label}</div>` : "";
+  const series = Number.isFinite(heroN) ? heroSeries(round, opts.history) : [];
+  const trend = series.length ? trendSVG(series) : null;
+  $("rc-trend").classList.toggle("hidden", !trend);
+  $("rc-trend").innerHTML = trend ? `<div class="rc-trend-l">${series.length > 1 ? `Last ${series.length} games` : "This game"}</div>${trend.svg}` : "";
+  // the coach's face: a celebration for a level up, a best or a match won;
+  // calm after a harder round; pleased otherwise
+  const party = !A11Y.practice && (round.next === "up" || round.matchWon === true || !!trend?.best);
+  coachChar.card.setMood(party ? "celebrate" : round.next === "down" || round.matchWon === false ? "neutral" : "happy");
+  if (party) coachChar.card.jump();
   // the level, top centre: the level just played, and only that ("Level up
   // next game!" under the headline says where the next one goes; the
   // "2 → 3" arrow was removed 28 Oct 2026, by request). Windy City shows
@@ -2411,6 +2654,7 @@ function renderBetween(round, note) {
           store.setLevel(state.patient, L.key, to, L.of);
           store.logPongLevel(state.patient, state.side, { axis: round.axis || "fe", kind: "manual-card", from, to });
           $("rc-next").textContent = to > L.from ? "Faster next game" : to < L.from ? "Slower next game" : RC_NEXT.same;
+          $("rc-next").className = "rc-next same";
           show();
         };
       };
@@ -2421,6 +2665,8 @@ function renderBetween(round, note) {
     } else el.classList.add("hidden");
   }
   $("rc-next").textContent = A11Y.practice ? "Practice round. Nothing counts." : RC_NEXT[round.next] || "";
+  // a level up wears a check in the success colour; the others are plain words
+  $("rc-next").className = "rc-next " + (!A11Y.practice && RC_NEXT[round.next] ? round.next : "same");
   // only the rest reminder stays on the card (every 4th round or a run of
   // posture slips; onRoundEnd also says it)
   $("rc-note").textContent = /rest|break/i.test(note || "") ? coachLine("fatigue_detected") : "";
@@ -2493,29 +2739,29 @@ function renderProfile() {
   }
 
   // --- ROM protractor (1d) ---
-  let svg = `<g stroke="rgba(27,27,58,.12)" stroke-width="1">
+  let svg = `<g stroke="rgba(30,34,53,.12)" stroke-width="1">
     <line x1="200" y1="212" x2="200" y2="44"/><line x1="200" y1="212" x2="40" y2="212"/><line x1="200" y1="212" x2="360" y2="212"/>
     <line x1="200" y1="212" x2="85.7" y2="97.4"/><line x1="200" y1="212" x2="314.3" y2="97.4"/></g>
-    <path d="${arcPath(200, 212, 160, 0, 180)}" fill="none" stroke="rgba(27,27,58,.1)" stroke-width="3"/>`;
+    <path d="${arcPath(200, 212, 160, 0, 180)}" fill="none" stroke="rgba(30,34,53,.1)" stroke-width="3"/>`;
   const hist = p.history[state.side].slice(-2);
   hist.forEach((h, i) => {
-    svg += `<path d="${arcPath(200, 212, 140 + i * 6, h.arcMinDeg, h.arcMaxDeg)}" fill="none" stroke="rgba(232,168,106,${0.18 + i * 0.1})" stroke-width="9" stroke-linecap="round"/>`;
+    svg += `<path d="${arcPath(200, 212, 140 + i * 6, h.arcMinDeg, h.arcMaxDeg)}" fill="none" stroke="rgba(224,149,42,${0.18 + i * 0.1})" stroke-width="9" stroke-linecap="round"/>`;
   });
   const other = state.side === "left" ? "right" : "left";
   const oProf = p.profiles[other];
-  if (oProf) svg += `<path d="${arcPath(200, 212, 155, oProf.arcMinDeg, oProf.arcMaxDeg)}" fill="none" stroke="rgba(27,27,58,.35)" stroke-width="11" stroke-linecap="round"/>`;
-  if (prof) svg += `<path d="${arcPath(200, 212, 150, prof.arcMinDeg, prof.arcMaxDeg)}" fill="none" stroke="#e8a86a" stroke-width="13" stroke-linecap="round"/>`;
-  svg += `<circle cx="200" cy="212" r="6" fill="#1b1b3a"/>
-    <text x="30" y="226" font-size="12" font-weight="700" fill="rgba(27,27,58,.55)" font-family="Nunito">0°</text>
-    <text x="182" y="34" font-size="12" font-weight="700" fill="rgba(27,27,58,.55)" font-family="Nunito">90°</text>
-    <text x="350" y="226" font-size="12" font-weight="700" fill="rgba(27,27,58,.55)" font-family="Nunito">180°</text>`;
+  if (oProf) svg += `<path d="${arcPath(200, 212, 155, oProf.arcMinDeg, oProf.arcMaxDeg)}" fill="none" stroke="rgba(30,34,53,.35)" stroke-width="11" stroke-linecap="round"/>`;
+  if (prof) svg += `<path d="${arcPath(200, 212, 150, prof.arcMinDeg, prof.arcMaxDeg)}" fill="none" stroke="#E0952A" stroke-width="13" stroke-linecap="round"/>`;
+  svg += `<circle cx="200" cy="212" r="6" fill="#1E2235"/>
+    <text x="30" y="226" font-size="12" font-weight="700" fill="rgba(30,34,53,.55)" font-family="Nunito">0°</text>
+    <text x="182" y="34" font-size="12" font-weight="700" fill="rgba(30,34,53,.55)" font-family="Nunito">90°</text>
+    <text x="350" y="226" font-size="12" font-weight="700" fill="rgba(30,34,53,.55)" font-family="Nunito">180°</text>`;
   $("prof-arc").innerHTML = svg;
 
   // real-world reach: SW × therapist-measured shoulder width (staff drawer)
   const maxEnv = prof ? Math.max(...prof.envelope) : null;
   const reachLg = maxEnv
-    ? `<div class="lg"><span class="dot" style="background:#9fc08a"></span>Longest reach
-         <span class="val" style="color:#4a7a3a;margin-left:6px">${p.shoulderCm
+    ? `<div class="lg"><span class="dot" style="background:#2E7D4F"></span>Longest reach
+         <span class="val" style="color:#2E7D4F;margin-left:6px">${p.shoulderCm
            ? Math.round(maxEnv * p.shoulderCm) + " cm"
            : maxEnv.toFixed(2) + " SW <small style='font-weight:600;opacity:.7'>(set shoulder cm in Staff for cm)</small>"}</span></div>`
     : "";
@@ -2528,33 +2774,33 @@ function renderProfile() {
     const area = p.shoulderCm
       ? Math.round(prof.areaSW2 * p.shoulderCm * p.shoulderCm) + " cm²"
       : prof.areaSW2.toFixed(2) + " SW²";
-    let s = `<div class="lg"><span class="dot" style="background:#e8a86a"></span>Workspace area
-       <span class="val" style="color:#c77f4a;margin-left:6px">${area}${
+    let s = `<div class="lg"><span class="dot" style="background:#E0952A"></span>Workspace area
+       <span class="val" style="color:#8A5300;margin-left:6px">${area}${
          prof.coverage != null ? ` · ${Math.round(prof.coverage * 100)}% of full reach` : ""}</span></div>`;
     if (prof.volumeM3 != null) {
-      s += `<div class="lg"><span class="dot" style="background:#9fc08a"></span>Workspace volume
-         <span class="val" style="color:#4a7a3a;margin-left:6px">${(prof.volumeM3 * 1000).toFixed(1)} L${
+      s += `<div class="lg"><span class="dot" style="background:#2E7D4F"></span>Workspace volume
+         <span class="val" style="color:#2E7D4F;margin-left:6px">${(prof.volumeM3 * 1000).toFixed(1)} L${
            prof.depthRangeM != null ? ` · ${Math.round(prof.depthRangeM * 100)} cm forward` : ""}</span></div>`;
     }
     if (prof.extremes?.length) {
       const got = prof.extremes.filter(e => e.reached).length;
       const short = prof.extremes.filter(e => !e.reached)
         .sort((a, b) => (a.fracAnat ?? a.frac) - (b.fracAnat ?? b.frac)).slice(0, 2).map(e => e.key).join(", ");
-      s += `<div class="lg"><span class="dot" style="background:${got === prof.extremes.length ? "#9fc08a" : "#b5503a"}"></span>Targets reached
+      s += `<div class="lg"><span class="dot" style="background:${got === prof.extremes.length ? "#2E7D4F" : "#B3261E"}"></span>Targets reached
          <span class="val" style="margin-left:6px">${got}/${prof.extremes.length}${
            short ? ` <small style='font-weight:600;opacity:.75'>(short: ${short})</small>` : ""}</span></div>`;
     }
     // the lift: shoulder flexion asked for directly, peak elevation vs trunk
     if (prof.lift?.peakDeg != null) {
-      s += `<div class="lg"><span class="dot" style="background:#7d6fb0"></span>Arm lift
-         <span class="val" style="color:#5b4f8a;margin-left:6px">${prof.lift.peakDeg}°${
+      s += `<div class="lg"><span class="dot" style="background:#6B4FC8"></span>Arm lift
+         <span class="val" style="color:#4A3593;margin-left:6px">${prof.lift.peakDeg}°${
            prof.lift.rangeDeg != null ? ` <small style='font-weight:600;opacity:.75'>(${prof.lift.rangeDeg}° up from rest${
              prof.lift.returned ? "" : ", did not come back down"})</small>` : ""}</span></div>`;
     }
     // the two circles: one each way, and whether each closed
     if (prof.laps?.length) {
       const done = prof.laps.filter(l => l.complete).length;
-      s += `<div class="lg"><span class="dot" style="background:${done === prof.laps.length ? "#9fc08a" : "#e8a86a"}"></span>Circles
+      s += `<div class="lg"><span class="dot" style="background:${done === prof.laps.length ? "#2E7D4F" : "#E0952A"}"></span>Circles
          <span class="val" style="margin-left:6px">${done}/${prof.laps.length} complete <small style='font-weight:600;opacity:.75'>(${
            prof.laps.map(l => `${l.dir} ${l.seconds}s`).join(", ")})</small></span></div>`;
     }
@@ -2564,18 +2810,18 @@ function renderProfile() {
     // cannot see backward reach, and zero would read as "none".
     if (prof.rsa) {
       const r = prof.rsa, f2 = v => (v ?? 0).toFixed(2);
-      s += `<div class="lg"><span class="dot" style="background:#b0a0d0"></span>RSA (planar Q1-Q4)
-         <span class="val" style="color:#5b4f8a;margin-left:6px">${f2(r.total14)} of 1.00</span>
+      s += `<div class="lg"><span class="dot" style="background:#B6A6F0"></span>RSA (planar Q1-Q4)
+         <span class="val" style="color:#4A3593;margin-left:6px">${f2(r.total14)} of 1.00</span>
          <small style='font-weight:600;opacity:.75;margin-left:6px'>Q1 ${f2(r.q1)} · Q2 ${f2(r.q2)} · Q3 ${f2(r.q3)} · Q4 ${f2(r.q4)}${
            prof.rsaElbow ? ` · elbow ${f2(prof.rsaElbow.total14)}` : ""} · frontal projection</small></div>`;
     }
     return s;
   })();
   $("prof-arc-legend").innerHTML =
-    `<div class="lg"><span class="dot" style="background:#e8a86a"></span>Trained (${state.side[0].toUpperCase()})
-       <span class="val" style="color:#c77f4a;margin-left:6px">${prof ? prof.arcMinDeg + "°–" + prof.arcMaxDeg + "°" : "—"}</span></div>
-     <div class="lg"><span class="dot" style="background:rgba(27,27,58,.35)"></span>Other (${other[0].toUpperCase()})
-       <span class="val" style="color:rgba(27,27,58,.6);margin-left:6px">${oProf ? oProf.arcMinDeg + "°–" + oProf.arcMaxDeg + "°" : "—"}</span></div>` + reachLg + wsLg;
+    `<div class="lg"><span class="dot" style="background:#E0952A"></span>Trained (${state.side[0].toUpperCase()})
+       <span class="val" style="color:#8A5300;margin-left:6px">${prof ? prof.arcMinDeg + "°–" + prof.arcMaxDeg + "°" : "—"}</span></div>
+     <div class="lg"><span class="dot" style="background:rgba(30,34,53,.35)"></span>Other (${other[0].toUpperCase()})
+       <span class="val" style="color:rgba(30,34,53,.6);margin-left:6px">${oProf ? oProf.arcMinDeg + "°–" + oProf.arcMaxDeg + "°" : "—"}</span></div>` + reachLg + wsLg;
 
   // --- reach & grasp map: the five targets ---
   // Laid out where they actually are relative to the patient (0deg = out to
@@ -2583,12 +2829,12 @@ function renderProfile() {
   // the down-and-out position lives below the shoulder line and a map that
   // cannot draw it would quietly drop the one position most patients lose.
   const GX = 200, GY = 130, GR = 88;
-  let gsvg = `<circle cx="${GX}" cy="${GY}" r="${GR}" fill="none" stroke="rgba(27,27,58,.10)" stroke-width="2" stroke-dasharray="6 8"/>
-    <circle cx="${GX}" cy="${GY}" r="4" fill="rgba(27,27,58,.45)"/>`;
+  let gsvg = `<circle cx="${GX}" cy="${GY}" r="${GR}" fill="none" stroke="rgba(30,34,53,.10)" stroke-width="2" stroke-dasharray="6 8"/>
+    <circle cx="${GX}" cy="${GY}" r="4" fill="rgba(30,34,53,.45)"/>`;
   const held = prof?.extremes || [];
   if (!held.length) {
     gsvg += `<text x="${GX}" y="${GY + 5}" text-anchor="middle" font-size="13" font-weight="700"
-      fill="rgba(27,27,58,.45)" font-family="Nunito">No targets recorded yet</text>`;
+      fill="rgba(30,34,53,.45)" font-family="Nunito">No targets recorded yet</text>`;
   }
   for (const e of held) {
     // arm-relative degrees -> screen: a left arm mirrors, exactly as the
@@ -2603,28 +2849,28 @@ function renderProfile() {
     const ask = e.askFrac != null ? Math.max(0, Math.min(1, e.askFrac)) : null;
     // spoke length = how far along that direction they actually got
     gsvg += `<line x1="${GX}" y1="${GY}" x2="${(GX + Math.cos(scr) * GR * frac).toFixed(1)}"
-      y2="${(GY - Math.sin(scr) * GR * frac).toFixed(1)}" stroke="${e.reached ? "#9fc08a" : "#e8a86a"}"
+      y2="${(GY - Math.sin(scr) * GR * frac).toFixed(1)}" stroke="${e.reached ? "#2E7D4F" : "#E0952A"}"
       stroke-width="5" stroke-linecap="round"/>`;
     // a tick where the target actually sat, when it was brought in
     if (ask != null && ask < 0.97) {
       gsvg += `<circle cx="${(GX + Math.cos(scr) * GR * ask).toFixed(1)}" cy="${(GY - Math.sin(scr) * GR * ask).toFixed(1)}"
-        r="3.5" fill="none" stroke="rgba(27,27,58,.45)" stroke-width="2"/>`;
+        r="3.5" fill="none" stroke="rgba(30,34,53,.45)" stroke-width="2"/>`;
     }
     if (e.reached) {
-      gsvg += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="15" fill="rgba(159,192,138,.25)" stroke="#9fc08a" stroke-width="3"/>
-        <path d="M${(x - 6).toFixed(1)} ${y.toFixed(1)} l4.5 5 l9 -10.5" stroke="#4a7a3a" stroke-width="3" fill="none" stroke-linecap="round"/>`;
-      if (e.graspOk) gsvg += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="21" fill="none" stroke="#4a7a3a" stroke-width="2.5"/>`;
+      gsvg += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="15" fill="rgba(46,125,79,.25)" stroke="#2E7D4F" stroke-width="3"/>
+        <path d="M${(x - 6).toFixed(1)} ${y.toFixed(1)} l4.5 5 l9 -10.5" stroke="#2E7D4F" stroke-width="3" fill="none" stroke-linecap="round"/>`;
+      if (e.graspOk) gsvg += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="21" fill="none" stroke="#2E7D4F" stroke-width="2.5"/>`;
     } else {
-      gsvg += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="15" fill="rgba(181,80,58,.15)" stroke="#b5503a" stroke-width="2.5" stroke-dasharray="4 4"/>
+      gsvg += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="15" fill="rgba(179,38,30,.15)" stroke="#B3261E" stroke-width="2.5" stroke-dasharray="4 4"/>
         <text x="${x.toFixed(1)}" y="${(y + 4).toFixed(1)}" text-anchor="middle" font-size="11" font-weight="800"
-          fill="#b5503a" font-family="Nunito">${Math.round(frac * 100)}%</text>`;
+          fill="#B3261E" font-family="Nunito">${Math.round(frac * 100)}%</text>`;
     }
     // label outside the ring, nudged so nothing overlaps the circle
     const lx = GX + Math.cos(scr) * (GR + 40), ly = GY - Math.sin(scr) * (GR + 40);
     gsvg += `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" text-anchor="middle" font-size="10.5" font-weight="700"
-      fill="rgba(27,27,58,.6)" font-family="Nunito">${e.key}</text>`;
+      fill="rgba(30,34,53,.6)" font-family="Nunito">${e.key}</text>`;
     if (e.reached) gsvg += `<text x="${lx.toFixed(1)}" y="${(ly + 12).toFixed(1)}" text-anchor="middle" font-size="10" font-weight="700"
-      fill="${e.graspOk ? "#4a7a3a" : "#b8892a"}" font-family="Nunito">${e.graspOk ? "✊ grasp" : "no squeeze"} · ${Math.round((e.stability ?? 0) * 100)}%</text>`;
+      fill="${e.graspOk ? "#2E7D4F" : "#8A5300"}" font-family="Nunito">${e.graspOk ? "✊ grasp" : "no squeeze"} · ${Math.round((e.stability ?? 0) * 100)}%</text>`;
   }
   $("prof-grasp").innerHTML = gsvg;
 
@@ -2635,7 +2881,7 @@ function renderProfile() {
     if (!vals.length) return "";
     const min = Math.min(...vals), max = Math.max(...vals), span = max - min || 1;
     const pts = vals.map((v, i) => `${2 + i * (66 / Math.max(1, vals.length - 1))},${20 - ((v - min) / span) * 14}`).join(" ");
-    return `<svg viewBox="0 0 70 24" width="70" height="24"><polyline points="${pts}" fill="none" stroke="#9fc08a" stroke-width="2.5" stroke-linecap="round"/></svg>`;
+    return `<svg viewBox="0 0 70 24" width="70" height="24"><polyline points="${pts}" fill="none" stroke="#2E7D4F" stroke-width="2.5" stroke-linecap="round"/></svg>`;
   };
   const mean = a => a.length ? a.reduce((s, v) => s + v, 0) / a.length : 0;
   const kpis = [
@@ -2664,7 +2910,7 @@ function renderProfile() {
     `<tr><td>${new Date(s.date).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</td>
      <td>${GAMES.find(g => g.id === s.game)?.name ?? s.game}</td>
      <td>${s.round ?? "—"}</td>
-     <td style="color:${s.hitRate >= 0.5 && s.hitRate <= 0.78 ? "#4a7a3a" : "#b8892a"}">${Math.round(s.hitRate * 100)}%</td>
+     <td style="color:${s.hitRate >= 0.5 && s.hitRate <= 0.78 ? "#2E7D4F" : "#8A5300"}">${Math.round(s.hitRate * 100)}%</td>
      <td>${Math.round(s.meanReachFrac * 100)}%</td></tr>`).join("");
   $("prof-log").innerHTML = `<thead><tr><th>Date</th><th>Game</th><th>Round</th><th>Success</th><th>Arc cov.</th></tr></thead><tbody>${rows || "<tr><td colspan=5>No rounds yet</td></tr>"}</tbody>`;
 
@@ -2938,6 +3184,9 @@ $("in-candles-level").addEventListener("change", e => { state.candlesLevelPick =
 // Windy City Flap's level for the NEXT round (testing: any level at once); the ladder otherwise
 for (let L = 1; L <= WINDY_MAX; L++) $("in-windy-level").add(new Option(`Level ${windyStageOf(L)} · part ${windySubOf(L)} of 3${windyStageOf(L) > 12 ? " · endless" : ""}`, String(L)));
 $("in-windy-level").addEventListener("change", e => { state.windyLevelPick = +e.target.value || null; });
+for (let L = 1; L <= FRUIT_MAX; L++) $("in-fruit-level").add(new Option(`Level ${L}`, String(L)));
+$("in-fruit-level").addEventListener("change", e => { state.fruitLevelPick = +e.target.value || null; });
+$("in-fruit-drop").addEventListener("change", e => { state.fruitDrop = e.target.value; });
 $("in-pong-speed").addEventListener("change", e => { state.pongSpeed = e.target.value; });
 $("in-pong-power").addEventListener("change", e => { state.pongPowerups = e.target.value === "on"; });
 $("in-song").addEventListener("change", e => { state.song = e.target.value; });
@@ -3005,6 +3254,15 @@ addEventListener("keydown", e => {
 });
 
 /* ================= boot ================= */
+// Nunito before the first canvas frame (30 Oct 2026): the font is
+// self-hosted and preloaded, so this is a few milliseconds; a canvas that
+// drew before it arrived would keep the fallback face. 1.5 s at most.
+try {
+  await Promise.race([
+    Promise.all(["700", "800", "900"].map(w => document.fonts.load(`${w} 32px Nunito`))),
+    new Promise(r => setTimeout(r, 1500)),
+  ]);
+} catch {}
 show("screen-login");
 loadSettings(state.patient);
 // ?preview=pongscore renders the between-rounds card with a sample Pong
@@ -3016,7 +3274,9 @@ if (previewOf === "pongscore") {
   const sample = { game: "pong", hits: 19, misses: 3, hitRate: 19 / 22, stars: 2, gamePoints: 200, seconds: 96, bestRally: 9,
     points: 3, aiPoints: 1, matchWon: true, trickPoints: 1, trickShots: { curve: 1 }, compEvents: [], next: "up", lvl: { from: 2, to: 3, of: 10 } };
   state.plan = { blocks: [{ game: "pong", axis: "fe", minutes: 15 }], idx: 0, startedAt: Date.now() - 5 * 60000 };
-  renderBetween(sample, "You won, so the ball comes a little quicker next game, and the star grows into a Bright star.");
+  // a sample of the last games, for the trend (nothing is stored)
+  const history = [11, 14, 12, 16, 15, 17].map(hits => ({ game: "pong", hits }));
+  renderBetween(sample, "You won, so the ball comes a little quicker next game, and the star grows into a Bright star.", { history });
   // a guest has no day to total: sample numbers for the time bar
   $("rc-time").classList.remove("hidden");
   $("rc-time").innerHTML = `<div class="rc-time-line"><b>Today</b> 23 of 45 min</div><div class="rc-time-bar"><div style="width:51%"></div></div>`;
@@ -3029,8 +3289,11 @@ if (previewOf === "pongscore") {
     windy: { game: "windy", seconds: 90, stars: 1, completed: true, gapsPassed: 14, level: 4, windyLevel: 5, next: "up", lvl: { from: 2, to: 2, of: 16, pips: "● ● ○" } },
     candles: { game: "candles", seconds: 90, stars: 1, lanternsLit: 9, candles: 11, next: "same", lvl: { from: 6, to: 6, of: 23 } },
     pairs: { game: "pairs", seconds: 75, stars: 1, pairsFound: 3, turns: 9, boardsCleared: 0, next: "down", lvl: { from: 3, to: 2, of: 8 } },
+    fruit: { game: "fruit", seconds: 140, stars: 2, won: true, level: 3, goalFruit: "Orange", goalCount: 2, drops: 21, merges: 14, next: "up", lvl: { from: 3, to: 4, of: 20 } },
   }[g];
-  renderBetween({ compEvents: [], ...S }, "");
+  const H = { windy: ["gapsPassed", [8, 10, 9, 12, 11, 13]], candles: ["lanternsLit", [6, 7, 9, 8, 10, 8]], pairs: ["pairsFound", [2, 3, 2, 4]], fruit: ["merges", [6, 9, 8, 12, 14]] }[g];
+  const history = H[1].map(v => ({ game: g, [H[0]]: v }));
+  renderBetween({ compEvents: [], ...S }, "", { history });
   $("rc-time").classList.remove("hidden");
   $("rc-time").innerHTML = `<div class="rc-time-line"><b>Today</b> 23 of 45 min</div><div class="rc-time-bar"><div style="width:51%"></div></div>`;
   show("screen-between");
@@ -3153,12 +3416,13 @@ function testJump(q) {
     if (go === "pong") {
       state.pongMode = q.get("mode") || "solo"; $("in-pong").value = state.pongMode;
       state.pongAxis = q.get("axis") === "abd" ? "abd" : "fe";
-      if (state.pongMode === "duo") { renderDuoSetup(); return; }
+      if (state.pongMode === "duo") { renderDuoSetup(); show("screen-select"); return; }
     }
     if (level) {
       if (go === "candles") state.candlesLevelPick = level;
       if (go === "windy") state.windyLevelPick = level;
       if (go === "pairs") state.pairsLevelPick = level;
+      if (go === "fruit") state.fruitLevelPick = level;
     }
     startGame(go, true);
     return;
@@ -3170,8 +3434,8 @@ function testJump(q) {
     case "assess": startAssessment({ override: true, force: true }); break;
     case "rom": renderRomCompare([arm]); show("screen-romcompare"); romLiveLoop(); break;
     case "schedule": renderSchedule(toHub); break;
-    case "levels": renderLevelMap(MAP_DEFS[q.get("game")] ? q.get("game") : "windy"); break;
-    case "duo": state.pongMode = "duo"; state.pongAxis = "fe"; $("in-pong").value = "duo"; renderDuoSetup(); break;
+    case "levels": renderLevelMap(MAP_DEFS[q.get("game")] ? q.get("game") : "windy"); show("screen-select"); break;
+    case "duo": state.pongMode = "duo"; state.pongAxis = "fe"; $("in-pong").value = "duo"; renderDuoSetup(); show("screen-select"); break;
     case "profile": renderProfile(); show("screen-profile"); break;
     case "board": renderLeaderboard(); show("screen-select"); break;
     default: toHub(); speak(`No test target called ${go}.`);
@@ -3252,7 +3516,7 @@ function weekStars(name) {
 function renderLeaderboard() {
   const wrap = $("cards");
   wrap.innerHTML = "";
-  document.querySelector("#screen-select h1").textContent = "This week's board";
+  subView("This week's board");
   const mine = weekStars(state.patient);
   let anchor = store.getProgress(state.patient, "board") || {};
   if (anchor.week !== weekKey()) { anchor = { week: weekKey(), ref: Math.max(12, mine || 12) }; store.setProgress(state.patient, "board", anchor); }
@@ -3268,7 +3532,7 @@ function renderLeaderboard() {
     <p>You are <b>#${me.rank}</b> of ${rows.length} with <b>${mine}</b> star${mine === 1 ? "" : "s"}. ${chase}</p>
     <table><tr><th>#</th><th class="nm">Player</th><th>Stars</th></tr>${html}</table>
     <p class="hint">A star is a minute of play. The other players are practice names for now.</p></div></div>`;
-  const back = pongCard("↩ Back", "All games", renderSelect, CARD_ART.pong);
+  const back = pillBtn("↩ Back", "All games", renderSelect);
   wrap.appendChild(back);
   focusHint(back);
 }

@@ -6,6 +6,8 @@ import { Coach } from "./coach.js";
 import { audio } from "./audio.js";
 import { A11Y, speakQueued, voiceBusy, hushVoice } from "./a11y.js";
 import { coachLine, coachSpeak } from "./coachlines.js";
+import { C, accentOf, alpha } from "./theme.js";
+import { Sparks, dockRect, drawVeil, drawClock } from "./ui.js";
 
 export const TAU = Math.PI * 2;
 // Reach center: all envelope-based targets (and the assessment circle) are
@@ -37,7 +39,9 @@ export function drawBody(ctx, c, t, opts = {}) {
     : pt => t._videoToPx(pt.x, pt.y, c);
   ctx.save();
   ctx.lineCap = "round";
-  ctx.strokeStyle = framed ? "rgba(159,192,138,0.55)" : "rgba(232,168,106,0.5)";
+  // light lines on the camera picture: cream when framed, the coach yellow
+  // and DASHED while still adjusting (the pattern, not the hue, says which)
+  ctx.strokeStyle = framed ? "rgba(246,242,234,0.7)" : "rgba(242,179,61,0.8)";
   // amber and sage are a red-green confusion pair (near-identical luminance),
   // so the framing state also changes line pattern: dashed = still adjusting
   if (!framed) ctx.setLineDash([12, 9]);
@@ -60,14 +64,11 @@ export function drawBody(ctx, c, t, opts = {}) {
       }
     }
   }
-  const ear = p.earL && p.earR ? { x: (p.earL.x + p.earR.x) / 2, y: (p.earL.y + p.earR.y) / 2 } : (p.earL || p.earR);
-  if (ear) {
-    const E = P(ear);
-    ctx.beginPath(); ctx.arc(E.x, E.y, 0.34 * t.pxPerSW(c) * k, 0, TAU); ctx.stroke();
-  }
+  // no circle over the face (30 Oct 2026, by request): it covered the
+  // patient's own face on every camera view and said nothing
   // hands: real hand skeletons (glow-dot fallback inside drawHand)
   if (opts.hands !== false) {
-    for (const s of ["left", "right"]) drawHand(ctx, c, t, s, { map: opts.map, scale: k });
+    for (const s of ["left", "right"]) drawHand(ctx, c, t, s, { map: opts.map, scale: k, surface: opts.surface || "night" });
   }
   ctx.restore();
 }
@@ -91,7 +92,7 @@ const hexA = (hex, a) => `rgba(${parseInt(hex.slice(1, 3), 16)},${parseInt(hex.s
 export function drawPersonSlot(ctx, panel, trackingOk, fontPx, inside) {
   const r = Math.round(Math.min(panel.w, panel.h) * 0.06);
   ctx.save();
-  ctx.fillStyle = "rgba(10,10,30,0.75)";
+  ctx.fillStyle = "#1A1E33";
   ctx.beginPath(); ctx.roundRect(panel.x, panel.y, panel.w, panel.h, r); ctx.fill();
   ctx.clip();
   inside();
@@ -102,11 +103,14 @@ export function drawPersonSlot(ctx, panel, trackingOk, fontPx, inside) {
   ctx.font = `800 ${fontPx}px Nunito, sans-serif`;
   const tw = ctx.measureText("You").width, ph = Math.round(fontPx * 1.5);
   const px = panel.x + r * 0.6, py = panel.y + r * 0.6, pw = tw + ph * 1.3;
-  ctx.fillStyle = "rgba(20,18,48,0.78)";
+  // the tag is a white pill like the rest of the chrome; the light is the
+  // success green when tracked and a hollow attention ring when not, so the
+  // two states differ in shape as well as hue
+  ctx.fillStyle = "#FFFFFF";
   ctx.beginPath(); ctx.roundRect(px, py, pw, ph, ph / 2); ctx.fill();
-  ctx.fillStyle = trackingOk ? "#9fc08a" : "#e8a86a";
-  ctx.beginPath(); ctx.arc(px + ph * 0.5, py + ph / 2, ph * 0.18, 0, TAU); ctx.fill();
-  ctx.fillStyle = "#f4ecdd"; ctx.textAlign = "left"; ctx.textBaseline = "middle";
+  if (trackingOk) { ctx.fillStyle = "#2E7D4F"; ctx.beginPath(); ctx.arc(px + ph * 0.5, py + ph / 2, ph * 0.2, 0, TAU); ctx.fill(); }
+  else { ctx.strokeStyle = "#A65600"; ctx.lineWidth = Math.max(2, ph * 0.08); ctx.beginPath(); ctx.arc(px + ph * 0.5, py + ph / 2, ph * 0.17, 0, TAU); ctx.stroke(); }
+  ctx.fillStyle = "#1E2235"; ctx.textAlign = "left"; ctx.textBaseline = "middle";
   ctx.fillText("You", px + ph * 0.85, py + ph / 2 + 1);
   ctx.restore();
 }
@@ -115,20 +119,54 @@ export function drawHand(ctx, c, t, side, opts = {}) {
   const pts = t._handPts(side);
   const closed = t.handClosed(side);
   const k = opts.scale ?? 1;
-  const tint = opts.tint || null;
-  const stroke = tint || (closed ? "#9fc08a" : "#e8a86a");
-  const web = tint ? hexA(tint, closed ? 0.42 : 0.24) : (closed ? "rgba(159,192,138,0.3)" : "rgba(232,168,106,0.26)");
+  // ONE HAND SCHEME (30 Oct 2026, by request: the hand looked different on
+  // every screen): the thin skeleton everywhere, light when open and green
+  // when closed; on a light (Day) surface the same in ink and a deeper green.
+  // opts.surface "day" | "night" (default "night": the camera picture).
+  // opts.tint is only for the old bold style still used by disabled games.
+  const day = opts.surface === "day";
+  const tint = opts.thin === false ? (opts.tint || null) : null;
+  const stroke = tint || (closed ? (day ? "#2E7D4F" : "#7FD49A") : (day ? "#1E2235" : "#F6F2EA"));
+  const web = tint ? hexA(tint, closed ? 0.42 : 0.24) : (closed ? "rgba(127,212,154,0.3)" : "rgba(246,242,234,0.22)");
   if (pts) {
     const P = pts.map(p => {
       const px = t._videoToPx(p.x, p.y, c);
       return opts.map ? opts.map(px) : px;
     });
     const palmW = Math.hypot(P[5].x - P[17].x, P[5].y - P[17].y);
+    // THIN (30 Oct 2026, by request: in the assessment the hand read as a
+    // glowing square, a filled palm and fingers 16% of the palm wide, made
+    // bigger again by the zoom): fine finger lines, a dot at every joint,
+    // the palm only outlined, a faint edge. The default since the same day
+    // (one scheme everywhere); thin: false keeps the old bold hand.
+    if (opts.thin !== false) {
+      const tl = Math.max(1.5, palmW * 0.05);
+      ctx.save();
+      ctx.lineCap = "round"; ctx.lineJoin = "round";
+      ctx.shadowColor = day ? "rgba(255,255,255,0.7)" : "rgba(20,23,42,0.55)"; ctx.shadowBlur = 3;
+      ctx.strokeStyle = stroke; ctx.lineWidth = tl;
+      ctx.beginPath();
+      [0, 1, 5, 9, 13, 17].forEach((idx, i) => { const p = P[idx]; i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y); });
+      ctx.closePath(); ctx.stroke();
+      for (const chain of FINGER_CHAINS) {
+        ctx.beginPath();
+        chain.forEach((idx, i) => { const p = P[idx]; i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y); });
+        ctx.stroke();
+      }
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = stroke;
+      for (let i = 0; i < 21; i++) { ctx.beginPath(); ctx.arc(P[i].x, P[i].y, tl * 0.95, 0, TAU); ctx.fill(); }
+      // fingertips: white on the camera picture, the line colour on paper
+      ctx.fillStyle = day ? stroke : "#fff";
+      for (const idx of [4, 8, 12, 16, 20]) { ctx.beginPath(); ctx.arc(P[idx].x, P[idx].y, tl * 1.25, 0, TAU); ctx.fill(); }
+      ctx.restore();
+      return true;
+    }
     const lw = Math.max(3, palmW * (tint && closed ? 0.2 : 0.16));
     ctx.save();
     ctx.lineCap = "round"; ctx.lineJoin = "round";
-    ctx.shadowColor = tint ? hexA(tint, 0.75) : closed ? "rgba(159,192,138,0.8)" : "rgba(232,168,106,0.7)";
-    ctx.shadowBlur = 14;
+    ctx.shadowColor = tint ? hexA(tint, 0.6) : closed ? "rgba(127,212,154,0.7)" : "rgba(246,242,234,0.5)";
+    ctx.shadowBlur = 10;
     // palm web
     ctx.fillStyle = web;
     ctx.beginPath();
@@ -187,7 +225,7 @@ export function drawVideoMirror(ctx, c, t, tint = 0.38) {
   ctx.drawImage(v, 0, 0, sw, sh, dx, dy, dw, dh);   // centered: mirrored x equals dx
   ctx.restore();
   // soft ink veil so the glowing overlays stay readable on the video
-  if (tint > 0) { ctx.fillStyle = `rgba(22,22,54,${tint})`; ctx.fillRect(0, 0, c.width, c.height); }
+  if (tint > 0) { ctx.fillStyle = `rgba(20,23,42,${tint})`; ctx.fillRect(0, 0, c.width, c.height); }
   return true;
 }
 
@@ -204,6 +242,13 @@ export class GameBase {
     this.roundSeconds = 40;
     this.active = false;
   }
+
+  // THE LOOK (30 Oct 2026): every game has one accent colour (theme.js) and
+  // draws on the Day surface (warm white) unless it sets `surface = "night"`
+  // (the Lantern: lights only read in the dark)
+  get accent() { return accentOf(this.id); }
+  get surface() { return "day"; }
+  get night() { return this.surface === "night"; }
 
   start(onEnd) {
     this.onEnd = onEnd;
@@ -289,15 +334,7 @@ export class GameBase {
     this.drawBg(ctx, c, now);
 
     if (this.userPaused) {
-      ctx.save();
-      ctx.fillStyle = "rgba(20,16,40,0.55)"; ctx.fillRect(0, 0, c.width, c.height);
-      ctx.fillStyle = "#f4ecdd"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-      ctx.font = `800 ${Math.round(c.height * 0.07)}px Nunito, sans-serif`;
-      ctx.fillText("Paused", c.width / 2, c.height * 0.45);
-      ctx.font = `700 ${Math.round(c.height * 0.026)}px Nunito, sans-serif`;
-      ctx.fillStyle = "rgba(244,236,221,0.8)";
-      ctx.fillText("press Space or P to carry on", c.width / 2, c.height * 0.53);
-      ctx.restore();
+      drawVeil(ctx, c, "Paused", "Press Space or P to carry on");
       return;
     }
 
@@ -335,20 +372,24 @@ export class GameBase {
     if (!this.armBehind) this._drawArmAndCursor(ctx, c, now);
 
     if (this.coach.dimming) {
-      ctx.fillStyle = `rgba(18,12,28,${this.coach.dimming})`;
+      ctx.fillStyle = `rgba(20,23,42,${this.coach.dimming})`;
       ctx.fillRect(0, 0, c.width, c.height);
     }
-    // the posture coach's dock: bottom-left by default, or wherever the game
-    // puts it (Pong sets it beside the paddle the patient drives)
-    const dock = this.coachDock?.(c) || { x: c.width * 0.06, y: c.height * 0.96, h: c.height * 0.18 };
-    this.coach.draw(ctx, dock.x, dock.y, dock.h, now);
+    // the coach's dock: a card in the bottom corner away from the trained arm
+    // (ui.dockRect), unless the game puts it elsewhere
+    const dock = this.coachDock?.(c) || dockRect(c, this.side);
+    this.coach.draw(ctx, dock.x, dock.y, dock.h, now, { surface: this.surface });
   }
 
   _end() {
     this.active = false;
     this._prompt("");
     document.getElementById("cue").classList.add("hidden");
-    audio.fanfare();
+    // per-game metrics, read once (extra() may close an open trial)
+    const ex = this.extra?.() || {};
+    // the fanfare only when it went well: a match won, a flight finished, a
+    // level up, the flag reached, a best; otherwise a calm close
+    audio.roundEnd(ex.matchWon === true || ex.completed === true || ex.verdict === "up" || ex.targetHit === true || ex.recordBeat === true);
     const total = this.stats.hits + this.stats.misses;
     const fr = this.stats.reachFracs;
     this.onEnd({
@@ -364,7 +405,8 @@ export class GameBase {
       lanterns: this.stats.lanterns,
       creatures: this.stats.creatures,
       compEvents: this.coach.events,
-      ...(this.extra?.() || {}),          // per-game metrics (e.g. path efficiency)
+      compStats: this.coach.summary?.(),  // per slip: largest score, seconds over the threshold
+      ...ex,                              // per-game metrics (e.g. path efficiency)
     });
   }
 
@@ -469,7 +511,7 @@ export class GameBase {
     const el = document.getElementById("cue");
     if (el && this.coach.state !== "alert") {
       el.textContent = text;
-      el.classList.remove("hidden");
+      el.classList.remove("hidden", "posture");
       clearTimeout(this._cueTimer);
       this._cueTimer = setTimeout(() => { if (this.coach.state !== "alert") el.classList.add("hidden"); }, 3200);
     }
@@ -536,15 +578,19 @@ export class GameBase {
     }
   }
 
-  burst(pos, color = "#ffd98a") {
-    const p = this.toPx(pos);
-    const n = A11Y.calm ? 5 : 14;              // reduced motion: gentler bloom
-    for (let i = 0; i < n; i++) {
-      const a = Math.random() * TAU, s = A11Y.calm ? 1 + Math.random() * 1.5 : 2 + Math.random() * 4;
-      this.particles.push({ x: p.x, y: p.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 1, color });
-    }
+  // the hit pop's sparks (ui.Sparks: Kenney star particles tinted, time-
+  // based, a plain ring under calm motion); the game's accent unless a
+  // colour is given
+  burst(pos, color = null) { const p = this.toPx(pos); this.burstPx(p.x, p.y, color); }
+  burstPx(x, y, color = null, n = 8) {
+    this.sparks ??= new Sparks();
+    this.sparks.burst(x, y, color || this.accent.solid, n, 90 * this.canvas.height / 1080);
   }
   _drawParticles(ctx) {
+    this.sparks?.draw(ctx);
+    // the old per-frame particles, still pushed by games not yet moved to
+    // burstPx (the disabled ones)
+    if (!this.particles?.length) return;
     this.particles = this.particles.filter(pt => pt.life > 0);
     for (const pt of this.particles) {
       pt.x += pt.vx; pt.y += pt.vy; pt.vy += 0.06; pt.life -= 0.028;
@@ -568,17 +614,18 @@ export class GameBase {
         const ps = P(sh), pe = P(el), pw = P(wr);
         ctx.save();
         ctx.lineCap = "round";
-        ctx.strokeStyle = primary ? "rgba(244,236,221,0.28)" : "rgba(200,230,235,0.22)";
+        const armCol = this.night ? "rgba(246,242,234," : "rgba(30,34,53,";
+        ctx.strokeStyle = armCol + (primary ? "0.16)" : "0.1)");
         ctx.lineWidth = 10;
         ctx.beginPath(); ctx.moveTo(ps.x, ps.y); ctx.lineTo(pe.x, pe.y); ctx.lineTo(pw.x, pw.y); ctx.stroke();
-        ctx.strokeStyle = primary ? "rgba(255,246,216,0.5)" : "rgba(200,230,235,0.4)";
+        ctx.strokeStyle = armCol + (primary ? "0.5)" : "0.3)");
         ctx.lineWidth = 3.5;
         ctx.beginPath(); ctx.moveTo(ps.x, ps.y); ctx.lineTo(pe.x, pe.y); ctx.lineTo(pw.x, pw.y); ctx.stroke();
         ctx.restore();
       }
       // the real hand: 21-point skeleton that curls and closes live (KP
       // feedback made literal); when unavailable, a wrist→palm line + disc
-      const handDrawn = drawHand(ctx, c, this.t, side, { fallback: false });
+      const handDrawn = drawHand(ctx, c, this.t, side, { fallback: false, surface: this.surface });
       if (!handDrawn) {
         const pm = this.t.palm(side);
         if (wr?.ok && pm) {
@@ -597,7 +644,7 @@ export class GameBase {
       }
       const hp = this.t.palmPx(side, c);   // cursor rides the palm center
       if (!hp) continue;
-      ctx.strokeStyle = primary ? "rgba(244,236,221,0.22)" : "rgba(200,230,235,0.18)";
+      ctx.strokeStyle = alpha(this.night ? C.onNight : this.accent.solid, primary ? 0.35 : 0.22);
       ctx.lineWidth = 2;
       ctx.beginPath(); ctx.arc(hp.x, hp.y, this.params.radius * this.sw(), 0, TAU); ctx.stroke();
       if (this.cursorSkin === "comet" && primary) {
@@ -609,18 +656,14 @@ export class GameBase {
         ctx.restore();
         this.glow(ctx, hp.x, hp.y, 12, "#ffffff", "#9fc0c8", 20);
       } else {
-        this.glow(ctx, hp.x, hp.y, primary ? 13 : 11, "#fff2c2", primary ? "#e8a86a" : "#9fc0c8", 22);
+        this.glow(ctx, hp.x, hp.y, primary ? 13 : 11, "#ffffff", primary ? this.accent.solid : "#9fc0c8", 16);
       }
     }
   }
 
+  // the round's clock, the shared one (ui.drawClock), in the top-centre band
   drawTimerWhisper(ctx, c, now) {
-    const f = 1 - this.elapsed(now) / this.roundSeconds;
-    ctx.strokeStyle = "rgba(244,236,221,0.22)";
-    ctx.lineWidth = 3; ctx.lineCap = "round";
-    ctx.beginPath();
-    ctx.moveTo(c.width * (0.5 - 0.4 * f), 10);
-    ctx.lineTo(c.width * (0.5 + 0.4 * f), 10);
-    ctx.stroke();
+    const used = this.elapsed(now) / this.roundSeconds;
+    drawClock(ctx, c, used, { accent: this.accent, surface: this.surface, secondsLeft: this.roundSeconds - this.elapsed(now) });
   }
 }

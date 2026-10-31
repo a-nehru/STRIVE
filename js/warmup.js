@@ -16,6 +16,9 @@
 import { drawBody, drawPersonSlot, TAU } from "./engine.js";
 import { audio } from "./audio.js";
 import { A11Y, speakLine, hushVoice } from "./a11y.js";
+import { C, ACCENTS, alpha } from "./theme.js";
+import { rrect } from "./ui.js";
+const AC = ACCENTS.warmup;        // the warm-up's accent (theme.js)
 
 export const WARMUP_SRCS = {
   left: "assets/music/Warmup_Stretches_LEFT_arm.mp4",
@@ -51,6 +54,7 @@ function makeVideo(src) {
   v.setAttribute("aria-hidden", "true");
   document.body.appendChild(v);
   try { v.load(); } catch {}
+  audio.watchMedia(v);                    // the recording's voice ducks the music while it plays
   return v;
 }
 
@@ -113,38 +117,38 @@ export class Warmup {
     const c = this.canvas, ctx = c.getContext("2d");
     const W = c.width, H = c.height, v = this.vid;
 
-    const g = ctx.createLinearGradient(0, 0, 0, H);
-    g.addColorStop(0, "#20204a"); g.addColorStop(1, "#161636");
-    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    // the Day surface (30 Oct 2026): the recording in a card on warm white,
+    // a plum progress bar under it
+    ctx.fillStyle = C.paper; ctx.fillRect(0, 0, W, H);
 
     // the video, whole, as large as fits under the prompt
     const pad = Math.round(W * 0.022);
-    const top = Math.round(H * 0.16), bodyH = H - top - pad;
+    const barH = Math.round(H * 0.014), barGap = Math.round(H * 0.018);
+    const top = Math.round(H * 0.16), bodyH = H - top - pad - barH - barGap;
     const aspect = v?.videoWidth && v?.videoHeight ? v.videoWidth / v.videoHeight : 16 / 9;
     let boxW = W - pad * 2, boxH = Math.round(boxW / aspect);
     if (boxH > bodyH) { boxH = bodyH; boxW = Math.round(boxH * aspect); }
     const bx = Math.round((W - boxW) / 2), by = top + Math.round((bodyH - boxH) / 2);
     const S = WARMUP_PERSON_SLOT;
     ctx.save();
-    ctx.shadowColor = "rgba(0,0,0,0.5)"; ctx.shadowBlur = 30;
-    ctx.fillStyle = "rgba(10,10,30,0.7)";
-    ctx.beginPath(); ctx.roundRect(bx, by, boxW, boxH, 18); ctx.fill();
-    ctx.shadowBlur = 0;
+    ctx.shadowColor = "rgba(30,34,53,0.18)"; ctx.shadowBlur = 28; ctx.shadowOffsetY = 10;
+    ctx.fillStyle = C.nightCard;
+    ctx.beginPath(); ctx.roundRect(bx, by, boxW, boxH, 24); ctx.fill();
+    ctx.shadowColor = "transparent";
     ctx.clip();
     if (v && v.readyState >= 2 && v.videoWidth) ctx.drawImage(v, bx, by, boxW, boxH);
     else {
-      ctx.fillStyle = "rgba(244,236,221,0.6)"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-      ctx.font = `700 ${Math.round(H * 0.03)}px Nunito, sans-serif`;
+      ctx.fillStyle = C.onNight; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.font = `800 ${Math.round(H * 0.034)}px Nunito, sans-serif`;
       ctx.fillText(this.failedAt ? "The video could not be played" : "Loading…", bx + boxW * S.x0 / 2, by + boxH / 2);
     }
     ctx.restore();
-    if (v && v.duration > 0) {
-      const f = Math.min(1, v.currentTime / v.duration);
-      ctx.fillStyle = "rgba(244,236,221,0.16)"; ctx.fillRect(bx, by + boxH - 6, boxW, 6);
-      ctx.fillStyle = "rgba(232,168,106,0.9)"; ctx.fillRect(bx, by + boxH - 6, boxW * f, 6);
+    {
+      const f = v && v.duration > 0 ? Math.min(1, v.currentTime / v.duration) : 0;
+      const y = by + boxH + barGap;
+      ctx.fillStyle = alpha(AC.solid, 0.18); rrect(ctx, bx, y, boxW, barH, barH / 2); ctx.fill();
+      if (f > 0) { ctx.fillStyle = AC.solid; rrect(ctx, bx, y, Math.max(barH, boxW * f), barH, barH / 2); ctx.fill(); }
     }
-    ctx.strokeStyle = "rgba(244,236,221,0.35)"; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.roundRect(bx, by, boxW, boxH, 18); ctx.stroke();
 
     // the patient, cropped to the person, in the recording's empty slot
     const panel = { x: bx + boxW * S.x0, y: by + boxH * S.y0, w: boxW * (S.x1 - S.x0), h: boxH * (S.y1 - S.y0) };
@@ -208,7 +212,7 @@ export class Warmup {
     ctx.translate(panel.x + panel.w, panel.y); ctx.scale(-1, 1);
     ctx.drawImage(cam, 0, 0, sw, sh, ox, oy, dw, dh);
     ctx.restore();
-    ctx.fillStyle = "rgba(22,22,54,0.22)"; ctx.fillRect(panel.x, panel.y, panel.w, panel.h);
+    ctx.fillStyle = "rgba(20,23,42,0.22)"; ctx.fillRect(panel.x, panel.y, panel.w, panel.h);
     if (!t.trackingOk || !t.pts) return;
     // full-screen "cover" pixels (what the tracker's _videoToPx gives) back to
     // normalised mirrored coordinates, then into the panel
@@ -218,14 +222,14 @@ export class Warmup {
       const nx = (px.x - (c.width - dwC) / 2) / dwC, ny = (px.y - (c.height - dhC) / 2) / dhC;
       return { x: panel.x + panel.w - ox - (1 - nx) * dw, y: panel.y + oy + ny * dh };
     };
-    drawBody(ctx, c, t, { framed: true, map, scale: dw / dwC, hands: true });
+    drawBody(ctx, c, t, { framed: true, map, scale: dw / dwC, hands: true, thinHands: true });
   }
 
   _shower(x, y, n = A11Y.calm ? 6 : 14) {
     for (let i = 0; i < n; i++) {
       const a = Math.random() * TAU, s = A11Y.calm ? 0.6 + Math.random() : 1 + Math.random() * 2.2;
       this.sparks.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 0.8, r: 2 + Math.random() * 2.5, life: 1,
-                         color: Math.random() < 0.5 ? "#ffd98a" : "#fff6d8" });
+                         color: Math.random() < 0.5 ? AC.solid : C.coach });
     }
   }
 }

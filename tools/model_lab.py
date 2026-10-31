@@ -147,6 +147,9 @@ class ZedSource:
         if res:
             P["res"] = res
         P["fps"] = zb.pick_fps(P["res"], fps or P["fps"])
+        # the SDK's body fitting (a skeleton with fixed bone lengths): on by
+        # default, switchable to record the raw 3D for tools/armfit.py
+        P.setdefault("fitting", True)
         self.table, self.shoulders = zb.resolve_indexes()
         self.max_range = max_range
         self.lock = threading.Lock()
@@ -179,7 +182,7 @@ class ZedSource:
         pt = sl.PositionalTrackingParameters()
         pt.set_as_static = True
         self.zed.enable_positional_tracking(pt)
-        self._enable_body(P["model"], P.get("fp16", True))
+        self._enable_body(P["model"], P.get("fp16", True), P.get("fitting", True))
         self.run = sl.RuntimeParameters()
         self.rt = sl.BodyTrackingRuntimeParameters()
         self.rt.detection_confidence_threshold = 40
@@ -188,22 +191,24 @@ class ZedSource:
         self.P = P
         self.bodies, self.img = sl.Bodies(), sl.Mat()
 
-    def _enable_body(self, model, fp16=True):
+    def _enable_body(self, model, fp16=True, fitting=True):
         sl, zb = self.sl, self.zb
         bt = sl.BodyTrackingParameters()
         bt.detection_model = getattr(sl.BODY_TRACKING_MODEL, model)
         bt.body_format = sl.BODY_FORMAT.BODY_38
         bt.enable_tracking = True
-        bt.enable_body_fitting = True
+        bt.enable_body_fitting = bool(fitting)
         zb.setattr_if(bt, "allow_reduced_precision_inference", fp16, warn=False)
         zb.setattr_if(bt, "prediction_timeout_s", 0.0, warn=False)
         st = self.zed.enable_body_tracking(bt)
         if st != sl.ERROR_CODE.SUCCESS:
             raise RuntimeError(f"body tracking {model} failed to start: {st}")
 
-    def reconfigure(self, model=None, depth=None, res=None, fps=None):
+    def reconfigure(self, model=None, depth=None, res=None, fps=None, fitting=None):
         """Called from an HTTP thread; blocks read() while it works."""
         P = dict(self.P)
+        if fitting is not None:
+            P["fitting"] = fitting in ("on", "1", "true", True)
         if model:
             P["model"] = model
         if depth:
@@ -213,7 +218,8 @@ class ZedSource:
         if fps or res:
             P["fps"] = self.zb.pick_fps(P["res"], int(fps) if fps else P["fps"])
         reopen = any(P[k] != self.P[k] for k in ("depth", "res", "fps"))
-        self.state = f"switching to {P['model']} / {P['depth']} / {P['res']}@{P['fps']} (a first use optimises the model: minutes)"
+        self.state = (f"switching to {P['model']} / {P['depth']} / {P['res']}@{P['fps']}"
+                      f"{'' if P.get('fitting', True) else ' / fitting off'} (a first use optimises the model: minutes)")
         try:
             with self.lock:
                 if reopen:
@@ -224,9 +230,9 @@ class ZedSource:
                         pass
                     time.sleep(1.0)
                     self._open(P)
-                elif P["model"] != self.P["model"]:
+                elif P["model"] != self.P["model"] or P.get("fitting", True) != self.P.get("fitting", True):
                     self.zed.disable_body_tracking()
-                    self._enable_body(P["model"], P.get("fp16", True))
+                    self._enable_body(P["model"], P.get("fp16", True), P.get("fitting", True))
                     self.P = P
             self.state = "ok"
         except BaseException as e:
@@ -736,7 +742,7 @@ class Handler(BaseHTTPRequestHandler):
             if LAB.src.name != "zed":
                 self._json({"ok": False, "error": "the source is not the ZED"})
             else:
-                args = {k: q[k][0] for k in ("model", "depth", "res", "fps") if k in q}
+                args = {k: q[k][0] for k in ("model", "depth", "res", "fps", "fitting") if k in q}
                 threading.Thread(target=LAB.src.reconfigure, kwargs=args, daemon=True).start()
                 time.sleep(0.2)
                 self._json({"ok": True, "state": LAB.src.state})
@@ -750,6 +756,7 @@ class Handler(BaseHTTPRequestHandler):
                     cfg = {}
             if LAB.src.name == "zed":
                 cfg["zed"] = {k: LAB.src.P[k] for k in ("res", "fps", "depth", "model")}
+                cfg["zed"]["fitting"] = bool(LAB.src.P.get("fitting", True))
             if q.get("hand"):
                 cfg["hand_model"] = q["hand"][0]
             cfg["saved"] = datetime.now().isoformat(timespec="seconds")

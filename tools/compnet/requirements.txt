@@ -1,0 +1,5 @@
+jax[cpu]
+flax
+optax
+numpy
+scikit-learn

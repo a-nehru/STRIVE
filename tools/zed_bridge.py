@@ -1151,6 +1151,10 @@ def main():
     ap.add_argument("--hand-views", choices=["both", "left"], default="both",
                     help="run the hand model on both ZED eyes and keep the more confident "
                          "answer per hand (both), or on the left eye only")
+    ap.add_argument("--body-fitting", choices=["on", "off"],
+                    default="off" if cfg.get("zed", {}).get("fitting") is False else "on",
+                    help="the SDK's body fitting, a skeleton with fixed bone lengths (on, default, or as the "
+                         "tracking lab saved it); off streams the raw 3D (see tools/armfit.py)")
     ap.add_argument("--hands", choices=["auto", "off"], default="auto",
                     help="grasp from the MediaPipe hand model on a crop around each wrist "
                          "(auto: on when the mediapipe package is installed)")
@@ -1222,7 +1226,10 @@ def main():
     bt.detection_model = getattr(sl.BODY_TRACKING_MODEL, P["model"])
     bt.body_format = sl.BODY_FORMAT.BODY_38
     bt.enable_tracking = True
-    bt.enable_body_fitting = True
+    bt.enable_body_fitting = args.body_fitting == "on"
+    STATUS["body_fitting"] = args.body_fitting
+    if args.body_fitting == "off":
+        print("  body fitting OFF: raw 3D joints (bone lengths free; see tools/armfit.py)")
     setattr_if(bt, "allow_reduced_precision_inference", P["fp16"])
     setattr_if(bt, "max_range", args.max_range)
     # never extrapolate a skeleton: a predicted arm would move game targets
