@@ -6,7 +6,8 @@
 <title>STRIVE</title>
 <!-- Nunito, self-hosted (SIL OFL 1.1, assets/fonts/OFL.txt): fetched at once so the first screen is in it -->
 <link rel="preload" href="assets/fonts/Nunito-latin.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="css/style.css?v=99">
+<link rel="stylesheet" href="css/style.css?v=110">
+<script>if (localStorage.getItem("strive-tv-safe") === "1") document.documentElement.classList.add("tv-safe");</script>
 </head>
 <body>
 
@@ -18,9 +19,10 @@
        live mirror behind the card, the skeleton on the person being followed,
        a ring on everyone else to click, and one line saying how to be seen -->
   <canvas id="login-canvas"></canvas>
-  <div class="brand-title">STRIVE</div>
 
   <div class="login-card">
+    <!-- the name of the app, big, at the top of the card on every login step (1 Nov 2026, by request: look C) -->
+    <div class="card-brand">STRIVE</div>
     <!-- step 1: choose -->
     <div id="login-choice">
       <h1 class="login-head">Welcome</h1>
@@ -199,7 +201,6 @@
   <header class="hub-head">
     <div class="hub-titles">
       <h1>What shall we play today?</h1>
-      <div class="select-sub hub-only">Your therapy, in play</div>
     </div>
     <div class="hub-coach hub-only">
       <div class="bubble" id="hub-bubble">What shall we play today?</div>
@@ -207,18 +208,12 @@
     </div>
   </header>
   <section class="workout hub-only hidden" id="hub-workout" aria-label="Today's workout">
-    <div class="workout-label">Today's workout</div>
     <div class="today-strip hidden" id="today-strip"></div>
     <div class="plan-strip hidden" id="plan-strip"></div>
   </section>
-  <div class="hub-label hub-only">Click a card to choose it</div>
   <div class="cards" id="cards"></div>
-  <div class="village hub-only" id="village">
-    <canvas id="village-canvas"></canvas>
-  </div>
   <div class="menu-actions">
     <button class="btn ghost-light" id="btn-select-help">Ask for help</button>
-    <button class="btn ghost-light" id="btn-select-board">This week's board</button>
     <button class="btn ghost-light" id="btn-select-mail">Email my progress</button>
   </div>
 </div>
@@ -283,13 +278,16 @@
      blocks, a game each, after the first assessment and from the drawer -->
 <div id="screen-schedule" class="screen hidden">
   <h1>Today's plan</h1>
-  <div class="select-sub">Fill the bar with games. Click a game below to put it in the next slot. Each slot is 15 minutes. ✕ takes one out.</div>
+  <div class="select-sub">A session is one hour: four games of 15 minutes. Click a game to add it, ✕&nbsp;to&nbsp;take one out.</div>
   <div class="plan-blocks" id="plan-blocks"></div>
+  <!-- the hour under the bar: the four slots end at 15, 30, 45 and 60 minutes -->
+  <div class="hour-scale" aria-hidden="true"><span>0 min</span><span>15</span><span>30</span><span>45</span><span>60 min</span></div>
   <div class="plan-foot"><div class="plan-total" id="plan-total"></div></div>
   <div class="plan-picks" id="plan-picks"></div>
+  <!-- pinned to the bottom of the screen, so Save is always in view -->
   <div class="plan-actions">
-    <button class="btn" id="btn-plan-save" data-dwell="1">Save plan</button>
-    <button class="btn ghost-light" id="btn-plan-skip" data-dwell="1">Skip for now</button>
+    <button class="btn big" id="btn-plan-save" data-dwell="1">Save plan</button>
+    <button class="btn big ghost-light" id="btn-plan-skip" data-dwell="1">Skip for now</button>
   </div>
 </div>
 
@@ -355,7 +353,6 @@
     <div class="prof-actions">
       <button class="btn" id="btn-prof-session">Start session</button>
       <button class="btn ghost" id="btn-prof-assess">Re-measure this arm</button>
-      <button class="btn ghost" id="btn-prof-plan">Session plan</button>
       <button class="btn ghost" id="btn-prof-export">Export data</button>
     </div>
   </div>
@@ -378,6 +375,9 @@
   </label>
   <label>Shoulder width (cm)
     <input type="number" id="in-shoulder" min="20" max="70" step="0.5" placeholder="tape-measure once, e.g. 38">
+  </label>
+  <label>TV edges
+    <select id="in-tv-safe"><option value="0">Full screen</option><option value="1">Keep 5% in from the edges (the TV cuts them off)</option></select>
   </label>
   <label>Assessment style
     <select id="in-assess-style"><option value="figure">Drawn figure: two circles, then a lift</option><option value="video">Instruction video</option></select>
@@ -522,7 +522,7 @@
   <div id="mailstate">Mail: checking</div>
   <div class="row"><button class="btn ghost-light" id="btn-mail-test">Send test email</button><button class="btn ghost-light" id="btn-mail-help">Report a problem</button></div>
   <div class="row"><button class="btn ghost-light" id="btn-mail-progress">Email progress</button></div>
-  <div class="row"><button class="btn" id="btn-drawer-assess">Re-measure this arm</button><button class="btn ghost-light" id="btn-drawer-plan">Session plan</button></div>
+  <div class="row"><button class="btn" id="btn-drawer-assess">Re-measure this arm</button></div>
   <div class="row"><button class="btn ghost-light" id="btn-drawer-intro" title="The welcome video with the coach's voice (not during a round)">Play the intro</button></div>
   <div class="row"><button class="btn ghost-light" id="btn-drawer-profile">Profile</button></div>
   <div class="row"><button class="btn ghost-light" id="btn-drawer-close">Close</button></div>
@@ -538,6 +538,6 @@
 <div id="loading" class="hidden"><div class="loading-card"><div class="spinner"></div><div id="loading-text">Waking up the camera&hellip;</div>
   <div id="loading-error" class="hidden"><button class="btn big" id="btn-loading-retry">Try again</button><button class="btn big ghost-light" id="btn-loading-continue">Continue without the camera</button></div></div></div>
 
-<script type="module" src="js/main.js?v=99"></script>
+<script type="module" src="js/main.js?v=110"></script>
 </body>
 </html>

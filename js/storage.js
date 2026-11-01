@@ -123,6 +123,19 @@ export const store = {
     save(db);
   },
   playtime(name) { return patient(load(), name).playtime || {}; },
+  // Repetitions per LOCAL day (1 Nov 2026, by request; js/reps.js): the
+  // reps that reached the patient's HIT share of range, and every attempt
+  // (a movement out of rest and back, reaching it or not), banked in batches
+  logReps(name, reps, attempts) {
+    if (!(attempts > 0)) return;
+    const db = load(); const p = patient(db, name);
+    p.playtime ??= {};
+    const d = new Date(), key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const e = p.playtime[key] ??= { ms: 0, rounds: 0, assessments: 0 };
+    e.reps = (e.reps || 0) + reps;
+    e.repAttempts = (e.repAttempts || 0) + attempts;
+    save(db);
+  },
 
   // The lantern street (village.js): every lantern ever lit in the Lantern
   // game, per LOCAL day. Strictly additive: nothing here is ever decreased.

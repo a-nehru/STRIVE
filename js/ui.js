@@ -8,8 +8,50 @@
 // there.
 import { C, ACCENTS, alpha, font, tsize, calm, ease } from "./theme.js";
 
-export const u = c => c.height / 1080;
+// Fitting any screen (31 Oct 2026, by request: a phone held upright showed the
+// landscape layout running off both sides): the unit follows the height on any
+// landscape screen (unchanged down to about 0.93:1), and the width on a
+// portrait one (a phone, a tablet held upright), so nothing sized in u can be
+// wider than the screen allows. uH is the height the type scale is read at.
+export const u = c => Math.min(c.height / 1080, c.width / 1000);
+export const uH = c => u(c) * 1080;
 const clamp01 = v => Math.max(0, Math.min(1, v));
+
+// The DOM chrome (the gear, Help, the Today pill, the close cross) is a row
+// along the top. On a wide screen its middle is free and the canvas's top band
+// (the clock, the game's number on either side, a tutorial's Skip) sits
+// between its ends; on a narrow one the row runs across that middle, so the
+// band starts under it. topInset(c) is how far down, in canvas pixels (the
+// canvas is 1:1 with CSS pixels), 0 when the middle is free. It is measured
+// from the chrome itself, once a second, since the Today pill's width follows
+// its words and the patient's text size.
+const CHROME_IDS = ["btn-staff", "btn-help", "today-pill", "btn-quit"];
+let insetAt = -1e9, insetVal = 0, insetW = 0, chromeBot = 72;
+export function topInset(c) {
+  const now = performance.now();
+  if (now - insetAt < 1000 && insetW === c.width) return insetVal;
+  insetAt = now; insetW = c.width;
+  const k = u(c), mid = c.width / 2, half = Math.min(400 * k, c.width * 0.24) / 2 + 150 * k;
+  let lo = 0, hi = c.width, bottom = 0;
+  // in the canvas's own pixels (the TV edges setting draws the page scaled)
+  const cr = c.getBoundingClientRect?.() ?? { left: 0, top: 0, width: c.width }, sx = c.width / (cr.width || c.width);
+  for (const id of CHROME_IDS) {
+    const el = document.getElementById(id);
+    if (!el || !el.getClientRects().length) continue;
+    const q = el.getBoundingClientRect();
+    const r = { left: (q.left - cr.left) * sx, right: (q.right - cr.left) * sx, top: (q.top - cr.top) * sx, bottom: (q.bottom - cr.top) * sx, width: q.width };
+    if (!r.width || r.top > 120) continue;
+    bottom = Math.max(bottom, r.bottom);
+    if (r.right <= mid) lo = Math.max(lo, r.right);
+    else if (r.left >= mid) hi = Math.min(hi, r.left);
+    else { lo = mid; hi = mid; }
+  }
+  chromeBot = bottom || 72;
+  insetVal = lo > mid - half || hi < mid + half ? bottom + 10 : 0;
+  return insetVal;
+}
+// the chrome row's bottom edge, for a layout whose sides reach up into its corners
+export function chromeBottom(c) { topInset(c); return chromeBot; }
 
 // ---- images (Kenney, CC0, assets/kenney/) --------------------------------
 const IMG = new Map();
@@ -62,21 +104,21 @@ export function card(ctx, x, y, w, h, r, night) {
 
 // ---- layout ---------------------------------------------------------------
 export function layout(c) {
-  const k = u(c), W = c.width;
-  const barW = Math.min(400 * k, W * 0.24);
+  const k = u(c), W = c.width, inset = topInset(c);
+  const barW = Math.min(400 * k, W * 0.24), y = inset ? inset + 4 * k : 60 * k;
   return {
-    k,
-    clock: { x: W / 2 - barW / 2, y: 60 * k, w: barW, h: 22 * k },
-    counterRight: { x: W / 2 + barW / 2 + 34 * k, y: 104 * k },
-    counterLeft: { x: W / 2 - barW / 2 - 34 * k, y: 104 * k },
-    top: 180 * k,                         // play area starts under the band
+    k, inset,
+    clock: { x: W / 2 - barW / 2, y, w: barW, h: 22 * k },
+    counterRight: { x: W / 2 + barW / 2 + 34 * k, y: y + 44 * k },
+    counterLeft: { x: W / 2 - barW / 2 - 34 * k, y: y + 44 * k },
+    top: y + 120 * k,                     // play area starts under the band
   };
 }
 // the coach dock: a card in the bottom corner AWAY from the trained arm (the
 // mirror puts the right arm on the right of the screen), so it never sits in
 // the reaching arm's space (framework P5)
 export function dockRect(c, side, opts = {}) {
-  const k = u(c), h = (opts.h ?? 150) * k;
+  const k = u(c), h = (opts.h ?? 185) * k;          // 150 until 31 Oct 2026: bigger for a TV across the room
   const w = opts.compact ? h * 0.95 : h * 2.25;
   const left = opts.corner ? opts.corner === "left" : side !== "left";
   return { x: left ? 34 * k : c.width - 34 * k - w, y: c.height - 34 * k, h, w };
@@ -93,7 +135,7 @@ export function drawClock(ctx, c, frac, opts = {}) {
   if (f > 0) { ctx.fillStyle = a.solid; rrect(ctx, x, y, Math.max(h, w * f), h, h / 2); ctx.fill(); }
   // the seconds as a word only near the end, when they matter
   if (opts.secondsLeft != null && opts.secondsLeft <= 10 && opts.secondsLeft >= 0) {
-    ctx.font = font("small", c.height, { weight: 800 });
+    ctx.font = font("small", uH(c), { weight: 800 });
     ctx.textAlign = "center"; ctx.textBaseline = "top";
     ctx.fillStyle = night ? C.onNight : C.ink2;
     ctx.fillText(opts.word || `${Math.ceil(opts.secondsLeft)} s`, c.width / 2, y + h + 12 * L.k);
@@ -110,10 +152,10 @@ export function drawCounter(ctx, c, value, label, opts = {}) {
   ctx.save();
   ctx.textAlign = left ? "right" : "left"; ctx.textBaseline = "alphabetic";
   ctx.fillStyle = col;
-  ctx.font = font("title", c.height);
+  ctx.font = font("title", uH(c));
   ctx.fillText(String(value), p.x, p.y);
   if (label) {
-    ctx.font = font("small", c.height, { weight: 800 });
+    ctx.font = font("small", uH(c), { weight: 800 });
     ctx.fillStyle = opts.labelColor || (night ? C.onNight2 : col);
     ctx.fillText(label, p.x, p.y + 40 * L.k);
   }
@@ -133,7 +175,7 @@ export function drawCountdown(ctx, c, label, frac, opts = {}) {
   ctx.beginPath(); ctx.arc(cx, cy, R, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * clamp01(frac)); ctx.stroke();
   ctx.translate(cx, cy); ctx.scale(pop, pop);
   ctx.fillStyle = night ? a.light : a.deep;
-  ctx.font = font("hero", c.height, { size: Math.round(170 * k) });
+  ctx.font = font("hero", uH(c), { size: Math.round(170 * k) });
   ctx.textAlign = "center"; ctx.textBaseline = "middle";
   ctx.fillText(String(label), 0, 8 * k);
   ctx.restore();
@@ -147,7 +189,7 @@ export function drawEndWord(ctx, c, word, sinceMs, opts = {}) {
   ctx.save();
   ctx.globalAlpha = calm() ? clamp01(sinceMs / 280) : clamp01(t * 3);
   ctx.translate(c.width / 2, opts.y ?? c.height * 0.46); ctx.scale(s, s);
-  ctx.font = font("display", c.height, { size: Math.round((opts.size ?? 150) * k) });
+  ctx.font = font("display", uH(c), { size: Math.round((opts.size ?? 150) * k) });
   ctx.textAlign = "center"; ctx.textBaseline = "middle";
   ctx.fillStyle = opts.color || (night ? C.onNight : C.ink);
   ctx.fillText(word, 0, 0);
@@ -159,16 +201,16 @@ export function drawVeil(ctx, c, title, sub) {
   const k = u(c);
   ctx.save();
   ctx.fillStyle = "rgba(20,23,42,0.55)"; ctx.fillRect(0, 0, c.width, c.height);
-  ctx.font = font("title", c.height);
+  ctx.font = font("title", uH(c));
   const tw = ctx.measureText(title).width;
-  ctx.font = font("body", c.height);
+  ctx.font = font("body", uH(c));
   const sw = sub ? ctx.measureText(sub).width : 0;
   const w = Math.max(tw, sw) + 120 * k, h = (sub ? 220 : 150) * k;
   card(ctx, c.width / 2 - w / 2, c.height / 2 - h / 2, w, h, 32 * k, false);
   ctx.textAlign = "center"; ctx.textBaseline = "middle";
-  ctx.fillStyle = C.ink; ctx.font = font("title", c.height);
+  ctx.fillStyle = C.ink; ctx.font = font("title", uH(c));
   ctx.fillText(title, c.width / 2, c.height / 2 - (sub ? 34 * k : 0));
-  if (sub) { ctx.fillStyle = C.ink2; ctx.font = font("body", c.height); ctx.fillText(sub, c.width / 2, c.height / 2 + 44 * k); }
+  if (sub) { ctx.fillStyle = C.ink2; ctx.font = font("body", uH(c)); ctx.fillText(sub, c.width / 2, c.height / 2 + 44 * k); }
   ctx.restore();
 }
 

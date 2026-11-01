@@ -46,7 +46,7 @@ import { GameBase, TAU, CENTER, drawHand } from "./engine.js";
 import { audio } from "./audio.js";
 import { A11Y, hushVoice } from "./a11y.js";
 import { ACCENTS, alpha } from "./theme.js";
-import { drawClock, rrect, u as uu, Confetti } from "./ui.js";
+import { drawClock, rrect, u as uu, topInset, chromeBottom, dockRect, Confetti } from "./ui.js";
 
 // ---- the physics engine: Matter.js 0.19.0 (MIT), js/vendor/matter.min.js,
 // a classic script (it is UMD), loaded once when this module is first used
@@ -715,10 +715,10 @@ export class CozyFruit extends GameBase {
   // (outward) side, its centre at the rail's height; lx is its centre in the
   // board's logical units, the outward end of the hand's lane
   _nextCard(L) {
-    const s = L.colW / 300, outRight = this.side !== "left";
+    const s = L.ps ?? L.colW / 300, outRight = this.side !== "left";
     const x = outRight ? L.rightX : L.leftX, w = L.colW, h = 210 * s;
-    const railY = L.oy + HOLD_Y * L.S;
-    const bx = x + w * (outRight ? 0.38 : 0.62), by = railY, br = 62 * s;
+    const railY = L.oy + HOLD_Y * L.S, f = L.portrait ? 0.36 : 0.38;
+    const bx = x + w * (outRight ? f : 1 - f), by = railY, br = 62 * s;
     return { x, y: railY - 105 * s, w, h, s, bx, by, br, outRight, lx: (bx - L.ox) / L.S, lr: br / L.S };
   }
   // where the hand's lane runs, in board units: from the box's far wall out to the bubble
@@ -1056,7 +1056,7 @@ export class CozyFruit extends GameBase {
   // the Skip pill at the top centre, where the clock goes once the level
   // starts; and, while reaching or carrying, arrows along the rail showing the way
   _tutDrawChrome(ctx, c, L, now) {
-    const t = this.tut, k = L.k, h = 58 * k, label = "Skip";
+    const t = this.tut, k = L.portrait ? Math.max(L.k, 0.62) : L.k, h = L.skipH ?? 58 * k, label = "Skip";
     ctx.save();
     if (now >= t.pauseUntil && (t.step === "pick" || t.step === "carry" || ((t.step === "match" || t.step === "evolve") && !this.holding))) {
       const nc = this._nextCard(L), railY = L.oy + HOLD_Y * L.S;
@@ -1071,7 +1071,7 @@ export class CozyFruit extends GameBase {
       }
     }
     ctx.font = `800 ${Math.round(30 * k)}px Nunito, system-ui, sans-serif`;
-    const w = ctx.measureText(label).width + 64 * k + 70 * k, x = c.width / 2 - w / 2, y = 24 * k;
+    const w = ctx.measureText(label).width + 64 * k + 70 * k, x = c.width / 2 - w / 2, y = L.skipY ?? (topInset(c) || 24 * k);
     ctx.shadowColor = "rgba(30,34,53,0.14)"; ctx.shadowBlur = 18 * k; ctx.shadowOffsetY = 6 * k;
     ctx.fillStyle = "#FFFFFF"; rrect(ctx, x, y, w, h, h / 2); ctx.fill();
     ctx.shadowColor = "transparent";
@@ -1089,13 +1089,49 @@ export class CozyFruit extends GameBase {
   // ---- layout: the board in the middle, the mockup's side panels ----
   _lay(c) {
     const k = uu(c), Wc = c.width, Hc = c.height;
-    // the floor stays above the spoken-line bar (#cue, bottom centre on every screen)
-    const top = 116 * k, bottom = Hc - 112 * k;
-    const S = Math.min((bottom - top) / H, (Wc * 0.42) / W);
-    const bw = W * S, bh = H * S;
-    const ox = (Wc - bw) / 2, oy = bottom - bh;
-    const colW = Math.max(160 * k, Math.min(300 * k, ox - 70 * k));
-    return { k, S, ox, oy, bw, bh, colW, leftX: ox - 40 * k - colW, rightX: ox + bw + 40 * k };
+    if (Wc < Hc * 0.9) return this._layPortrait(c, k);
+    // the floor stays above the spoken-line bar (#cue, bottom centre on every
+    // screen; two lines of its TV size, 39 px at 1080, since 31 Oct 2026).
+    // The top keeps under the Skip pill when the band is moved under the
+    // chrome (ui.topInset), and the Next card, whose top sits above the rail,
+    // keeps under the chrome's row, which can reach over the side columns on
+    // a smaller screen (a 720p TV, a phone held sideways)
+    const inset = topInset(c), cb = chromeBottom(c) + 8, bottom = Hc - 165 * k;
+    let top = Math.max(116 * k, inset ? inset + 58 * k + 8 : 0), L;
+    for (let i = 0; i < 3; i++) {
+      const S = Math.max(0.1, Math.min((bottom - top) / H, (Wc * 0.42) / W));
+      const bw = W * S, bh = H * S;
+      const ox = (Wc - bw) / 2, oy = bottom - bh;
+      // the side panels: up to 340 u wide (300 until 31 Oct 2026; read from a TV across the room)
+      const colW = Math.max(160 * k, Math.min(340 * k, ox - 70 * k));
+      L = { k, S, ox, oy, bw, bh, colW, leftX: ox - 40 * k - colW, rightX: ox + bw + 40 * k, panelTop: Math.max(150 * k, cb) };
+      const nextTop = oy + HOLD_Y * S - 105 * colW / 300;
+      if (nextTop >= cb - 0.5) break;
+      top += cb - nextTop;
+    }
+    return L;
+  }
+  // A screen held upright (31 Oct 2026, by request: on a phone the side
+  // panels ran off both edges): the goal, the score and the shake in a row
+  // along the top, the box toward the untrained side, and one column on the
+  // trained side with the Next card level with the rail (the pick-up stays a
+  // reach outward) and the evolution ring under it. p is one pixel of a
+  // 390 x 700 phone; the floor stays above the posture card's corner.
+  _layPortrait(c, k) {
+    const Wc = c.width, Hc = c.height, p = Math.min(Wc / 390, Hc / 700, 2);
+    const m = 12 * p, gap = 10 * p, inset = topInset(c);
+    const skipY = inset || 24 * k, skipH = Math.max(58 * k, 38);
+    const stripY = skipY + skipH + 10 * p, stripH = 96 * p;
+    const top = stripY + stripH + gap, bottom = Hc - 219 * k - 6 * p;   // above the posture card (ui.dockRect: 185 u + 34)
+    const colW = Math.max(96 * p, Math.min(150 * p, Wc * 0.29));
+    // (the Next card reaches 105 ps above the rail, which is HOLD_Y below the board's top)
+    const S = Math.max(0.1, Math.min((bottom - top) / H, (Wc - 2 * m - gap - colW) / W, (bottom - top - 105 * colW / 190) / (H - HOLD_Y)));
+    const bw = W * S, bh = H * S, outR = this.side !== "left";
+    const x0 = (Wc - bw - gap - colW) / 2;
+    const ox = outR ? x0 : x0 + colW + gap, oy = bottom - bh;
+    const colX = outR ? ox + bw + gap : ox - gap - colW;
+    return { k, S, ox, oy, bw, bh, colW, leftX: colX, rightX: colX, portrait: true, p, m, skipY, skipH, stripY, stripH,
+      ps: colW / 190, rs: colW / 290 };
   }
   // the picture set in use: glossy (local file) > Fluent (the repo's) > drawn; T cycles
   _artStyle() {
@@ -1371,7 +1407,7 @@ export class CozyFruit extends GameBase {
     ctx.restore();
   }
   _label(ctx, text, x, y, k, align = "center") {
-    ctx.save(); ctx.font = `600 ${Math.round(17 * k)}px ${FONT}`; ctx.fillStyle = alpha(PALETTE.ink, 0.75);
+    ctx.save(); ctx.font = `700 ${Math.round(21 * k)}px ${FONT}`; ctx.fillStyle = alpha(PALETTE.ink, 0.75);
     ctx.textAlign = align; ctx.textBaseline = "alphabetic";
     if (ctx.letterSpacing !== undefined) ctx.letterSpacing = `${(1.4 * k).toFixed(1)}px`;
     ctx.fillText(text.toUpperCase(), x, y); ctx.restore();
@@ -1383,20 +1419,22 @@ export class CozyFruit extends GameBase {
     const lv = this.LV;
     ctx.save();
     ctx.textBaseline = "alphabetic";
+    let y = L.panelTop ?? 150 * k;
+    if (L.portrait) this._drawStrip(ctx, c, L, now);
+    else {
     // the goal card, the score, the shake
-    let y = 150 * k;
     const gh = 290 * s;
     this._card(ctx, lx, y, cw, gh, 26 * k, k);
     // the level chip: ink on the coral (white on it fails contrast)
-    ctx.font = `700 ${Math.round(22 * s)}px ${FONT}`;
+    ctx.font = `700 ${Math.round(24 * s)}px ${FONT}`;
     const chip = `Level ${lv.n}`, chw = ctx.measureText(chip).width + 30 * s;
     ctx.fillStyle = PALETTE.accent; rrect(ctx, lx + cw / 2 - chw / 2, y + 18 * s, chw, 36 * s, 18 * s); ctx.fill();
     ctx.fillStyle = ACCENTS.fruit.on; ctx.textAlign = "center"; ctx.fillText(chip, lx + cw / 2, y + 44 * s);
     this._icon(ctx, lv.goal, lx + cw / 2, y + 120 * s, 92 * s);
     ctx.fillStyle = PALETTE.ink; ctx.font = `700 ${Math.round(28 * s)}px ${FONT}`;
     ctx.fillText(goalPhrase(lv), lx + cw / 2, y + 205 * s);
-    ctx.font = `600 ${Math.round(22 * s)}px ${FONT}`; ctx.fillStyle = alpha(PALETTE.ink, 0.8);
-    ctx.fillText(`${Math.min(this.made, lv.count)} of ${lv.count}`, lx + cw / 2, y + 238 * s);
+    ctx.font = `700 ${Math.round(26 * s)}px ${FONT}`; ctx.fillStyle = alpha(PALETTE.ink, 0.8);
+    ctx.fillText(`${Math.min(this.made, lv.count)} of ${lv.count}`, lx + cw / 2, y + 240 * s);
     // the stars earned so far: both sides of the box lights one at any time;
     // the goal and the steady box light theirs when the level is done
     const st = this._liveStars();
@@ -1411,30 +1449,10 @@ export class CozyFruit extends GameBase {
     ctx.fillText(String(this.score), lx + cw / 2, y + 84 * s);
     y += sh + 34 * k;
     // the shake tool: a round button with its meter, the charges and how to call it
-    const tr = 52 * s, tx = lx + cw / 2, ty = y + tr;
-    ctx.save();
-    ctx.fillStyle = PALETTE.edge; ctx.beginPath(); ctx.arc(tx, ty + 4 * k, tr, 0, TAU); ctx.fill();
-    ctx.fillStyle = this.shakeMode ? PALETTE.accent : PALETTE.card; ctx.beginPath(); ctx.arc(tx, ty, tr, 0, TAU); ctx.fill();
-    ctx.lineCap = "round"; ctx.lineWidth = 7 * s;
-    ctx.strokeStyle = "#f3e1d2"; ctx.beginPath(); ctx.arc(tx, ty, tr + 9 * s, 0, TAU); ctx.stroke();
-    const mf = this.shakes >= 3 ? 1 : Math.min(1, this.meter / 100);
-    if (mf > 0) { ctx.strokeStyle = "#7cc65a"; ctx.beginPath(); ctx.arc(tx, ty, tr + 9 * s, -Math.PI / 2, -Math.PI / 2 + TAU * mf); ctx.stroke(); }
-    // ready: a soft glow, and the raise's progress as a second ring
-    if (this.shakes > 0 && !this.shakeMode && !A11Y.calm) { ctx.strokeStyle = `rgba(124,198,90,${.25 + .2 * Math.sin(now / 300)})`; ctx.lineWidth = 9 * s; ctx.beginPath(); ctx.arc(tx, ty, tr + 20 * s, 0, TAU); ctx.stroke(); }
-    if (this.raiseAcc > 0) { ctx.strokeStyle = PALETTE.accent; ctx.lineWidth = 7 * s; ctx.beginPath(); ctx.arc(tx, ty, tr + 20 * s, -Math.PI / 2, -Math.PI / 2 + TAU * Math.min(1, this.raiseAcc / FRUIT_RAISE_MS)); ctx.stroke(); }
-    ctx.strokeStyle = this.shakeMode ? "#3d2a24" : (this.shakes ? PALETTE.ink : alpha(PALETTE.ink, 0.3)); ctx.lineWidth = 5 * s;
-    for (const dy of [-12, 12]) {
-      ctx.beginPath();
-      for (let q = 0; q <= 24; q++) { const xx = tx - 28 * s + q * 56 * s / 24, yy = ty + dy * s + Math.sin(q / 24 * TAU * 1.5) * 6 * s; q ? ctx.lineTo(xx, yy) : ctx.moveTo(xx, yy); }
-      ctx.stroke();
+    const tr = 52 * s;
+    this._drawShakeTool(ctx, lx + cw / 2, y + tr, tr, s, k, now,
+      this.shakeMode ? "Shaking!" : this.shakes ? "Raise your hand to shake" : "Shake", 24 * s, 46 * s);
     }
-    ctx.fillStyle = this.shakes ? PALETTE.accent : "#d9c3b0";
-    ctx.beginPath(); ctx.arc(tx + tr * .78, ty - tr * .78, 17 * s, 0, TAU); ctx.fill();
-    ctx.fillStyle = ACCENTS.fruit.on; ctx.font = `700 ${Math.round(20 * s)}px ${FONT}`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.fillText(String(this.shakes), tx + tr * .78, ty - tr * .78 + 1);
-    ctx.textBaseline = "alphabetic"; ctx.fillStyle = PALETTE.ink; ctx.font = `600 ${Math.round(20 * s)}px ${FONT}`;
-    ctx.fillText(this.shakeMode ? "Shaking!" : this.shakes ? "Raise your hand to shake" : "Shake", tx, ty + tr + 44 * s);
-    ctx.restore();
 
     // NEXT: the bubble where each fruit waits to be picked up, level with the
     // rail; while the hand is empty it holds the fruit to fetch, pulses, and
@@ -1463,7 +1481,7 @@ export class CozyFruit extends GameBase {
       const s1 = waiting ? this.queue[0] : this.queue[1], s2 = waiting ? this.queue[1] : this.queue[2];
       const bob = waiting && !A11Y.calm ? Math.sin(now / 260) * 3 * s : 0;
       const lift = A11Y.calm ? 0 : pf * 10 * s, grow = 1 + (A11Y.calm ? 0 : pf * 0.12);
-      this._icon(ctx, big, bx, by + bob - lift, 84 * s * grow);
+      this._icon(ctx, big, bx, by + bob - lift, 94 * s * grow);
       if (pf > 0) {
         ctx.save();
         const rr = 50 * s * grow;
@@ -1477,8 +1495,9 @@ export class CozyFruit extends GameBase {
       this._icon(ctx, s1, sx, by - 32 * s, 52 * s);
       this._icon(ctx, s2, sx, by + 30 * s, 40 * s);
     }
-    y = nc.y + nc.h + 26 * k;
-    const rh = cw;
+    y = nc.y + nc.h + (L.portrait ? 10 * L.p : 26 * k);
+    {
+    const s = L.rs ?? cw / 300, rh = cw;
     this._card(ctx, rx, y, cw, rh, 26 * k, k);
     const ccx = rx + cw / 2, ccy = y + rh / 2, R = 104 * s;
     ctx.save(); ctx.setLineDash([2 * s, 11 * s]); ctx.lineCap = "round"; ctx.lineWidth = 5 * s; ctx.strokeStyle = "#f1d6c0";
@@ -1486,7 +1505,7 @@ export class CozyFruit extends GameBase {
     const seenTo = Math.max(this.bestEver, this.biggest, lv.maxDrop, ...this.fruits.map(b => b.fi));
     FRUITS.forEach((f, i) => {
       const a = (i * 360 / FRUITS.length - 90) * Math.PI / 180;
-      const px = ccx + Math.cos(a) * R, py = ccy + Math.sin(a) * R, sz = (34 + i * 4) * s;
+      const px = ccx + Math.cos(a) * R, py = ccy + Math.sin(a) * R, sz = (40 + i * 4) * s;
       if (i === lv.goal) { ctx.save(); ctx.setLineDash([6 * s, 5 * s]); ctx.strokeStyle = PALETTE.accent; ctx.lineWidth = 3 * s; ctx.beginPath(); ctx.arc(px, py, sz * .66, 0, TAU); ctx.stroke(); ctx.restore(); }
       this._icon(ctx, i, px, py, sz, i > seenTo && !this.tut?.ringShow);
     });
@@ -1526,12 +1545,82 @@ export class CozyFruit extends GameBase {
       }
       ctx.restore();
     }
+    }
+    ctx.restore();
+  }
+  // the shake tool at (tx, ty), radius tr: the meter, the charges, the raise's
+  // progress and, under it, how to call it
+  _drawShakeTool(ctx, tx, ty, tr, s, k, now, label, labelPx, labelDy) {
+    ctx.save();
+    ctx.fillStyle = PALETTE.edge; ctx.beginPath(); ctx.arc(tx, ty + 4 * k, tr, 0, TAU); ctx.fill();
+    ctx.fillStyle = this.shakeMode ? PALETTE.accent : PALETTE.card; ctx.beginPath(); ctx.arc(tx, ty, tr, 0, TAU); ctx.fill();
+    ctx.lineCap = "round"; ctx.lineWidth = 7 * s;
+    ctx.strokeStyle = "#f3e1d2"; ctx.beginPath(); ctx.arc(tx, ty, tr + 9 * s, 0, TAU); ctx.stroke();
+    const mf = this.shakes >= 3 ? 1 : Math.min(1, this.meter / 100);
+    if (mf > 0) { ctx.strokeStyle = "#7cc65a"; ctx.beginPath(); ctx.arc(tx, ty, tr + 9 * s, -Math.PI / 2, -Math.PI / 2 + TAU * mf); ctx.stroke(); }
+    // ready: a soft glow, and the raise's progress as a second ring
+    if (this.shakes > 0 && !this.shakeMode && !A11Y.calm) { ctx.strokeStyle = `rgba(124,198,90,${.25 + .2 * Math.sin(now / 300)})`; ctx.lineWidth = 9 * s; ctx.beginPath(); ctx.arc(tx, ty, tr + 20 * s, 0, TAU); ctx.stroke(); }
+    if (this.raiseAcc > 0) { ctx.strokeStyle = PALETTE.accent; ctx.lineWidth = 7 * s; ctx.beginPath(); ctx.arc(tx, ty, tr + 20 * s, -Math.PI / 2, -Math.PI / 2 + TAU * Math.min(1, this.raiseAcc / FRUIT_RAISE_MS)); ctx.stroke(); }
+    ctx.strokeStyle = this.shakeMode ? "#3d2a24" : (this.shakes ? PALETTE.ink : alpha(PALETTE.ink, 0.3)); ctx.lineWidth = 5 * s;
+    for (const dy of [-12, 12]) {
+      ctx.beginPath();
+      for (let q = 0; q <= 24; q++) { const xx = tx - 28 * s + q * 56 * s / 24, yy = ty + dy * s + Math.sin(q / 24 * TAU * 1.5) * 6 * s; q ? ctx.lineTo(xx, yy) : ctx.moveTo(xx, yy); }
+      ctx.stroke();
+    }
+    ctx.fillStyle = this.shakes ? PALETTE.accent : "#d9c3b0";
+    ctx.beginPath(); ctx.arc(tx + tr * .78, ty - tr * .78, 17 * s, 0, TAU); ctx.fill();
+    ctx.fillStyle = ACCENTS.fruit.on; ctx.font = `700 ${Math.round(20 * s)}px ${FONT}`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(String(this.shakes), tx + tr * .78, ty - tr * .78 + 1);
+    ctx.textBaseline = "alphabetic"; ctx.fillStyle = PALETTE.ink; ctx.font = `600 ${Math.round(labelPx)}px ${FONT}`;
+    ctx.fillText(label, tx, ty + tr + labelDy);
+    ctx.restore();
+  }
+  // the screen held upright: the goal, the score and the shake in one row
+  // along the top (the landscape layout's left column, laid on its side)
+  _drawStrip(ctx, c, L, now) {
+    const p = L.p, k = L.k, y = L.stripY, h = L.stripH, lv = this.LV, g = 8 * p;
+    const x0 = L.m, w0 = c.width - 2 * L.m, shW = 84 * p, scW = 80 * p, gw = w0 - shW - scW - 2 * g;
+    ctx.save();
+    ctx.textBaseline = "alphabetic";
+    // the goal: the fruit, and beside it the level, what to make, how many, the stars
+    this._card(ctx, x0, y, gw, h, 20 * p, k);
+    this._icon(ctx, lv.goal, x0 + 32 * p, y + h / 2 + 2 * p, 44 * p);
+    const tx = x0 + 66 * p, tw = gw - 66 * p - 10 * p;
+    ctx.font = `700 ${Math.round(13 * p)}px ${FONT}`;
+    const chip = `Level ${lv.n}`, chw = ctx.measureText(chip).width + 18 * p;
+    ctx.fillStyle = PALETTE.accent; rrect(ctx, tx, y + 10 * p, chw, 22 * p, 11 * p); ctx.fill();
+    ctx.fillStyle = ACCENTS.fruit.on; ctx.textAlign = "center"; ctx.fillText(chip, tx + chw / 2, y + 26 * p);
+    ctx.textAlign = "left"; ctx.fillStyle = PALETTE.ink;
+    const phrase = goalPhrase(lv);
+    let fs = 17 * p;
+    ctx.font = `700 ${Math.round(fs)}px ${FONT}`;
+    const pw = ctx.measureText(phrase).width;
+    if (pw > tw) { fs = Math.max(11 * p, fs * tw / pw); ctx.font = `700 ${Math.round(fs)}px ${FONT}`; }
+    ctx.fillText(phrase, tx, y + 55 * p);
+    ctx.font = `600 ${Math.round(14 * p)}px ${FONT}`; ctx.fillStyle = alpha(PALETTE.ink, 0.8);
+    const cnt = `${Math.min(this.made, lv.count)} of ${lv.count}`;
+    ctx.fillText(cnt, tx, y + 80 * p);
+    const st = this._liveStars(), sx = tx + ctx.measureText(cnt).width + 12 * p;
+    ctx.font = `700 ${Math.round(17 * p)}px ${FONT}`;
+    for (let i = 0; i < 3; i++) { ctx.fillStyle = i < st ? PALETTE.star : PALETTE.starOff; ctx.fillText("★", sx + i * 18 * p, y + 81 * p); }
+    // the score
+    const scx = x0 + gw + g;
+    this._card(ctx, scx, y, scW, h, 20 * p, k);
+    this._label(ctx, "Score", scx + scW / 2, y + 30 * p, 0.75 * p);
+    ctx.fillStyle = PALETTE.ink; ctx.font = `700 ${Math.round(28 * p)}px ${FONT}`; ctx.textAlign = "center";
+    ctx.fillText(String(this.score), scx + scW / 2, y + 70 * p);
+    // the shake
+    const tr = 24 * p;
+    this._drawShakeTool(ctx, scx + scW + g + shW / 2, y + 8 * p + tr, tr, tr / 52, k, now,
+      this.shakeMode ? "Shaking!" : this.shakes ? "Raise to shake" : "Shake", 12 * p, 30 * p);
     ctx.restore();
   }
 
   _drawEndCard(ctx, c, L, now) {
     const won = this.state === "won", since = now - (won ? this.wonAt : this.timeAt);
-    const k = L.k, t = Math.min(1, since / 400), sc = A11Y.calm ? 1 : .85 + .15 * easeOutBack(t);
+    // upright, the card takes most of the width rather than the unit's share of it
+    const k = L.portrait ? Math.min(c.width * 0.92 / 520, c.height / 1080 * 1.4) : L.k;
+    const t = Math.min(1, since / 400), sc = A11Y.calm ? 1 : .85 + .15 * easeOutBack(t);
     const w = 520 * k, h = (won ? 400 : 300) * k, x = c.width / 2 - w / 2, y = c.height / 2 - h / 2;
     ctx.save();
     ctx.fillStyle = `rgba(106,70,54,${.25 * t})`; ctx.fillRect(0, 0, c.width, c.height);
@@ -1560,6 +1649,9 @@ export class CozyFruit extends GameBase {
 
   // Pong's pattern: no arm skeleton over the board, only the hand on the fruit
   _drawArmAndCursor() {}
+  // the posture coach in the bottom corner on the trained arm's side, under
+  // the Next card and the evolution ring (31 Oct 2026, by request, as in Pong)
+  coachDock(c) { return dockRect(c, this.side, { corner: this.side === "left" ? "left" : "right" }); }
 
   extra() {
     const won = this.state === "won";

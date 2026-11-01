@@ -13,7 +13,7 @@
 // fractions of the frame), so they can match the picture; a note and
 // a little shower of light mark each new stretch, and a cheer ends it.
 // Captions are the video's own.
-import { drawBody, drawPersonSlot, TAU } from "./engine.js";
+import { drawBody, drawPersonSlot, PERSON_SLOT, videoFrame, slotRect, TAU } from "./engine.js";
 import { audio } from "./audio.js";
 import { A11Y, speakLine, hushVoice } from "./a11y.js";
 import { C, ACCENTS, alpha } from "./theme.js";
@@ -37,8 +37,10 @@ export const WARMUP_STEPS = [
   { t: 83, name: "Wrist waves. Fingers laced, forward and back." },
   { t: 100, name: "All warmed up. Five stretches done." },
 ];
-// the recording's empty right part: title, demonstrator and captions fill the left 60%
-const WARMUP_PERSON_SLOT = { x0: 0.6, x1: 0.965, y0: 0.08, y1: 0.94 };
+// the recording's empty right part, the demonstrator's box mirrored into it:
+// the same slot and frame as the assessment's since 31 Oct 2026 (engine.js
+// PERSON_SLOT, videoFrame; it was x 0.6-0.965, y 0.08-0.94, under a prompt)
+const WARMUP_PERSON_SLOT = PERSON_SLOT;
 const WARMUP_CROP_SW = 4.4, WARMUP_ZOOM_MAX = 3;   // the person's crop: shoulder widths across, and the most it zooms
 const WARMUP_END_HOLD = 3200;    // ms the cheer stays before what comes next
 
@@ -94,7 +96,8 @@ export class Warmup {
       v.muted = true; this.spoken = true;
       v.play().catch(() => { this.failedAt ??= performance.now(); });
     });
-    this._prompt("A quick stretch", "Follow along, as far as is comfortable");
+    // no words of our own over it: the recording carries each stretch's title
+    // and caption, as the assessment's does
     this._loop();
   }
 
@@ -121,14 +124,10 @@ export class Warmup {
     // a plum progress bar under it
     ctx.fillStyle = C.paper; ctx.fillRect(0, 0, W, H);
 
-    // the video, whole, as large as fits under the prompt
-    const pad = Math.round(W * 0.022);
-    const barH = Math.round(H * 0.014), barGap = Math.round(H * 0.018);
-    const top = Math.round(H * 0.16), bodyH = H - top - pad - barH - barGap;
+    // the video, whole, as large as fits (engine.videoFrame: the assessment's frame)
     const aspect = v?.videoWidth && v?.videoHeight ? v.videoWidth / v.videoHeight : 16 / 9;
-    let boxW = W - pad * 2, boxH = Math.round(boxW / aspect);
-    if (boxH > bodyH) { boxH = bodyH; boxW = Math.round(boxH * aspect); }
-    const bx = Math.round((W - boxW) / 2), by = top + Math.round((bodyH - boxH) / 2);
+    const fr = videoFrame(W, H, aspect), barH = fr.barH;
+    const boxW = fr.w, boxH = fr.h, bx = fr.x, by = fr.y;
     const S = WARMUP_PERSON_SLOT;
     ctx.save();
     ctx.shadowColor = "rgba(30,34,53,0.18)"; ctx.shadowBlur = 28; ctx.shadowOffsetY = 10;
@@ -145,7 +144,7 @@ export class Warmup {
     ctx.restore();
     {
       const f = v && v.duration > 0 ? Math.min(1, v.currentTime / v.duration) : 0;
-      const y = by + boxH + barGap;
+      const y = fr.barY;
       ctx.fillStyle = alpha(AC.solid, 0.18); rrect(ctx, bx, y, boxW, barH, barH / 2); ctx.fill();
       if (f > 0) { ctx.fillStyle = AC.solid; rrect(ctx, bx, y, Math.max(barH, boxW * f), barH, barH / 2); ctx.fill(); }
     }

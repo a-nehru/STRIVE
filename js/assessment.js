@@ -46,7 +46,7 @@
 
 import { Coach } from "./coach.js";
 import { audio } from "./audio.js";
-import { CENTER, drawBody, drawHand, drawVideoMirror, drawPersonSlot } from "./engine.js";
+import { CENTER, drawBody, drawHand, drawVideoMirror, drawPersonSlot, PERSON_SLOT, videoFrame } from "./engine.js";
 import { A11Y, hushVoice, speakLine, voiceBusy } from "./a11y.js";
 import { C, ACCENTS, alpha } from "./theme.js";
 import { img, HAND, rrect, wrapText } from "./ui.js";
@@ -191,8 +191,9 @@ const VIDEO_CROP_MIN = 0.9;              // the most it zooms in when the person
 // "Great job").
 // the same size and height as the demonstrator's own box in the recording
 // (x 0.102-0.498, y 0.191-0.883 of the frame, both arms' files), centred in
-// the empty right half, so the two read as a pair (Oct 2026, by request)
-const VIDEO_PERSON_SLOT = { x0: 0.551, x1: 0.947, y0: 0.191, y1: 0.883 };
+// the empty right half, so the two read as a pair (Oct 2026, by request);
+// shared with the warm-up since 31 Oct 2026 (engine.js PERSON_SLOT)
+const VIDEO_PERSON_SLOT = PERSON_SLOT;
 const VIDEO_END = 62.3;
 // The recording carries her own voice, so it plays with sound and the app
 // keeps quiet. Set false for a silent recording: the app then speaks each
@@ -1505,15 +1506,12 @@ export class Assessment {
     // no instruction box of our own (Oct 2026, by request): the recording
     // carries the move's title, its caption and the arm; the top strip is
     // left for the Help and close buttons
-    const pad = Math.round(W * 0.016);
-    const barH = Math.round(H * 0.014), barGap = Math.round(H * 0.018);
-    const bodyTop = Math.round(H * 0.075), bodyH = H - bodyTop - pad - barH - barGap;
-    // the recording, whole, as large as fits
+    // the recording, whole, as large as fits (engine.videoFrame: the same
+    // frame as the warm-up's)
     const v = this.vid;
     const srcW = v?.videoWidth || 1920, srcH = v?.videoHeight || 1080;
-    let vidW = W - pad * 2, vidH = Math.round(vidW * srcH / srcW);
-    if (vidH > bodyH) { vidH = bodyH; vidW = Math.round(vidH * srcW / srcH); }
-    const vx = Math.round((W - vidW) / 2), vy = bodyTop + Math.round((bodyH - vidH) / 2);
+    const fr = videoFrame(W, H, srcW / srcH), barH = fr.barH;
+    const vx = fr.x, vy = fr.y, vidW = fr.w, vidH = fr.h;
     const S = VIDEO_PERSON_SLOT;
 
     // the recording (mirrored for the other arm only when it has no
@@ -1556,7 +1554,7 @@ export class Assessment {
     // progress under the recording: how far through it is, with a tick
     // where each move begins
     {
-      const y = vy + vidH + barGap;
+      const y = fr.barY;
       ctx.fillStyle = alpha(AC.solid, 0.18);
       rrect(ctx, vx, y, vidW, barH, barH / 2); ctx.fill();
       const f = v && v.duration > 0 ? Math.max(0, Math.min(1, v.currentTime / VIDEO_END)) : 0;
@@ -1577,7 +1575,8 @@ export class Assessment {
       ctx.font = `800 ${fs}px Nunito, sans-serif`;
       const txt = "Finish the move, then we carry on";
       const tw = Math.min(panel.w - 24, ctx.measureText(txt).width + fs * 1.6), th = fs * 2;
-      const tx = panel.x + (panel.w - tw) / 2, ty = panel.y + panel.h - th - 14;
+      // at the top of the picture: the posture figure has its bottom corner
+      const tx = panel.x + (panel.w - tw) / 2, ty = panel.y + 14;
       ctx.fillStyle = C.card;
       ctx.beginPath(); ctx.roundRect(tx, ty, tw, th, th / 2); ctx.fill();
       ctx.strokeStyle = AC.solid; ctx.lineWidth = 3; ctx.stroke();

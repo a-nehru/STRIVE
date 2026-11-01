@@ -1,14 +1,14 @@
 import { Tracker } from "./tracker.js?v=73";
 import { Assessment } from "./assessment.js";
 import { FRUIT_MAX, fruitChapters } from "./fruit.js";
-import { GAMES, STAR_RANKS, PONG_LEVEL_MAX, CANDLE_MAX, LUMEN_STAGES, WINDY_MAX, PAIR_MAX, windyLabel, windyStageOf, windySubOf, windyPips } from "./games.js";
+import { GAMES, STAR_RANKS, PONG_LEVEL_MAX, PONG_LEVEL_LOOKS, CANDLE_MAX, LUMEN_STAGES, WINDY_MAX, PAIR_MAX, windyLabel, windyStageOf, windySubOf, windyPips } from "./games.js";
 import { Warmup } from "./warmup.js";
 import { probeLauncher, launcherInfo, backupNow, listBackups, restoreBackup, backupState, startAutoBackup } from "./backup.js";
 import { SONGS } from "./songs.js";
 import { initialParams, adjust, LIMITS } from "./dda.js";
 import { drawBody, drawVideoMirror } from "./engine.js";
 import { store } from "./storage.js";
-import { drawVillage, villageCounts } from "./village.js";
+import { RepCounter } from "./reps.js";
 import { audio } from "./audio.js";
 import { A11Y, applySettings, speakLine, showCaption, hushVoice, COACHES } from "./a11y.js";
 import { coachLine, phrasebookLines } from "./coachlines.js";
@@ -102,10 +102,18 @@ function show(id) {
   $(id).classList.remove("hidden");
   state.screen = id;
   if (id === "screen-welcome") state.warmedUp = false;   // a fresh session may stretch again
-  // the floating Help follows the stage and the result screens; the welcome
-  // and the menu carry their own inline buttons instead
-  $("btn-help").classList.toggle("hidden", ["screen-login", "screen-welcome", "screen-intro", "screen-select", "screen-schedule"].includes(id));
+  syncHelp();
   updateTodayPill();
+}
+// the floating Help follows the stage and the result screens; the welcome
+// and the hub carry their own inline buttons instead. The hub's sub-screens
+// (a level map, the two-player setup, the board) hide that footer and show
+// this one (1 Nov 2026 clean-up).
+function syncHelp() {
+  const id = state.screen;
+  const own = ["screen-login", "screen-welcome", "screen-intro", "screen-schedule"].includes(id)
+    || (id === "screen-select" && !$("screen-select").classList.contains("sub"));
+  $("btn-help").classList.toggle("hidden", own);
 }
 
 // what is on the stage, for the stylesheet: the words over a game sit under
@@ -363,10 +371,13 @@ function finishLogin(name, isNew, arm) {
   Warmup.preload(arm);                    // the stretch recording for this arm, fetched now
   if ((localStorage.getItem("strive-assess-style") || "video") === "video") Assessment.preload(arm);   // and the assessment's
   if (isNew && name !== "guest") {
-    playIntro(() => { show("screen-welcome"); speak(`Nice to meet you, ${name}. ` + coachLine("session_start")); });
+    // the session plan is made as part of creating the profile (1 Nov 2026,
+    // by request): after the name and the arm, saved (no Skip here), then the intro
+    renderSchedule(() => playIntro(() => { show("screen-welcome"); speak(`${goodTime()}, ${name}. Nice to meet you. ` + coachLine("session_start")); }), { setup: true });
   } else {
     show("screen-welcome");
-    if (name !== "guest") speak(`Welcome back, ${name}. ` + coachLine("session_start"));
+    // the hello by the time of day (1 Nov 2026, by request)
+    speak(name !== "guest" ? `${goodTime()}, ${name}. Welcome back. ` + coachLine("session_start") : `${goodTime()}.`);
   }
   notifyLogin(name, arm);
   syncReminder(name);
@@ -408,13 +419,16 @@ function loginOrPickCoach(name, isNew) {
 function createLogin() {
   const name = $("login-name").value.trim();
   if (!name) { $("login-name").focus(); return; }
+  // new or not is read BEFORE the contact is saved: setContact creates the
+  // record, and a new participant who gave an email then missed the intro
+  const isNew = !store.hasPatient(name);
   // optional contact and reminder, asked once here; the staff drawer can change it
   const email = $("login-email").value.trim();
   const remindAt = $("login-remind-time").value, remindDays = $("login-remind-days").value;
   if (email || remindDays !== "off") store.setContact(name, { email, remindAt, remindDays });
   // an existing name logs in (choosing a coach first if it never did); a
   // new participant chooses the coach, then the arm, then sees the intro
-  loginOrPickCoach(name, !store.hasPatient(name));
+  loginOrPickCoach(name, isNew);
 }
 
 // the progress snapshot the relay answers update-by-email from: pushed at
@@ -515,13 +529,16 @@ const TAU2 = Math.PI * 2;
 // the welcome screen carries it in its headline and waits to be settled.
 const CAMERA_SCREENS = { "screen-login": "login-canvas", "screen-welcome": "welcome-canvas" };
 function watchWelcome() {
-  let framedSince = null, squeezeSeen = false;
+  let framedSince = null;
   let lastSpoken = "", lastSpokenAt = 0, inviteSaid = false;
   // spoken framing guidance, throttled so it never nags
   const guide = (text, now) => {
     if (text === lastSpoken || now - lastSpokenAt < 7000) return;
     lastSpoken = text; lastSpokenAt = now;
-    speak(text);
+    // no caption: the line is on the welcome card (or under the login card)
+    // already, and a caption left over from it contradicted the card once the
+    // patient was seen (1 Nov 2026 clean-up)
+    speakLine(text, 0.9, false);
   };
   const head = document.querySelector("#screen-welcome .headline");
   const sub = document.querySelector("#screen-welcome .subline");
@@ -537,7 +554,10 @@ function watchWelcome() {
   for (const id of Object.keys(CAMERA_SCREENS)) {
     $(id).addEventListener("click", e => {
       if (e.target.closest("button, a, select, input, .login-card")) return;
-      const hit = personBoxes.find(b => Math.hypot(e.clientX - b.x, e.clientY - b.y) <= b.r + 12);
+      // the click in the canvas's own pixels (the TV edges setting draws it scaled)
+      const cv = $(CAMERA_SCREENS[id]), r = cv.getBoundingClientRect();
+      const x = (e.clientX - r.left) * cv.width / (r.width || 1), y = (e.clientY - r.top) * cv.height / (r.height || 1);
+      const hit = personBoxes.find(b => Math.hypot(x - b.x, y - b.y) <= b.r + 12);
       if (!hit) return;
       pickedAt = performance.now();
       state.tracker?.selectPerson(hit.id, 0, hit.at);
@@ -564,17 +584,16 @@ function watchWelcome() {
     }
     const now = performance.now();
 
-    // tracking + feature status (so staff can see the whole chain is alive)
-    if (t.handClosed("left") || t.handClosed("right")) squeezeSeen = true;
-    const handFresh = t._handPts("left") != null || t._handPts("right") != null;
+    // (the "Tracking: body ✓ · hand ✓ · squeeze ✓" line was taken off the
+    // patient's screen on 1 Nov 2026, clean-up: the drawer's camera line says
+    // it for staff, and the card's headline already asks a patient not yet
+    // seen to sit facing the camera; only the crowd line, which staff act on
+    // by clicking, stays)
     const crowd = (t.people?.length ?? 0) > 1;
     const crowdLine = crowd && now - pickedAt < 4000
       ? "Following the person you clicked"
       : crowd ? `${t.people.length} people in view. Staff: click the patient to follow them` : "";
-    setText(trackEl, crowdLine
-      || (t.trackingOk
-        ? `Tracking: body ✓ · hand ${handFresh ? "✓" : "…"} · squeeze ${squeezeSeen ? "✓" : "… try closing your fist"}`
-        : "Tracking: looking for you …"));
+    setText(trackEl, crowdLine);
 
     const msg = framingMessage(t);
     const framed = !msg;
@@ -931,13 +950,16 @@ const CARD_ART = {
   // the Lantern: a lantern in ink with its window lit, on amber (ink words)
   candles: `<div class="art" data-on="ink" style="background:var(--candles-solid)">
     <svg viewBox="0 0 300 260" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
-      <g transform="translate(212 132) scale(.7)">
-        <path d="M-22 -80 Q0 -108 22 -80" fill="none" stroke="#1E2235" stroke-width="9" stroke-linecap="round"/>
-        <rect x="-30" y="-82" width="60" height="18" rx="8" fill="#1E2235"/>
-        <rect x="-46" y="-64" width="92" height="124" rx="26" fill="#1E2235"/>
-        <rect x="-24" y="-42" width="48" height="80" rx="16" fill="#FFE2A8"/>
-        <path d="M0 22 C-15 8 -10 -10 0 -24 C10 -10 15 8 0 22 Z" fill="#E0952A"/>
-        <rect x="-34" y="60" width="68" height="12" rx="6" fill="#1E2235"/>
+      <g transform="translate(214 146) scale(.6)">
+        <!-- the game's own lantern since 31 Oct 2026: round, ribbed paper with dark caps and a tassel (the box lantern until 1 Nov) -->
+        <line x1="0" y1="-118" x2="0" y2="-86" stroke="#1E2235" stroke-width="6" stroke-linecap="round"/>
+        <ellipse cx="0" cy="-8" rx="64" ry="70" fill="#FFE2A8"/>
+        <ellipse cx="0" cy="-8" rx="42" ry="70" fill="none" stroke="#E0952A" stroke-width="5"/>
+        <ellipse cx="0" cy="-8" rx="17" ry="70" fill="none" stroke="#E0952A" stroke-width="5"/>
+        <rect x="-28" y="-90" width="56" height="18" rx="7" fill="#1E2235"/>
+        <rect x="-28" y="56" width="56" height="18" rx="7" fill="#1E2235"/>
+        <line x1="0" y1="74" x2="0" y2="94" stroke="#1E2235" stroke-width="5"/>
+        <path d="M-10 92 h20 l-4 30 h-12z" fill="#1E2235"/>
       </g>
       <g fill="#1E2235" opacity=".45"><path d="M96 92 l4 10 10 4 -10 4 -4 10 -4 -10 -10 -4 10 -4z"/><path d="M134 66 l3 7 7 3 -7 3 -3 7 -3 -7 -7 -3 7 -3z"/></g>
     </svg></div>`,
@@ -1086,35 +1108,29 @@ const CARD_ART = {
     </svg></div>`,
 };
 
-// The lantern street at the top of the hub (village.js): drawn from the
-// patient's counts, with one line saying what has happened since they were
-// last here. The "seen" snapshot is taken after the line is built, so the
-// next visit compares against this one.
-let villageAnim = 0;
-function renderVillage() {
-  const v = store.getVillage(state.patient);
-  // (the line under the street, "Your street is dark tonight...", went
-  // 26 Oct 2026, by request: it read as an instruction before any game)
-  const c = villageCounts(v);
-  store.markVillageSeen(state.patient, { villagers: c.villagers, clouds: c.clouds, days: Object.keys(v.days || {}) });
-  const cv = $("village-canvas");
-  cancelAnimationFrame(villageAnim);
-  const frame = () => {
-    if ($("screen-select").classList.contains("hidden")) return;
-    drawVillage(cv, v);
-    if (!A11Y.calm) villageAnim = requestAnimationFrame(frame);
-  };
-  // the first frame waits one tick: renderSelect runs before show() makes
-  // the hub visible, and a hidden hub draws nothing (the street stayed blank)
-  villageAnim = requestAnimationFrame(frame);
-}
+// (the lantern street, a night village drawn from the lanterns lit, left
+// the hub 1 Nov 2026, by request; js/village.js and the counts it reads,
+// store.getVillage / addLanterns, are still kept)
 
 // the greeting at the top of the hub, by the time of day
+// by the PC's own clock: morning 5-11, afternoon 12-17, evening from 18 (and
+// the small hours, when "good morning" would sound odd)
+function goodTime(h = new Date().getHours()) {
+  return h >= 5 && h < 12 ? "Good morning" : h >= 12 && h < 18 ? "Good afternoon" : "Good evening";
+}
 function hubGreeting() {
-  const h = new Date().getHours();
-  const g = h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
+  const g = goodTime();
   return state.patient && state.patient !== "guest" ? `${g}, ${state.patient}` : g;
 }
+// the hub's greeting keeps up with the clock while it stays open (a hub left
+// up over noon said "Good morning" into the afternoon)
+setInterval(() => {
+  const scr = $("screen-select");
+  if (state.screen === "screen-select" && !scr.classList.contains("sub")) {
+    const h1 = document.querySelector("#screen-select h1");
+    if (h1.textContent !== hubGreeting()) h1.textContent = hubGreeting();
+  }
+}, 60000);
 // a padlock in ink, drawn (a clinic PC may render no emoji)
 const LOCK_SVG = `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4.5" y="10.5" width="15" height="11" rx="3" fill="currentColor"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></svg>`;
 // the hub's sub-screens (level maps, the two-player setup, the board) reuse
@@ -1123,6 +1139,7 @@ function subView(title) {
   const scr = $("screen-select");
   scr.classList.add("sub");
   scr.scrollTop = 0;
+  syncHelp();
   document.querySelector("#screen-select h1").textContent = title;
 }
 // a pill under a sub-screen's panel: the way on (in the game's colour) or back
@@ -1136,11 +1153,15 @@ function pillBtn(label, sub, onClick, gameId = null) {
   return b;
 }
 
+// the row labels' little figures (hub, 1 Nov 2026 look C)
+const ONE_PERSON_SVG = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="7" r="4.2" fill="currentColor"/><path d="M3.5 22c0-4.8 3.8-8.4 8.5-8.4s8.5 3.6 8.5 8.4z" fill="currentColor"/></svg>`;
+const TWO_PEOPLE_SVG = `<svg class="two" viewBox="0 0 32 24" aria-hidden="true"><circle cx="10" cy="7" r="4" fill="currentColor"/><path d="M2 22c0-4.6 3.6-8 8-8s8 3.4 8 8z" fill="currentColor"/><circle cx="22" cy="7" r="4" fill="currentColor" opacity=".75"/><path d="M14 22c0-4.6 3.6-8 8-8s8 3.4 8 8z" fill="currentColor" opacity=".75"/></svg>`;
+const MENU_ACTIONS = document.querySelector("#screen-select .menu-actions");
 function renderSelect() {
   const wrap = $("cards");
   wrap.innerHTML = "";
   $("screen-select").classList.remove("sub");
-  renderVillage();
+  syncHelp();
   renderToday();
   // each enabled game's next music track starts downloading while the
   // patient chooses, so the round opens on it (audio.js, js/tracks.js)
@@ -1148,6 +1169,15 @@ function renderSelect() {
   document.querySelector("#screen-select h1").textContent = hubGreeting();
   const prof = store.getProfile(state.patient, state.side);
 
+  // the cards in two rows, each under its heading (1 Nov 2026, by request):
+  // single player first, the two-player game on a row of its own
+  const rowHead = (text, icon) => {
+    const h = document.createElement("div");
+    h.className = "cards-row-head";
+    h.innerHTML = `<span class="cat-pill">${icon}${text}</span>`;
+    wrap.appendChild(h);
+  };
+  rowHead("Single player", ONE_PERSON_SVG);
   const mk = (id, name, locked, onClick, trains, lockText = "Measure your reach first") => {
     const b = document.createElement("button");
     b.className = "gcard";
@@ -1177,11 +1207,11 @@ function renderSelect() {
       // down; Abd-Add, the hand out to the side and across, on the lane the
       // assessment measured
       const go = axis => () => { state.pongMode = "solo"; state.pongAxis = axis; $("in-pong").value = "solo"; renderLevelMap("pong"); };
-      gameBtns.pong = mk("pong", "Pong FE", !!gameLock, go("fe"), "Up and down", gameLock);
-      gameBtns["pong-abd"] = mk("pongAbd", "Pong Abd-Add", !!gameLock, go("abd"), "Side to side", gameLock);
-      // and the same game for two (Oct 2026, by request): a tile of its own
-      gameBtns["pong-duo"] = mk("pongDuo", "Pong: two players", !!gameLock,
-        () => { state.pongMode = "duo"; state.pongAxis = "fe"; $("in-pong").value = "duo"; renderDuoSetup(); }, "Play together", gameLock);
+      // (plain names since 1 Nov 2026, by request: the card says "Pong" and
+      // its chip the movement; elsewhere the name is pongName's "Pong: up and
+      // down". A two-line name ran into the card's drawing.)
+      gameBtns.pong = mk("pong", "Pong", !!gameLock, go("fe"), "Up and down", gameLock);
+      gameBtns["pong-abd"] = mk("pongAbd", "Pong", !!gameLock, go("abd"), "Side to side", gameLock);
       continue;
     }
     // the Lantern opens on its level map (Oct 2026, by request: any level
@@ -1189,6 +1219,18 @@ function renderSelect() {
     if (MAP_DEFS[g.id]) { gameBtns[g.id] = mk(g.id, g.name, !!gameLock, () => renderLevelMap(g.id), g.trains, gameLock); continue; }
     gameBtns[g.id] = mk(g.id, g.name, !!gameLock, () => startGame(g.id, true), g.trains, gameLock);
   }
+  // the same Pong for two (Oct 2026, by request), on the two-player row
+  if (GAMES.some(g => g.id === "pong" && !g.disabled)) {
+    rowHead("Two players", TWO_PEOPLE_SVG);
+    gameBtns["pong-duo"] = mk("pongDuo", "Pong: two players", !!gameLock,
+      () => { state.pongMode = "duo"; state.pongAxis = "fe"; $("in-pong").value = "duo"; renderDuoSetup(); }, "Play together", gameLock);
+  }
+  // the board's card and the hub's two small actions (help, email) sit at
+  // the end of the last row, in the room beside the two-player card, rather
+  // than in a row of their own under the fold (1 Nov 2026 clean-up); the
+  // actions' node is kept and moved, so its listeners stay
+  if (state.patient && state.patient !== "guest") wrap.appendChild(renderBoardCard());
+  wrap.appendChild(MENU_ACTIONS);
   // the session plan, if the therapist made one: a strip above the cards
   // with its start button, which is the recommended action once the arm is
   // measured today (the plan's games wait for the measurement like the cards)
@@ -1220,13 +1262,20 @@ function renderSelect() {
 // round" becomes "Next: <game>" and starts the next block fresh; after the
 // last block "Finish for today" is the way on. Finishing early loses
 // nothing: every round is logged as usual.
-const PLAN_BLOCK_MIN = 15, PLAN_MAX_BLOCKS = 6;
+// A session is an hour per person (1 Nov 2026, by request): four blocks
+const PLAN_BLOCK_MIN = 15, PLAN_MAX_BLOCKS = 4, PLAN_SESSION_MIN = PLAN_BLOCK_MIN * PLAN_MAX_BLOCKS;
+// the stored plan, read no further than the hour (a plan saved before the
+// hour rule may hold six blocks; the record keeps them, play stops at four)
+function savedPlan(name) {
+  const plan = store.getSchedule(name);
+  return plan?.blocks?.length ? { ...plan, blocks: plan.blocks.slice(0, PLAN_MAX_BLOCKS) } : plan;
+}
 const PLAN_MINUTES = [5, 10, 15, 20, 30];
 // TODAY (23 Oct 2026, by request): what the day has held so far, for the hub
 // strip and the round card: minutes trained (store.playtime), rounds and
 // stars (the day's round records), rounds per game, and the goal the bar
-// fills towards: the plan's minutes, else DAILY_GOAL_MIN
-const DAILY_GOAL_MIN = 30;
+// fills towards: the plan's minutes, else DAILY_GOAL_MIN (the hour)
+const DAILY_GOAL_MIN = PLAN_SESSION_MIN;
 function localDayKey(d = new Date()) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
 function todayStats(name = state.patient) {
   const key = localDayKey();
@@ -1236,9 +1285,9 @@ function todayStats(name = state.patient) {
   const perGame = {};
   for (const r of rounds) perGame[r.game] = (perGame[r.game] || 0) + 1;
   const stars = rounds.reduce((a, r) => a + (r.stars || 0), 0);
-  const plan = store.getSchedule(name);
+  const plan = savedPlan(name);
   const goal = plan?.blocks?.length ? planMinutes(plan.blocks) : DAILY_GOAL_MIN;
-  return { minutes: Math.round(pt.ms / 60000), seconds: Math.round(pt.ms / 1000), rounds: rounds.length, assessments: pt.assessments || 0, stars, perGame, goal, planned: !!plan?.blocks?.length };
+  return { minutes: Math.round(pt.ms / 60000), seconds: Math.round(pt.ms / 1000), reps: (pt.reps || 0) + (name === state.patient ? repCounter.pending.reps : 0), rounds: rounds.length, assessments: pt.assessments || 0, stars, perGame, goal, planned: !!plan?.blocks?.length };
 }
 // the hub's strip (26 Oct 2026, by request): no other text, just the
 // minutes against the goal, and a flag at the end of the bar saying the
@@ -1248,8 +1297,9 @@ const TODAY_FLAG = `<svg class="today-flag" viewBox="0 0 24 24" aria-hidden="tru
 // minutes alone, big, with the bar beside it)
 function todayHubHTML(t) {
   const f = Math.min(1, t.goal ? t.minutes / t.goal : 0);
-  return `<div class="today-line"><b>${t.minutes}</b> of ${t.goal} minutes</div>`
-    + `<div class="today-track"><div class="today-bar"><div style="width:${Math.round(f * 100)}%"></div></div>${TODAY_FLAG}</div>`;
+  return `<div class="today-line"><span class="tl-k">Today</span><b>${t.minutes}</b> of ${t.goal} minutes</div>`
+    + `<div class="today-track"><div class="today-bar"><div style="width:${Math.round(f * 100)}%"></div></div>${TODAY_FLAG}</div>`
+    + `<div class="today-reps"><b>${t.reps}</b> ${t.reps === 1 ? "rep" : "reps"}</div>`;
 }
 function todayHTML(t, compact = false) {
   const gameName = id => GAMES.find(g => g.id === id)?.name || id;
@@ -1285,9 +1335,35 @@ function updateTodayPill() {
   const t = todayStats();
   const min = Math.floor((t.seconds * 1000 + (_todayStageSince ? Date.now() - _todayStageSince : 0)) / 60000);
   const f = Math.min(1, t.goal ? min / t.goal : 0);
-  el.innerHTML = `<b>Today</b> ${min} of ${t.goal} min<span class="tp-bar"><span style="width:${Math.round(f * 100)}%"></span></span>`;
+  el.innerHTML = `<b>Today</b> ${min} of ${t.goal} min<span class="tp-bar"><span style="width:${Math.round(f * 100)}%"></span></span>`
+    + `<span class="tp-reps"><b>${t.reps}</b> ${t.reps === 1 ? "rep" : "reps"}</span>`;
 }
 setInterval(updateTodayPill, 5000);
+
+// REPS TODAY (1 Nov 2026, by request; js/reps.js): counted every frame
+// while a game, the assessment or the warm-up is on the stage, on the
+// trained arm, banked to the day (store.logReps) every 15 s and on leaving
+// the stage; the pill shows the banked count plus what is not banked yet.
+// Each round's own count goes in its record (round.reps, round.repAttempts).
+const repCounter = new RepCounter();
+let _repOnStage = false, _repFlushAt = 0;
+function flushReps() {
+  _repFlushAt = performance.now();
+  const p = repCounter.take();
+  if (p.attempts && state.patient && state.patient !== "guest") store.logReps(state.patient, p.reps, p.attempts);
+}
+function repLoop() {
+  requestAnimationFrame(repLoop);
+  const onStage = state.screen === "stage" && !!state.patient && state.patient !== "guest";
+  if (onStage && !_repOnStage) repCounter.reset(store.getProfile(state.patient, state.side));
+  if (!onStage && _repOnStage) flushReps();
+  _repOnStage = onStage;
+  if (!onStage) return;
+  const now = performance.now();
+  if (repCounter.tick(state.tracker, state.side, now) === "rep") updateTodayPill();
+  if (now - _repFlushAt > 15000) flushReps();
+}
+requestAnimationFrame(repLoop);
 let planDraft = [], planReturn = null;
 // the levels a block can start a game at (23 Oct 2026, by request): the
 // game's own ladder, or "where they are" (null) to carry on from the banked level
@@ -1305,8 +1381,8 @@ function planChoices() {
   for (const g of GAMES) {
     if (g.disabled) continue;
     if (g.id === "pong") {
-      out.push({ key: "pong", game: "pong", axis: "fe", name: "Pong FE" });
-      out.push({ key: "pong-abd", game: "pong", axis: "abd", name: "Pong Abd-Add" });
+      out.push({ key: "pong", game: "pong", axis: "fe", name: pongName("fe") });
+      out.push({ key: "pong-abd", game: "pong", axis: "abd", name: pongName("abd") });
       continue;
     }
     out.push({ key: g.id, game: g.id, name: g.name });
@@ -1321,16 +1397,21 @@ function planGameName(b) { return GAMES.find(g => g.id === b.game)?.name || plan
 function planMinutes(blocks) { return blocks.reduce((s, b) => s + (b.minutes || PLAN_BLOCK_MIN), 0); }
 
 // open the plan screen; `then` is where Save or Skip goes afterwards.
+// `setup`: the profile is being created and the plan must be saved (no Skip).
 // (24 Oct 2026, by request: every game is one 15-minute block. The therapist
 // clicks a game tile to add it, the session line grows by 15 minutes, ✕ on
 // a block drops it and the line shrinks. No minutes to pick.)
-function renderSchedule(then) {
+function renderSchedule(then, opts = {}) {
   planReturn = then;
-  const saved = store.getSchedule(state.patient);
+  const saved = savedPlan(state.patient);
   planDraft = saved?.blocks?.length
     ? saved.blocks.map(b => ({ game: b.game, axis: b.axis, level: b.level ?? null, minutes: PLAN_BLOCK_MIN }))
     : [];
   drawPlan();
+  // made once at setup (saved, no Skip) and changed from the hub's Edit:
+  // going back keeps it as it was
+  $("btn-plan-skip").textContent = saved?.blocks?.length ? "Back" : "Skip for now";
+  $("btn-plan-skip").classList.toggle("hidden", !!opts.setup);
   show("screen-schedule");
   document.querySelectorAll("#screen-schedule .kbd-focus").forEach(el => el.classList.remove("kbd-focus"));
   focusHint(planDraft.length ? $("btn-plan-save") : document.querySelector("#plan-picks .gcard"));
@@ -1375,15 +1456,15 @@ function drawPlan() {
   }
   const total = planMinutes(planDraft);
   $("plan-total").innerHTML = planDraft.length
-    ? `<b>${total} minutes</b> · ${planDraft.length} block${planDraft.length === 1 ? "" : "s"} of ${PLAN_BLOCK_MIN}${planDraft.length >= PLAN_MAX_BLOCKS ? " · that is the most for one session" : ""}`
-    : "";
+    ? `<b>${total} of ${PLAN_SESSION_MIN} minutes</b>${planDraft.length >= PLAN_MAX_BLOCKS ? " · the full hour" : ` · ${PLAN_MAX_BLOCKS - planDraft.length} slot${PLAN_MAX_BLOCKS - planDraft.length === 1 ? "" : "s"} left`}`
+    : `<b>0 of ${PLAN_SESSION_MIN} minutes</b>`;
   // THE GAME TILES: click one to add a block of it (again for another 15 minutes)
   const picks = $("plan-picks");
   picks.innerHTML = "";
   for (const c of choices) {
     const n = planDraft.filter(b => planKey(b) === c.key).length;
-    const card = pongCard(c.name, n ? `(${PLAN_BLOCK_MIN} min) · ${n} in the plan` : `(${PLAN_BLOCK_MIN} min)`, () => {
-      if (planDraft.length >= PLAN_MAX_BLOCKS) { speak(`${PLAN_MAX_BLOCKS * PLAN_BLOCK_MIN} minutes is the most for one session.`); return; }
+    const card = pongCard(c.name, n ? `${n} in the plan` : "", () => {
+      if (planDraft.length >= PLAN_MAX_BLOCKS) { speak(`The hour is full. Take a block out to change it.`); return; }
       planDraft.push({ game: c.game, axis: c.axis, level: null, minutes: PLAN_BLOCK_MIN });
       drawPlan();
     }, CARD_ART[c.key === "pong-abd" ? "pongAbd" : c.game] || CARD_ART.pong);
@@ -1405,12 +1486,25 @@ $("btn-plan-skip").addEventListener("click", () => {
   (then || (() => { renderSelect(); show("screen-select"); }))();
 });
 
-// the hub strip; returns its start button (or null when there is no plan)
+// the hub strip; returns its start button (or null when there is no plan).
+// The plan made when the profile was set up (the editor opens after the
+// arm's first measurement) is today's plan every day; Edit beside it is the
+// one way to change it (1 Nov 2026, by request: no other edit buttons)
 function renderPlanStrip(gameLock) {
   const strip = $("plan-strip");
-  const plan = store.getSchedule(state.patient);
-  if (!plan?.blocks?.length) { strip.classList.add("hidden"); strip.innerHTML = ""; return null; }
+  if (!state.patient || state.patient === "guest") { strip.classList.add("hidden"); strip.innerHTML = ""; return null; }
+  const plan = savedPlan(state.patient);
   strip.classList.remove("hidden");
+  const edit = document.createElement("button");
+  edit.className = "btn big ghost-light"; edit.dataset.dwell = "1";
+  edit.textContent = plan?.blocks?.length ? "Edit" : "Make a plan";
+  edit.addEventListener("click", () => renderSchedule(() => { renderSelect(); show("screen-select"); }));
+  const btns = document.createElement("div"); btns.className = "plan-btns";
+  if (!plan?.blocks?.length) {
+    strip.innerHTML = `<div class="plan-what">No plan for today yet</div>`;
+    btns.appendChild(edit); strip.appendChild(btns);
+    return null;
+  }
   // the blocks as chips in their games' colours (30 Oct 2026 look)
   const chips = plan.blocks.map(b => `<span class="plan-chip" style="${accentVars(b.game)}"><i></i>${planName(b)}${b.level ? ` level ${b.game === "windy" ? windyStageOf(b.level) : b.level}` : ""} <small>${b.minutes || PLAN_BLOCK_MIN} min</small></span>`).join("");
   strip.innerHTML = `<div class="plan-what">Today's plan: ${chips}</div>`;
@@ -1419,11 +1513,12 @@ function renderPlanStrip(gameLock) {
   btn.textContent = gameLock ? gameLock : "Start the plan";
   btn.disabled = !!gameLock;
   if (!gameLock) btn.addEventListener("click", startPlan);
-  strip.appendChild(btn);
+  btns.append(btn, edit);
+  strip.appendChild(btns);
   return gameLock ? null : btn;
 }
 function startPlan() {
-  const plan = store.getSchedule(state.patient);
+  const plan = savedPlan(state.patient);
   if (!plan?.blocks?.length) return;
   state.plan = { blocks: plan.blocks.map(b => ({ ...b, minutes: b.minutes || PLAN_BLOCK_MIN })), idx: 0, startedAt: 0 };
   startPlanBlock(0);
@@ -1465,6 +1560,8 @@ function renderPlanBetween() {
     else if (!last) { again = `Next: ${planGameName(p.blocks[p.idx + 1])}`; left = `${nm} is done`; }
     else { again = "One more round"; left = "That's the whole plan"; finish = "Finish for today"; }
   }
+  stopAutoNext();
+  if (p && planLeftMin() === 0 && p.idx < p.blocks.length - 1) startAutoNext(planGameName(p.blocks[p.idx + 1]));
   // the time bar is the TOTAL (28 Oct 2026, by request): today's minutes
   // against the plan's whole length, or the daily goal without a plan; the
   // block's own minutes are on the Play again button
@@ -1479,9 +1576,36 @@ function renderPlanBetween() {
     + `<div class="rc-time-bar"><div style="width:${Math.round(f * 100)}%"></div></div>`;
   $("rc-time").classList.toggle("hidden", !state.patient || state.patient === "guest");
 }
+// THE NEXT GAME STARTS BY ITSELF (1 Nov 2026, by request): a block's
+// minutes are a minimum, so the round playing when they run out finishes
+// first; then the card counts PLAN_AUTO_NEXT_S down over the Next button
+// and starts the next block's game. Any other press on the card (a face,
+// Change game) stops the count and the card waits for Next as before.
+const PLAN_AUTO_NEXT_S = 15;
+let _autoNext = null;
+function stopAutoNext(waitLine) {
+  if (!_autoNext) return;
+  clearInterval(_autoNext.timer); _autoNext = null;
+  $("btn-next-round").style.removeProperty("--auto");
+  if (waitLine) $("rc-left").textContent = "Press Next when you are ready";
+}
+function startAutoNext(name) {
+  const t0 = Date.now(), until = t0 + PLAN_AUTO_NEXT_S * 1000;
+  const tick = () => {
+    // the card is drawn just before it is shown; anything else on screen after that ends the count
+    if (state.screen !== "screen-between" && Date.now() - t0 > 1500) { stopAutoNext(); return; }
+    const left = until - Date.now();
+    if (left <= 0) { stopAutoNext(); nextRound(); return; }
+    $("rc-left").textContent = `${name} starts in ${Math.ceil(left / 1000)} s`;
+    $("btn-next-round").style.setProperty("--auto", (1 - left / (PLAN_AUTO_NEXT_S * 1000)).toFixed(3));
+  };
+  _autoNext = { timer: setInterval(tick, 200) };
+  tick();
+}
 // "Next round": the same game while the block runs, the next block's game
 // once its minutes are up, and free play when there is no plan
 function nextRound() {
+  stopAutoNext();
   const p = state.plan;
   if (p && planLeftMin() === 0 && p.idx < p.blocks.length - 1) {
     const nm = planName(p.blocks[p.idx + 1]);
@@ -1710,12 +1834,15 @@ const MAP_DEFS = {
     chapters: () => LUMEN_STAGES.map((st, k) => ({ from: st.from, to: st.to, name: `Stage ${k + 1} · ${st.name}`, note: "" })),
     label: n => `${n}`,
   },
-  // Pong's ladder is the star's five ranks (24 Oct 2026, by request): the
-  // opponents in a row, the beaten ones lit, the next one named
+  // Pong's map is its level, the ball's speed, 1 to 10, per arm and per
+  // way of playing (1 Nov 2026, by request: plain numbers; it was the star's
+  // five named ranks, which stopped being the level on 28 Oct)
   pong: {
-    title: () => `Pong ${state.pongAxis === "abd" ? "Abd-Add" : "FE"}: who shall we play?`, bag: "pongMap", levelKey: "starRank", pick: "starRankPick",
-    count: () => STAR_RANKS.length,
-    chapters: () => STAR_RANKS.map((r, i) => ({ from: i + 1, to: i + 1, name: r.name, note: "" })),
+    title: () => `${pongName(state.pongAxis).replace(":", ",")}: which level?`, per: 5,
+    bag: () => `pongLevelMap-${state.pongAxis === "abd" ? "abd" : "fe"}-${state.side}`,
+    levelKey: () => pongLevelKey(state.pongAxis, state.side), pick: "pongLevelPick",
+    count: () => PONG_LEVEL_MAX,
+    chapters: () => [{ from: 1, to: PONG_LEVEL_MAX, name: "Ball speed", note: "Each level a little quicker" }],
     label: n => `${n}`,
   },
   // Cozy Fruit Merge: a chapter per goal fruit, the new ideas named on it
@@ -1732,9 +1859,11 @@ const MAP_DEFS = {
     label: n => `${n}`,
   },
 };
-const WINDY_NOTES = ["Learn to fly", "Rook slides", "Faster", "Drones", "Moving bridges", "Narrower gaps", "Faster", "Crosswind", "More drones", "Bridges move further", "Stronger wind", "The finale"];
+const WINDY_NOTES = ["Learn to fly", "The pilot slides", "Faster", "Drones", "Moving bridges", "Narrower gaps", "Faster", "Crosswind", "More drones", "Bridges move further", "Stronger wind", "The finale"];
 function windyNoteOf(st) { return WINDY_NOTES[st - 1] || ""; }
 
+// (A winding-road map in the saga style was built on 1 Nov 2026, by request,
+// and taken back the same day, by request: "Use previous level map".)
 // the SVG: nodes along a serpentine path, `per` to a row; `around` draws only
 // a window of levels about the current one (the round card's strip)
 function levelMapSVG(def, cur, prog, around = null) {
@@ -1742,7 +1871,7 @@ function levelMapSVG(def, cur, prog, around = null) {
   const stars = prog.stars || {}, best = prog.best || {};
   let from = 1, to = total;
   if (around) { from = Math.max(1, cur - around); to = Math.min(total, cur + around); }
-  const n = to - from + 1, per = around ? n : Math.min(8, Math.max(4, Math.round(Math.sqrt(total * 1.6))));
+  const n = to - from + 1, per = around ? n : def.per || Math.min(8, Math.max(4, Math.round(Math.sqrt(total * 1.6))));
   const rows = Math.ceil(n / per), W = 960, colW = W / (per + 1), rowH = around ? 120 : 118, top = around ? 54 : 70;
   const H = top + rows * rowH + (around ? 10 : 20);
   const pos = i => { const r = Math.floor(i / per), c = i % per, cc = r % 2 ? per - 1 - c : c; return { x: colW * (cc + 1), y: top + r * rowH + rowH / 2 }; };
@@ -1787,20 +1916,23 @@ function levelMapSVG(def, cur, prog, around = null) {
   }
   return svg + `</svg>`;
 }
+// a map's bag and level key may depend on the arm and the way of playing (Pong)
+const mapVal = v => typeof v === "function" ? v() : v;
 function renderLevelMap(gameId) {
   const def = MAP_DEFS[gameId]; if (!def) return;
   const wrap = $("cards");
   wrap.innerHTML = "";
   subView(typeof def.title === "function" ? def.title() : def.title);
-  const cur = store.getLevel(state.patient, def.levelKey);
-  const prog = store.getProgress(state.patient, def.bag) || {};
+  const cur = store.getLevel(state.patient, mapVal(def.levelKey));
+  const prog = store.getProgress(state.patient, mapVal(def.bag)) || {};
   const played = Object.keys(prog.best || {}).length, starSum = Object.values(prog.stars || {}).reduce((a, b) => a + (b || 0), 0);
   let html = `<div class="duo-setup lvl-map" style="${accentVars(gameId)}">`;
   html += levelMapSVG(def, cur, prog);
   html += gameId === "pong"
-    ? `<p class="hint">Next opponent: <b>${STAR_RANKS[cur - 1]?.name || "Little star"}</b>${prog.rally ? ` · your longest rally ever: <b>${prog.rally}</b>` : ""}. Win a match to move up the ladder; click any star to play it.</p>`
+    ? `<p class="hint">You are at level <b>${cur}</b>${rallyEver() ? ` · your longest rally ever: <b>${rallyEver()}</b>` : ""}. Win a match to go up a level; click any level to play it.</p>`
     : `<p class="hint">You are at level <b>${gameId === "windy" ? windyStageOf(cur) : cur}</b>${played ? ` · ${plural(played, "level")} played · ${plural(starSum, "star")} on the map` : ""}. Click any level to play it; the path carries on from there.</p>`;
-  if (gameId === "candles") html += lanternBoardHTML(prog);
+  // (the Lantern's own board, the Lamplighters' Guild, was taken off here on
+  // 1 Nov 2026, by request: one board for every game, This week's board)
   html += `</div>`;
   wrap.innerHTML = html;
   wrap.querySelectorAll(".node").forEach(g => {
@@ -1810,9 +1942,11 @@ function renderLevelMap(gameId) {
   });
   const sub = gameId === "candles" ? (LUMEN_STAGES.find(st => cur >= st.from && cur <= st.to)?.name || "")
     : gameId === "windy" ? windyNoteOf(windyStageOf(cur)) : "";
-  const play = pillBtn(gameId === "pong" ? `Play · vs the ${STAR_RANKS[cur - 1]?.name || "Little star"}` : `Continue · Level ${gameId === "windy" ? windyStageOf(cur) : cur}`, sub, () => { state[def.pick] = null; startGame(gameId, true); }, gameId);
-  wrap.appendChild(play);
-  wrap.appendChild(pillBtn("↩ Back", "All games", renderSelect));
+  const play = pillBtn(`Continue · Level ${gameId === "windy" ? windyStageOf(cur) : cur}`, sub, () => { state[def.pick] = null; startGame(gameId, true); }, gameId);
+  // Continue and Back sit between the title and the map (1 Nov 2026
+  // clean-up): a long map used to push them under the fold of a TV
+  const back = pillBtn("↩ Back", "All games", renderSelect);
+  wrap.prepend(play, back);
   focusHint(play);
 }
 function renderLanternLevels() { renderLevelMap("candles"); }
@@ -1820,15 +1954,18 @@ function renderLanternLevels() { renderLevelMap("candles"); }
 function noteMapProgress(round) {
   const g = round.game;
   if (g !== "windy" && g !== "pairs" && g !== "pong" && g !== "fruit") return;
-  const bag = store.getProgress(state.patient, MAP_DEFS[g].bag) || { stars: {}, best: {}, plays: {} };
+  const bagKey = mapVal(MAP_DEFS[g].bag);
+  const bag = store.getProgress(state.patient, bagKey) || { stars: {}, best: {}, plays: {} };
   bag.stars ??= {}; bag.best ??= {}; bag.plays ??= {};
   let L, stars, best;
   if (g === "pong") {
-    // the star rank played: a match won is 3 stars, drawn 2, played 1; the
-    // best is the longest rally against that star, and bag.rally the longest ever
-    if (round.pongMode === "duo" || !round.starRank) return;
-    L = round.starRank; stars = round.matchWon === true ? 3 : round.matchWon == null ? 2 : 1; best = round.bestRally || 0;
-    bag.rally = Math.max(bag.rally || 0, round.bestRally || 0);
+    // the speed level played: a match won is 3 stars, drawn 2, played 1; the
+    // best is the longest rally at that level; the longest ever stays in
+    // the old "pongMap" bag, where the game reads it
+    if (round.pongMode === "duo" || !round.pongLevel) return;
+    L = round.pongLevel; stars = round.matchWon === true ? 3 : round.matchWon == null ? 2 : 1; best = round.bestRally || 0;
+    const old = store.getProgress(state.patient, "pongMap") || {};
+    if ((round.bestRally || 0) > (old.rally || 0)) store.setProgress(state.patient, "pongMap", { ...old, rally: round.bestRally });
   }
   else if (g === "windy") { L = round.level; stars = round.levelStars || 0; best = round.gapsPassed || 0; }
   else if (g === "fruit") {
@@ -1842,44 +1979,14 @@ function noteMapProgress(round) {
   bag.best[L] = Math.max(bag.best[L] || 0, best);
   bag.plays[L] = (bag.plays[L] || 0) + 1;
   bag.last = { level: L, date: new Date().toISOString() };
-  store.setProgress(state.patient, MAP_DEFS[g].bag, bag);
+  store.setProgress(state.patient, bagKey, bag);
 }
+function rallyEver() { return store.getProgress(state.patient, "pongMap")?.rally || 0; }
+// Pong's two games by the movement, in plain words (1 Nov 2026, by request: "Pong FE" / "Pong Abd-Add" until then)
+function pongName(axis) { return axis === "abd" ? "Pong: side to side" : "Pong: up and down"; }
 
-// THE LAMPLIGHTERS' GUILD (from the Lantern mockup, by request): a board of
-// villagers whose scores are anchored to the patient's very first level,
-// against the patient's best single level today, so improving over the days
-// moves them up the board. The villagers are fictional and fixed; nothing
-// here compares one patient with another.
-const GUILD = [["Grandma Sela", 2.6], ["Captain Ravi", 2.2], ["Ferryman Jo", 1.9], ["Nila the Baker", 1.65], ["Kofi the Smith", 1.45],
-  ["Elder Moss", 1.28], ["Ada of the Mill", 1.12], ["Little Wren", 0.95], ["Bram the Shepherd", 0.8], ["Pip the Owl", 0.62]];
-function lanternBoardHTML(prog) {
-  const days = prog.days || [];
-  const first = days.find(x => x.scores?.length)?.scores?.[0] || 0;
-  if (!first) return `<div class="board"><h3>🏆 Lamplighters' Guild</h3><p class="hint">Light your first level and the Guild's board opens.</p></div>`;
-  const today = days.find(x => x.date === dayKey());
-  const mine = today?.scores?.length ? Math.max(...today.scores) : 0;
-  const ref = Math.max(400, first);
-  const seed = i => (Math.sin(i * 12.9898) * 43758.5453) % 1;
-  const rows = GUILD.map(([name, f], i) => ({ name, score: Math.round(ref * f * (0.96 + 0.08 * Math.abs(seed(i + 7))) / 10) * 10 }));
-  rows.push({ name: `${state.patient} (today's best)`, score: mine, me: true });
-  rows.sort((a, b) => b.score - a.score);
-  rows.forEach((r, i) => { r.rank = i + 1; });
-  const me = rows.find(r => r.me), rank = me.rank;
-  const keep = rows.filter(r => r.rank <= 5 || Math.abs(r.rank - rank) <= 1);
-  let html = "", last = 0;
-  for (const r of keep) {
-    if (r.rank - last > 1) html += `<tr><td colspan="3" class="dots">⋯</td></tr>`;
-    last = r.rank;
-    html += `<tr class="${r.me ? "me" : ""}"><td>${r.rank}</td><td class="nm">${r.me ? "<b>" + r.name + "</b>" : r.name}</td><td>${r.score.toLocaleString()}</td></tr>`;
-  }
-  const next = rows[rank - 2];
-  const chase = !mine ? "Light a level today to take your place."
-    : next ? `${(next.score - me.score + 10).toLocaleString()} more points to pass ${next.name}.` : "Top of the Guild!";
-  const dayN = days.filter(x => x.scores?.length).length;
-  return `<div class="board"><h3>🏆 Lamplighters' Guild · best single level</h3>
-    <p>You are <b>#${rank}</b> of ${rows.length}${dayN > 1 ? ` · day ${dayN}` : ""}. ${chase}</p>
-    <table><tr><th>#</th><th class="nm">Lamplighter</th><th>Score</th></tr>${html}</table></div>`;
-}
+// (The Lamplighters' Guild, the Lantern's own board of fictional villagers,
+// was removed on 1 Nov 2026, by request: one board for every game, below.)
 
 /* ================= assessment ================= */
 // ONE arm: the one chosen at setup. Two steps (two circles and a lift, then
@@ -1904,7 +2011,6 @@ function startAssessment(opts = {}) {
   if (noCamera()) return;
   const arm = state.side;
   const prof = store.getProfile(state.patient, arm);
-  const firstEver = !prof;    // the arm's first measurement: the therapist's plan screen follows it
   if (prof && measuredToday(prof) && !opts.override) {
     speak("Your reach is already measured today. Once a day is plenty.");
     renderSelect();
@@ -1958,9 +2064,10 @@ function startAssessment(opts = {}) {
       focusHint($("btn-rom-done"));
     };
     // the result straight away (26 Oct 2026, by request: it used to wait
-    // behind the plan); on the arm's first measurement the therapist's
-    // session plan follows it, on Continue
-    state.romThen = firstEver ? "plan" : null;
+    // behind the plan). The plan is made when the profile is created (1 Nov
+    // 2026, by request), so nothing follows the first measurement any more;
+    // a participant without one makes it from the hub ("Make a plan")
+    state.romThen = null;
     showResult();
   });
 }
@@ -2117,7 +2224,9 @@ function renderRomCompare(arms) {
 // latest point bigger and labelled, the first labelled too, dates under the
 // points (thinned when they crowd). One point: a lone dot and a sentence.
 function romPlot(pts) {
-  const W = 900, H = 260, L = 56, R = 28, T = 26, B = 46;
+  // L 56 until 31 Oct 2026: the labels grew for the TV; one point gets a line
+  // more at the foot for its sentence, which used to sit on the date
+  const W = 900, H = pts.length === 1 ? 290 : 260, L = 76, R = 28, T = 26, B = pts.length === 1 ? 76 : 46;
   if (!pts.length) return "";
   const t0 = new Date(pts[0].d).getTime(), t1 = new Date(pts[pts.length - 1].d).getTime();
   const span = Math.max(1, t1 - t0);
@@ -2138,7 +2247,7 @@ function romPlot(pts) {
     if (last || i === 0) out += `<text class="val" x="${x(q)}" y="${y(q.v) - 14}" text-anchor="middle">${q.v}%</text>`;
     if (last || i % every === 0) out += `<text class="lbl" x="${x(q)}" y="${H - B + 24}" text-anchor="middle">${fmtDay(q.d)}</text>`;
   });
-  if (pts.length === 1) out += `<text class="one" x="${(L + W - R) / 2}" y="${H - B + 24 + 18}" text-anchor="middle">Your first point. The line starts next time.</text>`;
+  if (pts.length === 1) out += `<text class="one" x="${(L + W - R) / 2}" y="${H - 12}" text-anchor="middle">Your first point. The line starts next time.</text>`;
   return out + `</svg>`;
 }
 
@@ -2197,14 +2306,14 @@ function startGame(id, fresh) {
     tutorial: id === "fruit" ? (state.fruitTutorial || (state.roundNumber === 1 && !store.getProgress(state.patient, "fruitMap")?.tutorialDone?.[state.side])) : undefined,
     // the Lantern's per-level bests and Star Atlas (Pip's flag is set from them)
     lumen: id === "candles" ? store.getProgress(state.patient, "candlesLumen") : undefined,
-    starRank: id === "pong" ? (state.starRankPick || store.getLevel(state.patient, "starRank")) : undefined,
+    starRank: id === "pong" ? store.getLevel(state.patient, "starRank") : undefined,
     bestRallyEver: id === "pong" ? (store.getProgress(state.patient, "pongMap")?.rally || 0) : undefined,
     // Pong's round-1 tutorial SETS the ball's pace only on the first game
     // ever on this arm (no stored Pong difficulty yet); after that it is a
     // warm-up and the pace is the level the patient has reached
     // (Oct 2026: the sweep no longer sets it; the speed level does)
     calibrate: false,
-    pongLevel: id === "pong" ? store.getLevel(state.patient, pongLevelKey(state.pongAxis, state.side)) : undefined,
+    pongLevel: id === "pong" ? (state.pongLevelPick || store.getLevel(state.patient, pongLevelKey(state.pongAxis, state.side))) : undefined,
     // the Pong dials, the same for the single and the two-player game
     pongSpeed: id === "pong" ? state.pongSpeed : undefined,
     powerups: id === "pong" ? state.pongPowerups : undefined,
@@ -2230,7 +2339,7 @@ function startGame(id, fresh) {
   state.pairsLevelPick = null;
   state.fruitLevelPick = null; $("in-fruit-level").value = "";
   state.fruitTutorial = false;
-  state.starRankPick = null;
+  state.starRankPick = null; state.pongLevelPick = null;
   // the webcam follows a second body only while two are playing
   state.tracker.setSecond?.(id === "pong" && state.pongMode === "duo");
   stageMode("game", id);
@@ -2258,6 +2367,8 @@ function onRoundEnd(round) {
   setTimeout(() => backupNow("round"), 1500);     // after the record is written
   audio.stopBgm();
   round.round = state.roundNumber;
+  round.reps = repCounter.round.reps;              // this round's repetitions (js/reps.js)
+  round.repAttempts = repCounter.round.attempts;
   store.logPlaytime(state.patient, (round.seconds || 0) * 1000, "round");
   // Stars are minutes of play (Oct 2026, by request): one star for every
   // whole minute, with the odd seconds carried into the next round so two
@@ -2299,7 +2410,8 @@ function onRoundEnd(round) {
   if (round.game === "candles") {
     if (round.candlesLevel) store.setLevel(state.patient, "candlesLevel", round.candlesLevel, CANDLE_MAX);
     if (round.candlesProgress) {
-      // the day history behind the Guild board: every level's score, per day
+      // the day history: every level's score, per day (it fed the Guild board,
+      // removed 1 Nov 2026; kept as the Lantern's own record)
       const pr = round.candlesProgress;
       pr.days = [...(store.getProgress(state.patient, "candlesLumen")?.days || [])];
       const key = dayKey();
@@ -2474,11 +2586,11 @@ function roundSummary(round) {
       const lit = r.lanternsLit || 0, c = r.candles || 0;
       head = lit > 0 && lit >= c ? "Every lantern lit!" : lit > 0 ? "Lanterns lit!" : "A gentle start.";
       text = c ? `You lit ${plural(lit, "lantern")} from ${plural(c, "candle")}.` : `You lit ${plural(lit, "lantern")}.`;
-      if (r.endReason === "target") text += " Pip reached the flag!";
+      if (r.endReason === "target") text += " You reached the goal!";
       glyph = "lantern"; count = lit; break;
     }
     case "pong": {
-      const duo = r.pongMode === "duo", them = duo ? (r.p2Name || "player two") : "the star";
+      const duo = r.pongMode === "duo", them = duo ? (r.p2Name || "player two") : "the other side";
       const match = (r.games?.length || 0) > 1 || r.gamesWon != null;
       head = r.matchWon === true ? (match ? "You won the match!" : "You won the game!") : r.matchWon === false ? (match ? "A good match!" : "A good game!")
         : r.pointsPlayed > 0 ? "A draw!" : "Great rally!";
@@ -2564,6 +2676,8 @@ function roundSummary(round) {
 }
 
 // what the next round brings, in one line under the headline
+// what a Pong level up adds to the paddle or the court, for the round card
+const pongNew = to => PONG_LEVEL_LOOKS[to - 1] && to > 1 ? ` New: ${PONG_LEVEL_LOOKS[to - 1].name}.` : "";
 const RC_NEXT = { up: "Level up next game!", same: "Same level next game", down: "A little easier next game" };
 const RC_STAR = `<svg viewBox="0 0 24 24" width="34" height="34" aria-hidden="true"><polygon points="12,2 14.9,8.6 22,9.3 16.5,14 18.3,21 12,17.3 5.7,21 7.5,14 2,9.3 9.1,8.6" fill="#F2B33D" stroke="#8A5300" stroke-width="1.2" stroke-linejoin="round"/></svg>`;
 
@@ -2665,7 +2779,7 @@ function renderBetween(round, note, opts = {}) {
           if (to === from) return;
           store.setLevel(state.patient, L.key, to, L.of);
           store.logPongLevel(state.patient, state.side, { axis: round.axis || "fe", kind: "manual-card", from, to });
-          $("rc-next").textContent = to > L.from ? "Faster next game" : to < L.from ? "Slower next game" : RC_NEXT.same;
+          $("rc-next").textContent = to > L.from ? `Faster next game${pongNew(to)}` : to < L.from ? "Slower next game" : RC_NEXT.same;
           $("rc-next").className = "rc-next same";
           show();
         };
@@ -2677,6 +2791,8 @@ function renderBetween(round, note, opts = {}) {
     } else el.classList.add("hidden");
   }
   $("rc-next").textContent = A11Y.practice ? "Practice round. Nothing counts." : RC_NEXT[round.next] || "";
+  // Pong: a level up says what the paddle gains (PONG_LEVEL_LOOKS)
+  if (!A11Y.practice && round.game === "pong" && round.lvl && round.lvl.to > round.lvl.from) $("rc-next").textContent += pongNew(round.lvl.to);
   // a level up wears a check in the success colour; the others are plain words
   $("rc-next").className = "rc-next " + (!A11Y.practice && RC_NEXT[round.next] ? round.next : "same");
   // only the rest reminder stays on the card (every 4th round or a run of
@@ -2693,6 +2809,7 @@ document.querySelectorAll(".face").forEach(f => {
     document.querySelectorAll(".face").forEach(x => x.classList.remove("selected"));
     f.classList.add("selected");
     store.logFeel(state.patient, f.dataset.feel);
+    stopAutoNext(true);                    // an answer stops the next game starting by itself
     if (f.dataset.feel === "hurts") {
       $("rc-note").textContent = "Thank you for telling us. Let's stop here for today and rest that arm.";
       speak("Thank you for telling us. " + REST_LINE);
@@ -2713,7 +2830,7 @@ $("btn-finish").dataset.dwell = "1";
 $("btn-next-round").addEventListener("click", nextRound);
 // straight back to the game selection (27 Oct 2026, by request: the
 // collection screen is gone)
-$("btn-finish").addEventListener("click", () => { state.plan = null; renderSelect(); show("screen-select"); });
+$("btn-finish").addEventListener("click", () => { stopAutoNext(); state.plan = null; renderSelect(); show("screen-select"); });
 
 /* ================= S3 staff profile ================= */
 function arcPath(cx, cy, r, a0, a1) {
@@ -2940,7 +3057,7 @@ $("btn-prof-back").addEventListener("click", () => { renderSelect(); show("scree
     ? rows.map(r => {
         const g = GAMES.find(x => x.id === r.game);
         const lv = LEVELS[r.game] ? store.getLevel(state.patient, LEVELS[r.game][0]) : null;
-        const gname = r.game === "pong" ? "Pong FE" : r.game === "pong-abd" ? "Pong Abd-Add" : g?.name || r.game;
+        const gname = r.game === "pong" ? pongName(r.axis) : r.game === "pong-abd" ? pongName("abd") : g?.name || r.game;
         return `<div class="comp-row"><span>${gname}${
           lv ? ` <span class="chip amber" style="margin-left:6px">Level ${lv}/${LEVELS[r.game][1]}</span>` : ""}</span>
           <span class="cv">range ${Math.round(r.rangeScale * 100)}% · target ${r.radius.toFixed(2)} SW · ${r.lifetime.toFixed(1)}s</span></div>`;
@@ -2948,7 +3065,6 @@ $("btn-prof-back").addEventListener("click", () => { renderSelect(); show("scree
     : `<div class="comp-row"><span style="opacity:.6">Not played yet on this arm — every game starts from the assessment</span></div>`;
 $("btn-prof-session").addEventListener("click", () => { renderSelect(); show("screen-select"); });
 $("btn-prof-assess").addEventListener("click", () => startAssessment({ force: true, override: true }));
-$("btn-prof-plan").addEventListener("click", () => renderSchedule(() => { renderProfile(); show("screen-profile"); }));
 $("btn-prof-export").addEventListener("click", () => {
   const blob = new Blob([store.exportPatient(state.patient)], { type: "application/json" });
   const a = document.createElement("a");
@@ -3141,6 +3257,13 @@ $("in-arm").addEventListener("change", e => {
 });
 // camera source is picked once at boot (webcam + MediaPipe vs ZED bridge),
 // so changing it reloads the app
+// TV edges: draw everything 5% in, for a TV that crops a computer's picture (css: html.tv-safe)
+$("in-tv-safe").value = localStorage.getItem("strive-tv-safe") === "1" ? "1" : "0";
+$("in-tv-safe").addEventListener("change", e => {
+  localStorage.setItem("strive-tv-safe", e.target.value);
+  document.documentElement.classList.toggle("tv-safe", e.target.value === "1");
+  dispatchEvent(new Event("resize"));
+});
 $("in-assess-style").value = localStorage.getItem("strive-assess-style") || "video";
 $("in-assess-style").addEventListener("change", e => localStorage.setItem("strive-assess-style", e.target.value));
 $("in-posture-debug").value = localStorage.getItem("strive-posture-debug") === "1" ? "1" : "0";
@@ -3219,12 +3342,6 @@ $("btn-drawer-intro").addEventListener("click", () => {
   const back = state.screen;
   playIntro(() => show(back));
 });
-$("btn-drawer-plan").addEventListener("click", () => {
-  $("drawer").classList.add("hidden");
-  // back to the menu screen it was opened from (never into a running game)
-  const back = ["screen-select", "screen-profile", "screen-between"].includes(state.screen) ? state.screen : "screen-select";
-  renderSchedule(() => { if (back === "screen-select") renderSelect(); show(back); });
-});
 
 $("btn-quit").addEventListener("click", () => {
   const skipTo = state.warmupThen;   // a warm-up on the way to the assessment: ✕ skips the stretch, not the measurement
@@ -3286,9 +3403,11 @@ if (previewOf === "pongscore") {
   const sample = { game: "pong", hits: 19, misses: 3, hitRate: 19 / 22, stars: 2, gamePoints: 200, seconds: 96, bestRally: 9,
     points: 3, aiPoints: 1, matchWon: true, trickPoints: 1, trickShots: { curve: 1 }, compEvents: [], next: "up", lvl: { from: 2, to: 3, of: 10 } };
   state.plan = { blocks: [{ game: "pong", axis: "fe", minutes: 15 }], idx: 0, startedAt: Date.now() - 5 * 60000 };
+  // &blockdone=1: Pong's block is over and the Lantern's is next (the count to the next game)
+  if (new URLSearchParams(location.search).get("blockdone")) state.plan = { blocks: [{ game: "pong", axis: "fe", minutes: 15 }, { game: "candles", minutes: 15 }], idx: 0, startedAt: Date.now() - 16 * 60000 };
   // a sample of the last games, for the trend (nothing is stored)
   const history = [11, 14, 12, 16, 15, 17].map(hits => ({ game: "pong", hits }));
-  renderBetween(sample, "You won, so the ball comes a little quicker next game, and the star grows into a Bright star.", { history });
+  renderBetween(sample, "You won, so the ball comes a little quicker next game.", { history });
   // a guest has no day to total: sample numbers for the time bar
   $("rc-time").classList.remove("hidden");
   $("rc-time").innerHTML = `<div class="rc-time-line"><b>Today</b> 23 of 45 min</div><div class="rc-time-bar"><div style="width:51%"></div></div>`;
@@ -3390,7 +3509,7 @@ if (previewOf === "pongscore") {
 const TEST_TARGETS = {
   select: "the hub", welcome: "the welcome screen", warmup: "the warm-up", assess: "the assessment",
   rom: "the after-assessment screen", schedule: "the session plan", levels: "a level map (&game=)",
-  duo: "Pong two-player setup", profile: "the therapist profile", board: "this week's board",
+  duo: "Pong two-player setup", profile: "the therapist profile", board: "the boards (&tab=plan|days|reps|me)",
 };
 function testProfile(arm) {
   const envelope = Array.from({ length: 32 }, (_, i) =>
@@ -3435,6 +3554,8 @@ function testJump(q) {
       if (go === "windy") state.windyLevelPick = level;
       if (go === "pairs") state.pairsLevelPick = level;
       if (go === "fruit") state.fruitLevelPick = level;
+      // Pong: the speed level (and with it the paddle's look) for this arm and axis
+      if (go === "pong") store.setLevel(state.patient, pongLevelKey(state.pongAxis, state.side), Math.min(PONG_LEVEL_MAX, level), PONG_LEVEL_MAX);
     }
     if (go === "fruit" && q.get("tutorial")) state.fruitTutorial = true;
     startGame(go, true);
@@ -3450,7 +3571,7 @@ function testJump(q) {
     case "levels": renderLevelMap(MAP_DEFS[q.get("game")] ? q.get("game") : "windy"); show("screen-select"); break;
     case "duo": state.pongMode = "duo"; state.pongAxis = "fe"; $("in-pong").value = "duo"; renderDuoSetup(); show("screen-select"); break;
     case "profile": renderProfile(); show("screen-profile"); break;
-    case "board": renderLeaderboard(); show("screen-select"); break;
+    case "board": renderLeaderboard(q.get("tab") || "plan"); show("screen-select"); break;
     default: toHub(); speak(`No test target called ${go}.`);
   }
 }
@@ -3461,7 +3582,7 @@ function renderTestLinks() {
   const arm = state.side || "right";
   const link = (label, qs) => `<a href="?go=${qs}&arm=${arm}">${label}</a>`;
   const games = GAMES.filter(g => !g.disabled).flatMap(g => g.id === "pong"
-    ? [link("Pong FE", "pong&axis=fe"), link("Pong Abd-Add", "pong&axis=abd"), link("Pong two players", "duo")]
+    ? [link(pongName("fe"), "pong&axis=fe"), link(pongName("abd"), "pong&axis=abd"), link("Pong: two players", "duo")]
     : [link(g.name, g.id)]);
   const screens = Object.entries(TEST_TARGETS).filter(([k]) => k !== "duo" && k !== "levels")
     .map(([k, v]) => link(v, k));
@@ -3515,38 +3636,132 @@ $("btn-restore").addEventListener("click", async () => {
 probeLauncher().then(renderBackupUI);
 startAutoBackup();
 
-/* ================= this week's board (Oct 2026, by request: a leaderboard, with practice names for now) ================= */
-// Ten fictional players whose stars for the week are anchored to the
-// patient's own count on the first day they played this week, so a week of
-// play climbs the board; it never compares one patient with another.
-const BOARD_NAMES = [["Harbor Jo", 2.4], ["Mira of the Mill", 2.0], ["Old Tom", 1.7], ["Ana Lightkeeper", 1.45], ["Sam the Rower", 1.25],
-  ["Lena Fisher", 1.08], ["Pip's cousin", 0.92], ["Benny the Baker", 0.78], ["Rosa Bell", 0.62], ["Wren", 0.48]];
+/* ================= the boards: one for every game, on the hub ================= */
+// FOUR BOARDS (1 Nov 2026, by request: "do all ideas", then "No need
+// together", so the shared clinic bar went the same day), all of them weekly,
+// starting again every Monday, so a player who joined last week is not
+// behind one who has come for months; time and reps count, never skill.
+//   plan     how much of my own plan I did this week: each day so far counts
+//            up to 100% of that player's own daily plan (today only once
+//            they have played), averaged, so a 30-minute plan and a 60-minute
+//            one compete fairly and a long day cannot make up for missed ones
+//   days     goal days: days this week with the whole daily plan done, 0-7
+//   reps     reps this week (a rep is a lift to 60% of the player's OWN range
+//            and back, js/reps.js, so it is fair across impairment)
+//   me       this week against last week by the same weekday: no names
+// The three leagues mix everyone who plays on this computer with nine
+// practice players with ordinary names (by request, "Make fake players"),
+// every name shown arcade-style as three capital letters (by request: Rosa
+// Bell is ROS). The practice players' plan shares are fixed and their goal
+// days follow from them; their reps are anchored to the patient's own pace
+// once a week (the "board" progress bag), so steady play climbs past them.
+// The hub card shows the plan league, the top three and the patient with a
+// neighbour each side, so nobody sees a whole list with themselves last; a
+// click opens the four tabs. (Until earlier on
+// 1 Nov the board was stars this week, then stars per day since starting.)
+const BOARD_PLAYERS = ["Maria", "James", "Linda", "Robert", "Susan", "David", "Karen", "Michael", "Nancy"];
+const PRACTICE_SHARE = [0.96, 0.9, 0.83, 0.76, 0.68, 0.6, 0.51, 0.4, 0.28];
+const boardTag = n => ((n || "").replace(/[^A-Za-z]/g, "").slice(0, 3) || "???").toUpperCase();
 function weekKey(d = new Date()) { const x = new Date(d); x.setDate(x.getDate() - (x.getDay() + 6) % 7); return dayKey(x); }   // the local Monday
-function weekStars(name) {
-  const p = store.getPatient(name), since = weekKey();
-  return (p.sessions || []).filter(r => (r.day || (r.date || "").slice(0, 10)) >= since).reduce((a, r) => a + (r.stars || 0), 0);
+const dailyGoal = name => { const plan = savedPlan(name); return plan?.blocks?.length ? planMinutes(plan.blocks) : DAILY_GOAL_MIN; };
+// the day keys from Monday to today, or (back = 1) last week's Monday to the same weekday
+function weekDays(back = 0) {
+  const now = new Date(), mon = new Date(now); mon.setHours(0, 0, 0, 0);
+  mon.setDate(mon.getDate() - (mon.getDay() + 6) % 7 - 7 * back);
+  return Array.from({ length: (now.getDay() + 6) % 7 + 1 }, (_, i) => { const d = new Date(mon); d.setDate(mon.getDate() + i); return dayKey(d); });
 }
-function renderLeaderboard() {
+function weekStats(name, back = 0) {
+  const pt = store.getPatient(name)?.playtime || {}, goal = dailyGoal(name), days = weekDays(back), today = dayKey();
+  let minutes = 0, reps = 0, goalDays = 0, share = 0, counted = 0;
+  for (const k of days) {
+    const e = pt[k] || {}, m = (e.ms || 0) / 60000;
+    minutes += m; reps += e.reps || 0;
+    if (m >= goal) goalDays++;
+    if (k !== today || m > 0) { counted++; share += Math.min(1, m / goal); }
+  }
+  if (!back && name === state.patient) reps += repCounter.pending.reps;
+  return { minutes: Math.round(minutes), reps, goalDays, pct: counted ? share / counted : 0, goal, days: days.length };
+}
+const BOARDS = {
+  plan: { tab: "My plan", head: "How much of my plan", fmt: v => `${Math.round(v * 100)}%`, val: s => s.pct },
+  days: { tab: "Goal days", head: "Days my plan was done", fmt: v => `${v}`, val: s => s.goalDays },
+  reps: { tab: "Reps", head: "Reps", fmt: v => `${v}`, val: s => s.reps },
+  me: { tab: "Me" },
+};
+function boardRows(kind) {
+  const B = BOARDS[kind];
+  const rows = store.listPatients().filter(p => p.name !== "guest").map(p => ({ name: boardTag(p.name), v: B.val(weekStats(p.name)), me: p.name === state.patient }));
+  if (!rows.some(r => r.me)) rows.push({ name: "YOU", v: B.val(weekStats(state.patient)), me: true });
+  let anchor = state.patient !== "guest" ? store.getProgress(state.patient, "board") || {} : {};
+  if (anchor.week !== weekKey() || anchor.kind !== "weekly") {
+    const last = weekStats(state.patient, 1);
+    anchor = { week: weekKey(), kind: "weekly", repsPerDay: Math.max(40, Math.round(last.reps / Math.max(1, last.days))) };
+    if (state.patient !== "guest") store.setProgress(state.patient, "board", anchor);
+  }
+  const days = weekDays().length, wk = +weekKey().replace(/-/g, "");
+  const jit = i => 0.94 + 0.12 * Math.abs((Math.sin(i * 12.9898 + wk) * 43758.5453) % 1);
+  const taken = new Set(rows.map(r => r.name));
+  BOARD_PLAYERS.forEach((name, i) => {
+    const t = boardTag(name); if (taken.has(t)) return;
+    const share = Math.min(1, PRACTICE_SHARE[i] * jit(i));
+    const v = kind === "plan" ? share : kind === "days" ? Math.round(share * days * 0.9) : Math.round(anchor.repsPerDay * days * PRACTICE_SHARE[i] * 1.25 * jit(i));
+    rows.push({ name: t, v, practice: true });
+  });
+  rows.sort((a, b) => b.v - a.v || (b.me ? 1 : 0) - (a.me ? 1 : 0));
+  rows.forEach((r, i) => { r.rank = i && B.fmt(r.v) === B.fmt(rows[i - 1].v) ? rows[i - 1].rank : i + 1; });
+  return rows;
+}
+// the top three and, further down, the patient with a neighbour each side
+function boardWindow(rows) {
+  const i = rows.findIndex(r => r.me);
+  return i < 6 ? rows.slice(0, 6) : [...rows.slice(0, 3), ...rows.slice(i - 1, i + 2)];
+}
+const barHTML = (f, cls = "") => `<span class="bbar ${cls}"><span style="width:${Math.round(Math.min(1, f) * 100)}%"></span></span>`;
+function renderBoardCard() {
+  const rows = boardWindow(boardRows("plan"));
+  const b = document.createElement("button");
+  b.className = "hub-board"; b.dataset.dwell = "1";
+  b.innerHTML = `<div class="hb-head"><b>This week · my plan</b><span>the week starts again on Monday</span></div><div class="hb-grid">`
+    + rows.map(r => `<div class="hb-row${r.me ? " me" : ""}"><span class="r">${r.rank}</span><span class="t">${r.name}</span><span class="v">${BOARDS.plan.fmt(r.v)}</span></div>`).join("")
+    + `</div>`;
+  b.addEventListener("click", () => renderLeaderboard("plan"));
+  return b;
+}
+function renderLeaderboard(kind = "plan") {
+  if (!BOARDS[kind]) kind = "plan";
   const wrap = $("cards");
   wrap.innerHTML = "";
-  subView("This week's board");
-  const mine = weekStars(state.patient);
-  let anchor = store.getProgress(state.patient, "board") || {};
-  if (anchor.week !== weekKey()) { anchor = { week: weekKey(), ref: Math.max(12, mine || 12) }; store.setProgress(state.patient, "board", anchor); }
-  const seed = i => Math.abs((Math.sin(i * 12.9898 + anchor.ref) * 43758.5453) % 1);
-  const rows = BOARD_NAMES.map(([name, f], i) => ({ name, score: Math.round(anchor.ref * f * (0.94 + 0.12 * seed(i))) }));
-  rows.push({ name: state.patient === "guest" ? "You" : state.patient, score: mine, me: true });
-  rows.sort((a, b) => b.score - a.score);
-  rows.forEach((r, i) => { r.rank = i + 1; });
-  const me = rows.find(r => r.me), next = rows[me.rank - 2];
-  const chase = !mine ? "Play a round this week to take your place." : next ? `${next.score - mine + 1} more star${next.score - mine + 1 === 1 ? "" : "s"} to pass ${next.name}.` : "Top of the board this week!";
-  const html = rows.map(r => `<tr class="${r.me ? "me" : ""}"><td>${r.rank}</td><td class="nm">${r.me ? "<b>" + r.name + "</b>" : r.name}</td><td>${r.score}</td></tr>`).join("");
-  wrap.innerHTML = `<div class="duo-setup"><div class="board"><h3>Stars this week</h3>
-    <p>You are <b>#${me.rank}</b> of ${rows.length} with <b>${mine}</b> star${mine === 1 ? "" : "s"}. ${chase}</p>
-    <table><tr><th>#</th><th class="nm">Player</th><th>Stars</th></tr>${html}</table>
-    <p class="hint">A star is a minute of play. The other players are practice names for now.</p></div></div>`;
+  subView("This week's boards");
+  const tabs = `<div class="board-tabs">${Object.entries(BOARDS).map(([k, B]) => `<button class="btn ${k === kind ? "on" : "ghost-light"} board-tab" data-dwell="1" data-board="${k}">${B.tab}</button>`).join("")}</div>`;
+  const mine = weekStats(state.patient);
+  let body = "";
+  if (kind === "me") {
+    const last = weekStats(state.patient, 1);
+    const row = (label, a, b) => `<div class="me-row"><span class="ml">${label}</span><span class="mw">This week</span>${barHTML(a / Math.max(a, b, 1), "now")}<b>${a}</b><span class="mw">Last week</span>${barHTML(b / Math.max(a, b, 1))}<b>${b}</b></div>`;
+    const more = mine.minutes - last.minutes;
+    body = `<div class="board"><h3>Me, this week and last, up to the same day</h3>
+      <p>${!last.minutes && !mine.minutes ? "Play a round and this week starts to fill." : more >= 0 ? `${plural(more, "minute")} more than last week by this day.` : `Last week by this day you had done ${plural(last.minutes, "minute")}; a little more today closes the gap.`}</p>
+      ${row("Minutes", mine.minutes, last.minutes)}${row("Reps", mine.reps, last.reps)}${row("Goal days", mine.goalDays, last.goalDays)}
+      <p class="hint">Only you are on this one.</p></div>`;
+  } else {
+    const B = BOARDS[kind], rows = boardRows(kind), me = rows.find(r => r.me);
+    const next = [...rows].reverse().find(r => B.fmt(r.v) !== B.fmt(me.v) && r.v > me.v);
+    const said = kind === "plan" ? `You have done <b>${B.fmt(me.v)}</b> of your plan this week.`
+      : kind === "days" ? `Your plan was done on <b>${plural(me.v, "day")}</b> this week.` : `You have done <b>${me.v}</b> ${me.v === 1 ? "rep" : "reps"} this week.`;
+    // the top three and the patient's neighbourhood, a dotted row where places are skipped
+    const win = boardWindow(rows);
+    const html = win.map((r, i) => (i && rows.indexOf(r) - rows.indexOf(win[i - 1]) > 1 ? `<tr><td colspan="3" class="dots">⋯</td></tr>` : "")
+      + `<tr class="${r.me ? "me" : ""}"><td>${r.rank}</td><td class="nm">${r.me ? `<b>${r.name}</b> <span class="you">you</span>` : r.name}</td><td>${B.fmt(r.v)}</td></tr>`).join("");
+    const hint = kind === "plan" ? "Each day counts up to 100% of that player's own plan, so a short plan is as easy to fill as a long one."
+      : kind === "days" ? "A goal day is a day with the whole daily plan done." : "A rep is a lift to at least 60% of your own range and back down.";
+    body = `<div class="board"><h3>${B.head}, this week</h3>
+      <p>${said} ${next ? `Next up: ${next.name}, at ${B.fmt(next.v)}.` : "Top of the board!"}</p>
+      <table><tr><th>#</th><th class="nm">Player</th><th>${B.tab}</th></tr>${html}</table>
+      <p class="hint">${hint} The week starts again on Monday. Practice players fill out the board.</p></div>`;
+  }
+  wrap.innerHTML = `<div class="duo-setup">${tabs}${body}</div>`;
+  wrap.querySelectorAll(".board-tab").forEach(t => t.addEventListener("click", () => renderLeaderboard(t.dataset.board)));
   const back = pillBtn("↩ Back", "All games", renderSelect);
-  wrap.appendChild(back);
-  focusHint(back);
+  wrap.prepend(back);
+  focusHint(wrap.querySelector(".board-tab.on") || back);
 }
-$("btn-select-board").addEventListener("click", renderLeaderboard);

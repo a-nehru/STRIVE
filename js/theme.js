@@ -54,7 +54,7 @@ export const TYPE = {
 export function textScale() { return Math.max(1, A11Y.textScale || 1); }
 export function tsize(role, H, scale = textScale()) {
   const t = TYPE[role] || TYPE.body;
-  return Math.round(t[0] * H / 1080 * scale);
+  return Math.max(12, Math.round(t[0] * H / 1080 * scale));   // never under 12 px, on a phone too
 }
 export function font(role, H, opts = {}) {
   const t = TYPE[role] || TYPE.body;

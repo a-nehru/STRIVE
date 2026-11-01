@@ -84,6 +84,27 @@ const FINGER_CHAINS = [[0, 1, 2, 3, 4], [0, 5, 6, 7, 8], [0, 9, 10, 11, 12], [0,
 // game that tells its hands apart by colour (the Lantern, Oct 2026); closed
 // is then shown by a fuller web and a thicker stroke instead of the sage
 const hexA = (hex, a) => `rgba(${parseInt(hex.slice(1, 3), 16)},${parseInt(hex.slice(3, 5), 16)},${parseInt(hex.slice(5, 7), 16)},${a})`;
+// ONE FRAME FOR EVERY RECORDING (31 Oct 2026, by request: "use one" on every
+// ROM and stretch screen). The per-arm recordings, ROM_Shoulder_Moves_* and
+// Warmup_Stretches_* (_LEFT_arm / _RIGHT_arm), share one design: the title
+// top left, the demonstrator in a box at x 0.10-0.50, y 0.19-0.88 of the
+// frame, and the right half left empty for the patient. The assessment and
+// the warm-up both draw the recording whole in videoFrame (on paper, under
+// the chrome, a progress bar beneath) with the patient's own picture in
+// PERSON_SLOT, the demonstrator's box mirrored into the empty half, so the
+// two read as a pair and the screens look the same.
+export const PERSON_SLOT = { x0: 0.551, x1: 0.947, y0: 0.191, y1: 0.883 };
+export function videoFrame(W, H, aspect = 16 / 9) {
+  const pad = Math.round(W * 0.016);
+  const barH = Math.round(H * 0.014), barGap = Math.round(H * 0.018);
+  const top = Math.round(H * 0.075), bodyH = H - top - pad - barH - barGap;
+  let w = W - pad * 2, h = Math.round(w / aspect);
+  if (h > bodyH) { h = bodyH; w = Math.round(h * aspect); }
+  const x = Math.round((W - w) / 2), y = top + Math.round((bodyH - h) / 2);
+  return { x, y, w, h, barY: y + h + barGap, barH };
+}
+export const slotRect = (f, S = PERSON_SLOT) => ({ x: f.x + f.w * S.x0, y: f.y + f.h * S.y0, w: f.w * (S.x1 - S.x0), h: f.h * (S.y1 - S.y0) });
+
 // The patient's own picture in the empty slot a recording leaves for them
 // (the warm-up and the assessment, Oct 2026): a white-edged box like the
 // demonstrator's, `inside` drawing the cropped camera and skeleton clipped
@@ -115,13 +136,16 @@ export function drawPersonSlot(ctx, panel, trackingOk, fontPx, inside) {
   ctx.restore();
 }
 
+// the capsule hand's proportions: the fingers' width as a share of the palm's
+export const HAND_LOOK = { finger: 0.18 };
 export function drawHand(ctx, c, t, side, opts = {}) {
   const pts = t._handPts(side);
   const closed = t.handClosed(side);
   const k = opts.scale ?? 1;
   // ONE HAND SCHEME (30 Oct 2026, by request: the hand looked different on
-  // every screen): the thin skeleton everywhere, light when open and green
-  // when closed; on a light (Day) surface the same in ink and a deeper green.
+  // every screen): the same hand everywhere, capsules since 31 Oct 2026
+  // (below), light when open and green when closed; on a light (Day) surface
+  // blue and a deeper green.
   // opts.surface "day" | "night" (default "night": the camera picture).
   // opts.tint is only for the old bold style still used by disabled games.
   const day = opts.surface === "day";
@@ -134,31 +158,41 @@ export function drawHand(ctx, c, t, side, opts = {}) {
       return opts.map ? opts.map(px) : px;
     });
     const palmW = Math.hypot(P[5].x - P[17].x, P[5].y - P[17].y);
-    // THIN (30 Oct 2026, by request: in the assessment the hand read as a
-    // glowing square, a filled palm and fingers 16% of the palm wide, made
-    // bigger again by the zoom): fine finger lines, a dot at every joint,
-    // the palm only outlined, a faint edge. The default since the same day
-    // (one scheme everywhere); thin: false keeps the old bold hand.
+    // (30 Oct 2026 replaced the bold hand, which in the assessment read as a
+    // glowing square, with thin lines; 31 Oct replaced those with capsules)
     if (opts.thin !== false) {
-      const tl = Math.max(1.5, palmW * 0.05);
+      // CAPSULES (31 Oct 2026, by request: "do capsule 11", chosen from the
+      // hand sheets for a TV 6-12 ft away, where the thin lines faded): one
+      // rounded pill per finger bone, each cut short of the next joint and
+      // edged in the surface's colour, so a finger bending shows as its
+      // pills folding; a solid palm. Blue (cream on the camera picture) when
+      // open, green when closed, as before: the colour and the shape both
+      // say it. The thin lines of 30 Oct are gone; thin: false keeps the old
+      // bold hand for the disabled games.
+      const fill = closed ? (day ? "#2E7D4F" : "#7FD49A") : (day ? "#2F6BD8" : "#F6F2EA");
+      const edge = day ? "#FFFFFF" : "#14172A";
+      // the fingers' width, a share of the palm's (1 Nov 2026, by request:
+      // slightly thinner, HAND_LOOK.finger 0.18, was 0.22); the palm keeps its own
+      const w = Math.max(3, c.height / 1080 * 3.4, palmW * HAND_LOOK.finger);
+      const wPalm = Math.max(3, c.height / 1080 * 4, palmW * 0.22);
       ctx.save();
       ctx.lineCap = "round"; ctx.lineJoin = "round";
-      ctx.shadowColor = day ? "rgba(255,255,255,0.7)" : "rgba(20,23,42,0.55)"; ctx.shadowBlur = 3;
-      ctx.strokeStyle = stroke; ctx.lineWidth = tl;
+      // the palm
       ctx.beginPath();
       [0, 1, 5, 9, 13, 17].forEach((idx, i) => { const p = P[idx]; i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y); });
-      ctx.closePath(); ctx.stroke();
-      for (const chain of FINGER_CHAINS) {
-        ctx.beginPath();
-        chain.forEach((idx, i) => { const p = P[idx]; i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y); });
-        ctx.stroke();
+      ctx.closePath();
+      ctx.fillStyle = fill; ctx.strokeStyle = fill; ctx.lineWidth = wPalm * 0.9; ctx.stroke(); ctx.fill();
+      // the bones: the thumb from its base, the fingers from the knuckles
+      const segs = [];
+      for (const chain of [[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12], [13, 14, 15, 16], [17, 18, 19, 20]])
+        for (let i = 0; i < chain.length - 1; i++) {
+          const a = P[chain[i]], b = P[chain[i + 1]];
+          segs.push([a, { x: a.x + (b.x - a.x) * 0.82, y: a.y + (b.y - a.y) * 0.82 }]);
+        }
+      for (const [col, lw] of [[edge, w + Math.max(3, w * 0.45)], [fill, w]]) {
+        ctx.strokeStyle = col; ctx.lineWidth = lw;
+        for (const [a, b] of segs) { ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); }
       }
-      ctx.shadowBlur = 0;
-      ctx.fillStyle = stroke;
-      for (let i = 0; i < 21; i++) { ctx.beginPath(); ctx.arc(P[i].x, P[i].y, tl * 0.95, 0, TAU); ctx.fill(); }
-      // fingertips: white on the camera picture, the line colour on paper
-      ctx.fillStyle = day ? stroke : "#fff";
-      for (const idx of [4, 8, 12, 16, 20]) { ctx.beginPath(); ctx.arc(P[idx].x, P[idx].y, tl * 1.25, 0, TAU); ctx.fill(); }
       ctx.restore();
       return true;
     }

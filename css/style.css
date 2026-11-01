@@ -87,6 +87,9 @@
   --ease-out: cubic-bezier(.2, .7, .2, 1);
   --font: "Nunito", system-ui, "Segoe UI", Roboto, sans-serif;
   --chrome: 56px;
+  --chrome-top: 16px;        /* the chrome's distance from the screen's edges (js/ui.js topInset reads it) */
+  --brand-h: calc(var(--chrome) * 1.6);   /* the STRIVE title on the login and welcome screens, bigger than the chrome (31 Oct 2026, by request) */
+  --brand-w: var(--brand-h);              /* what the welcome screen's lines sit under: the title, or the chrome where the title is hidden */
   --hub-w: min(1640px, calc(100vw - 192px));
   --ts: 1;                   /* the text-size setting for the fixed overlays (body.t125 / t150) */
 }
@@ -152,14 +155,17 @@ body.calm .screen { animation: none; }
   background: var(--ink3); border-radius: 8px; border: 3px solid transparent; background-clip: padding-box;
 }
 
+/* headings and short lines break evenly: no last word left alone on its line */
+h1, .select-sub, .headline, .subline, .bubble, .rc-head, .rc-next, .hint, .rom-big .of, .plan-what { text-wrap: balance; }
+
 /* the coach character's own little canvas (js/cast.js mountCharacter) */
 .coach-canvas { display: block; flex: none; width: 150px; height: 150px; }
 /* (the character is drawn at about half the canvas height, with room above to hop) */
-#hub-coach { width: 160px; height: 200px; margin: -24px 0 -14px; }
+#hub-coach { width: 120px; height: 150px; margin: -30px 0 -12px; }   /* 190 x 236 on 31 Oct 2026 (TV); about 65% of that since 1 Nov, by request (pick B) */
 
 /* ---------- the chrome: on every screen, over light and dark alike ---------- */
 #btn-staff {
-  position: fixed; top: 16px; left: 16px; z-index: 50;
+  position: fixed; top: var(--chrome-top); left: var(--chrome-top); z-index: 50;
   width: var(--chrome); height: var(--chrome); border-radius: 50%; border: 0;
   background: var(--card); color: var(--ink); font-size: 26px; line-height: 1;
   box-shadow: var(--e1), var(--hair);
@@ -168,14 +174,14 @@ body.calm .screen { animation: none; }
 /* patient-facing help: one big, always-there pill beside the staff gear,
    never in the way of the prompt (top centre) or the close cross (top right) */
 #btn-help {
-  position: fixed; top: 16px; left: calc(16px + var(--chrome) + 12px); z-index: 60;
+  position: fixed; top: var(--chrome-top); left: calc(var(--chrome-top) + var(--chrome) + 12px); z-index: 60;
   min-height: var(--chrome); padding: 0 28px; border: 0; border-radius: var(--r-pill);
   background: var(--card); color: var(--ink); font: 900 calc(26px * var(--ts))/1 var(--font);
   box-shadow: var(--e1), var(--hair);
 }
 #btn-help:hover { box-shadow: inset 0 0 0 3px var(--ink2), 0 6px 16px rgba(30, 34, 53, .2); }
 #btn-quit {
-  position: absolute; top: 16px; right: 16px; z-index: 5;
+  position: absolute; top: var(--chrome-top); right: var(--chrome-top); z-index: 5;
   width: var(--chrome); height: var(--chrome); border-radius: 50%; border: 0;
   background: var(--card); color: var(--ink); font-size: 24px; font-weight: 900; line-height: 1;
   box-shadow: var(--e1), var(--hair);
@@ -184,28 +190,30 @@ body.calm .screen { animation: none; }
 /* the day's minutes on every other screen: top right, left of the close
    cross while a game is on the stage */
 #today-pill {
-  position: fixed; top: 16px; right: 16px; z-index: 60;
+  position: fixed; top: var(--chrome-top); right: var(--chrome-top); z-index: 60;
   display: flex; align-items: center; gap: 12px;
   min-height: var(--chrome); padding: 0 22px; border-radius: var(--r-pill);
-  background: var(--card); color: var(--ink); font: 800 calc(22px * var(--ts))/1 var(--font);
+  background: var(--card); color: var(--ink); font: 800 calc(clamp(20px, 2.3vh, 28px) * var(--ts))/1 var(--font);
   white-space: nowrap; pointer-events: none;
   box-shadow: var(--e1), var(--hair);
 }
-body:has(#stage:not(.hidden)) #today-pill { right: calc(16px + var(--chrome) + 12px); }
+body:has(#stage:not(.hidden)) #today-pill { right: calc(var(--chrome-top) + var(--chrome) + 12px); }
 #today-pill b { font-weight: 900; }
 #today-pill .tp-bar { width: 96px; height: 10px; border-radius: 5px; background: var(--track); overflow: hidden; }
 #today-pill .tp-bar span { display: block; height: 100%; background: var(--ink); border-radius: 5px; }
+/* the day's reps beside the minutes (1 Nov 2026, by request; js/reps.js), after a thin divider */
+#today-pill .tp-reps { padding-left: 12px; border-left: 2px solid var(--line); }
 
 /* ---------- the camera screens (login, welcome): the live mirror full screen, the words on white ---------- */
 #screen-login, #screen-welcome { background: var(--night); }
-#screen-login { padding: calc(16px + var(--chrome) + 18px) 0 calc(190px * var(--ts)); }
+#screen-login { padding: calc(var(--chrome-top) + var(--chrome) + 18px) 0 calc(190px * var(--ts)); }
 #welcome-canvas, #login-canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 .brand-title {
-  position: absolute; top: 16px; left: 50%; transform: translateX(-50%); z-index: 2;
-  height: var(--chrome); display: flex; align-items: center;
-  padding: 0 calc(26px - .35em) 0 26px; border-radius: var(--r-pill);
+  position: absolute; top: var(--chrome-top); left: 50%; transform: translateX(-50%); z-index: 2;
+  height: var(--brand-h); display: flex; align-items: center;
+  padding: 0 calc(40px - .35em) 0 40px; border-radius: var(--r-pill);
   background: var(--card); color: var(--ink);
-  font-weight: 900; font-size: clamp(22px, 1.6vw, 30px); letter-spacing: .35em;
+  font-weight: 900; font-size: clamp(34px, 3vw, 60px); letter-spacing: .35em;
   box-shadow: var(--e1), var(--hair);
 }
 /* how the picture is doing, in one line: under the login card, and under
@@ -218,8 +226,9 @@ body:has(#stage:not(.hidden)) #today-pill { right: calc(16px + var(--chrome) + 1
   box-shadow: var(--e1), var(--hair);
 }
 .track-status:empty { display: none; }
-#welcome-track { bottom: auto; top: calc(16px + var(--chrome) + 14px); font-size: calc(clamp(16px, 1.05vw, 20px) * var(--ts)); }
+#welcome-track { bottom: auto; top: calc(var(--chrome-top) + var(--brand-w) + 14px); font-size: calc(clamp(16px, 1.05vw, 20px) * var(--ts)); }
 /* the login's line sits inside the card, at its foot, so nothing can run into it */
+.login-card #login-track:empty { display: none; }
 .login-card #login-track {
   position: static; transform: none; display: block; width: fit-content; max-width: 100%;
   margin: 26px auto 0; padding: 10px 22px;
@@ -242,6 +251,9 @@ body:has(#stage:not(.hidden)) #today-pill { right: calc(16px + var(--chrome) + 1
   text-align: center; box-shadow: var(--e2);
 }
 .login-head { font-weight: 900; font-size: clamp(36px, 3vw, 56px); line-height: 1.1; letter-spacing: -.5px; }
+/* the app's name at the top of the login card (1 Nov 2026, by request: look C); the step's heading under it a size smaller */
+.card-brand { margin: -4px 0 18px; padding-left: .35em; font-weight: 900; font-size: clamp(44px, 3.4vw, 66px); line-height: 1; letter-spacing: .35em; color: var(--ink); text-align: center; }
+.card-brand ~ div .login-head { font-size: clamp(30px, 2.3vw, 44px); }
 .login-sub { margin-top: 12px; font-weight: 700; font-size: clamp(22px, 1.6vw, 30px); line-height: 1.3; color: var(--ink2); }
 .login-actions { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; margin-top: 36px; }
 .login-skip {
@@ -310,10 +322,10 @@ body:has(#stage:not(.hidden)) #today-pill { right: calc(16px + var(--chrome) + 1
   padding: 26px 40px 28px 26px; border-radius: var(--r-lg);
   background: var(--card); color: var(--ink); box-shadow: var(--e2);
 }
-.welcome-card .coach-canvas { width: clamp(120px, 9vw, 170px); height: clamp(140px, 10.5vw, 200px); }
+.welcome-card .coach-canvas { width: clamp(84px, 6.6vw, 126px); height: clamp(98px, 7.7vw, 148px); }
 .welcome-words { flex: 1; min-width: 0; }
-.headline { font-weight: 900; font-size: clamp(36px, 3.5vw, 68px); line-height: 1.05; letter-spacing: -.5px; }
-.subline { margin-top: 10px; font-weight: 700; font-size: clamp(22px, 1.65vw, 32px); line-height: 1.25; color: var(--ink2); }
+.headline { font-weight: 900; font-size: clamp(28px, 2.4vw, 46px); line-height: 1.05; letter-spacing: -.5px; }
+.subline { margin-top: 8px; font-weight: 700; font-size: clamp(18px, 1.2vw, 23px); line-height: 1.25; color: var(--ink2); }
 .welcome-actions { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 22px; }
 
 /* the intro: the recording fills the screen on the ink of its own edges */
@@ -325,21 +337,20 @@ body:has(#stage:not(.hidden)) #today-pill { right: calc(16px + var(--chrome) + 1
 /* The menu can outgrow one viewport, so the screen scrolls from the top. */
 #screen-select {
   justify-content: flex-start; overflow-y: auto; overflow-x: hidden;
-  padding: 26px 0 64px; gap: 26px;
+  padding: 16px 0 64px; gap: 18px;
 }
 .hub-head {
   width: var(--hub-w); flex-shrink: 0;
   display: flex; align-items: center; justify-content: space-between; gap: 28px;
-  min-height: 150px;
 }
 #screen-select h1 { font-weight: 900; font-size: clamp(40px, 3.4vw, 64px); line-height: 1.05; letter-spacing: -.5px; }
 .select-sub { margin-top: 10px; font-weight: 700; font-size: clamp(22px, 1.6vw, 32px); color: var(--ink2); }
 .hub-coach { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
 .bubble {
   position: relative; max-width: 440px;
-  padding: 16px 24px; border-radius: var(--r-md);
+  padding: 11px 18px; border-radius: var(--r-md);
   background: var(--card); color: var(--ink);
-  font-weight: 800; font-size: clamp(20px, 1.45vw, 28px); line-height: 1.25;
+  font-weight: 800; font-size: clamp(16px, 1.05vw, 20px); line-height: 1.25;
   box-shadow: var(--e1);
 }
 .bubble::after {
@@ -354,13 +365,16 @@ body:has(#stage:not(.hidden)) #today-pill { right: calc(16px + var(--chrome) + 1
 /* today's workout: the day's minutes against the goal, and the plan */
 .workout {
   width: var(--hub-w); flex-shrink: 0;
-  display: flex; flex-direction: column; gap: 16px;
-  padding: 26px 36px 30px; border-radius: var(--r-lg);
+  display: flex; flex-direction: column; gap: 14px;
+  padding: 20px 32px 22px; border-radius: var(--r-lg);
   background: var(--card); box-shadow: var(--e2);
 }
 .workout-label { font-weight: 800; font-size: clamp(20px, 1.35vw, 26px); color: var(--ink2); }
 .today-strip { display: flex; align-items: center; gap: 30px; }
-.today-line { font-weight: 800; font-size: clamp(30px, 2.4vw, 46px); line-height: 1.1; white-space: nowrap; }
+.today-line { font-weight: 800; font-size: clamp(26px, 2vw, 38px); line-height: 1.1; white-space: nowrap; }
+.today-line .tl-k { margin-right: .3em; color: var(--ink2); }
+.today-reps { padding-left: 24px; border-left: 3px solid var(--track); font-weight: 800; font-size: clamp(26px, 2vw, 38px); line-height: 1.1; white-space: nowrap; }
+.today-reps b { font-weight: 900; }
 .today-line b { font-weight: 900; }
 .today-track { flex: 1; display: flex; align-items: center; gap: 12px; }
 .today-bar { flex: 1; height: 22px; border-radius: 11px; background: var(--track); overflow: hidden; }
@@ -369,9 +383,11 @@ body:has(#stage:not(.hidden)) #today-pill { right: calc(16px + var(--chrome) + 1
 .today-goal { font-weight: 700; font-size: 16px; color: var(--ink2); }
 .plan-strip {
   display: flex; align-items: center; justify-content: space-between; gap: 22px;
-  padding-top: 18px; border-top: 2px solid var(--track);
+  padding-top: 14px; border-top: 2px solid var(--track);
 }
 .today-strip.hidden + .plan-strip { padding-top: 0; border-top: 0; }
+/* Start the plan and Edit side by side (Edit is the one way to change the plan) */
+.plan-btns { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
 .plan-what { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-weight: 800; font-size: clamp(18px, 1.25vw, 24px); color: var(--ink2); }
 .plan-chip {
   display: inline-flex; align-items: center; gap: 10px;
@@ -388,16 +404,29 @@ body:has(#stage:not(.hidden)) #today-pill { right: calc(16px + var(--chrome) + 1
   font-size: 14px; font-weight: 900; box-shadow: var(--e1), var(--hair);
 }
 .hub-label { width: var(--hub-w); flex-shrink: 0; margin-bottom: -10px; font-weight: 800; font-size: clamp(20px, 1.35vw, 26px); color: var(--ink2); }
+/* the hub's two rows (1 Nov 2026, by request; look C): a dark label with a
+   figure, single player then two players, and a line across to the edge */
+.cards-row-head { flex: 0 0 100%; display: flex; align-items: center; gap: 18px; margin-bottom: -6px; font-weight: 900; font-size: clamp(22px, 1.5vw, 30px); }
+.cards-row-head::after { content: ""; flex: 1; height: 3px; border-radius: 2px; background: var(--line); }
+.cards-row-head:not(:first-child) { margin-top: 12px; }
+.cat-pill { display: inline-flex; align-items: center; gap: 12px; padding: 9px 24px 9px 16px; border-radius: var(--r-pill); background: var(--ink); color: var(--paper); }
+.cat-pill svg { width: 1.15em; height: 1.15em; flex: none; }
+.cat-pill svg.two { width: 1.5em; }
 
 /* the game tiles: the game's colour, a flat white drawing, the name */
 .cards {
   width: var(--hub-w); flex-shrink: 0;
-  display: flex; flex-wrap: wrap; gap: 22px; align-items: stretch; justify-content: flex-start;
+  display: flex; flex-wrap: wrap; gap: 18px 22px; align-items: stretch; justify-content: flex-start;
 }
 #screen-select.sub .cards { justify-content: center; gap: 18px; }
+/* a sub-screen's own buttons (Continue, Back, Play) stay in view while a
+   long level map scrolls under them; the hub's footer steps aside there and
+   the floating Help takes its place (1 Nov 2026 clean-up) */
+#screen-select.sub .sub-btn { position: sticky; bottom: -40px; z-index: 3; box-shadow: var(--e2); }
+#screen-select.sub .menu-actions { display: none; }
 .gcard {
   position: relative; flex: none;
-  width: clamp(220px, calc((var(--hub-w) - 110px) / 6), 300px); aspect-ratio: 300 / 260;
+  width: clamp(220px, calc((var(--hub-w) - 110px) / 6), 300px); aspect-ratio: 300 / 222;
   border: 0; padding: 0; border-radius: 28px; overflow: hidden;
   background: var(--card); color: #fff; text-align: left;
   box-shadow: var(--e1);
@@ -419,7 +448,7 @@ body.calm .gcard { transition: none; }
   position: absolute; top: 14px; left: 14px;
   padding: 6px 14px; border-radius: var(--r-pill);
   background: var(--card); color: var(--ink);
-  font-weight: 800; font-size: clamp(14px, .92vw, 18px);
+  font-weight: 800; font-size: clamp(14px, 1.05vw, 22px);
   box-shadow: var(--e1);
 }
 .gcard .dwell-fill {
@@ -451,14 +480,41 @@ body.calm .gcard { transition: none; }
    still selectable, so it can explain itself instead of just refusing */
 .gcard.locked { opacity: .6; }
 
-/* the lantern street (village.js): a night scene, framed as a card */
-.village {
-  width: var(--hub-w); flex-shrink: 0;
-  border-radius: var(--r-lg); overflow: hidden;
-  background: var(--night); box-shadow: var(--e2);
-}
-#village-canvas { display: block; width: 100%; height: clamp(120px, 17vh, 190px); }
 .menu-actions { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; padding: 0 3vw; flex-shrink: 0; }
+/* on the hub the actions end the last row, bottom right beside the two-player card */
+.cards > .menu-actions { flex-direction: column; align-self: center; justify-content: center; margin-left: auto; padding: 0; gap: 12px; }
+.cards > .menu-actions .btn { width: 100%; }
+/* the board on the hub (1 Nov 2026): six rows, stars per day since each player started */
+.hub-board {
+  flex: 1 1 480px; max-width: 820px; align-self: stretch;
+  display: flex; flex-direction: column; gap: 10px; padding: 16px 26px 18px;
+  border: 0; border-radius: 28px; background: var(--card); color: var(--ink); text-align: left;
+  box-shadow: var(--e1); transition: transform var(--t-base) var(--ease-out), box-shadow var(--t-base) var(--ease-out);
+}
+.hub-board:hover, .hub-board.kbd-focus { transform: translateY(-4px); box-shadow: var(--e2); }
+.hb-head { display: flex; align-items: baseline; gap: 12px; }
+.hb-head b { font-weight: 900; font-size: clamp(20px, 1.4vw, 27px); }
+.hb-head span { font-weight: 700; font-size: clamp(15px, 1vw, 19px); color: var(--ink2); }
+.hb-grid { flex: 1; display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: repeat(3, 1fr); grid-auto-flow: column; gap: 6px 26px; }
+.hb-row { display: grid; grid-template-columns: 2.2em 1fr auto; align-items: center; padding: 0 14px; border-radius: var(--r-pill);
+  font-weight: 800; font-size: clamp(18px, 1.3vw, 25px); font-variant-numeric: tabular-nums; }
+.hb-row .r { color: var(--ink2); }
+.hb-row .t { letter-spacing: .14em; }
+.hb-row.me { background: var(--ink); color: var(--paper); }
+.hb-row.me .r { color: var(--paper); }
+.hb-head { justify-content: space-between; }
+.bbar { display: inline-block; width: 140px; height: 14px; border-radius: 7px; background: var(--track); overflow: hidden; vertical-align: middle; }
+.bbar > span { display: block; height: 100%; border-radius: 7px; background: var(--ink3); }
+.bbar.now > span { background: var(--ok); }
+/* the four boards' tabs, and the "me" view */
+.board-tabs { display: flex; flex-wrap: wrap; gap: 12px; }
+.board-tab.on { background: var(--ink); color: var(--paper); }
+.me-row { display: grid; grid-template-columns: 9em 7em 1fr 3.5em; align-items: center; gap: 6px 14px; margin: 12px 0; font-size: clamp(18px, 1.2vw, 22px); font-weight: 800; }
+.me-row .ml { grid-row: span 2; font-weight: 900; }
+.me-row .mw { color: var(--ink2); font-weight: 700; }
+.me-row .bbar { width: 100%; height: 22px; border-radius: 11px; }
+.me-row .bbar > span { border-radius: 11px; }
+
 
 /* the panel the level maps, the two-player setup and the board are drawn on */
 .duo-setup {
@@ -490,7 +546,7 @@ body.calm .gcard { transition: none; }
 /* the level maps (23 Oct 2026): a winding path, a node per level, stars
    under each, drawn in the game's accent (--acc, set on .lvl-map) */
 .lvl-map { --acc: var(--pong-solid); --acc-deep: var(--pong-deep); --acc-tint: var(--pong-tint); --acc-on: var(--pong-on); }
-.lvl-svg { display: block; width: 100%; height: auto; max-width: 1100px; margin: 0 auto 4px; font-family: var(--font); }
+.lvl-svg { display: block; width: 100%; height: auto; max-width: min(1500px, 140vh); margin: 0 auto 4px; font-family: var(--font); }
 .lvl-svg .trail { fill: none; stroke: var(--track); stroke-width: 12; stroke-linecap: round; stroke-linejoin: round; }
 .lvl-svg .trail.done { stroke: var(--acc); }
 .lvl-svg .node { cursor: pointer; }
@@ -514,10 +570,12 @@ body.calm .lvl-svg .node.cur .halo { animation: none; }
 .board { background: var(--paper); border-radius: var(--r-md); padding: 18px 22px; font-size: 18px; color: var(--ink); }
 .board h3 { margin: 0 0 6px; font-weight: 900; font-size: 22px; }
 .board p { margin: 4px 0 10px; }
-.board table { width: 100%; border-collapse: collapse; font-size: 18px; }
+.board table { width: 100%; border-collapse: collapse; font-size: clamp(18px, 1.2vw, 23px); }
 .board th { font-size: 15px; font-weight: 800; color: var(--ink2); }
 .board th, .board td { padding: 6px 10px; text-align: right; }
 .board .nm { text-align: left; }
+.board td.nm { letter-spacing: .12em; font-variant-numeric: tabular-nums; }
+.board .you { margin-left: 8px; padding: 2px 10px; border-radius: var(--r-pill); background: var(--ink); color: var(--paper); font-size: 14px; letter-spacing: 0; }
 .board tr.me { background: var(--card); font-weight: 900; }
 .board tr.me td:first-child { box-shadow: inset 6px 0 0 var(--ink); }
 .board td.dots { text-align: center; color: var(--ink3); }
@@ -540,13 +598,13 @@ body.calm .lvl-svg .node.cur .halo { animation: none; }
   padding: 12px 28px 14px; border-radius: var(--r-lg);
   background: var(--card); color: var(--ink); box-shadow: var(--e2), var(--hair);
   text-align: center; pointer-events: none;
-  font-weight: 900; font-size: calc(clamp(26px, 4.3vh, 48px) * var(--ts)); line-height: 1.12;
+  font-weight: 900; font-size: calc(clamp(26px, min(4.3vh, 4.4vw), 48px) * var(--ts)); line-height: 1.12;
 }
 #prompt:empty, #stage #prompt:empty { display: none !important; }
-#prompt small { display: block; margin-top: 6px; font-weight: 700; font-size: .52em; line-height: 1.3; color: var(--ink2); }
+#prompt small { display: block; margin-top: 6px; font-weight: 700; font-size: .6em; line-height: 1.3; color: var(--ink2); }   /* 28 px at 1080: read from across the room (TV, 6-12 ft) */
 /* the warm-up: one row, between the chrome (ends 72 px down) and the video card (16%) */
 #stage[data-mode="warmup"] #prompt {
-  top: calc(16px + var(--chrome) + 6px);
+  top: calc(var(--chrome-top) + var(--chrome) + 6px);
   display: flex; align-items: baseline; justify-content: center; gap: 18px;
   padding: 10px 30px 12px; font-size: calc(clamp(22px, 3.3vh, 38px) * var(--ts));
 }
@@ -555,22 +613,22 @@ body.calm .lvl-svg .node.cur .halo { animation: none; }
    of the way down: its words go in the chrome row, between Help and the
    Today pill, one row (and above the video stage's card, which starts at 7.5%) */
 #stage[data-mode="assess"] #prompt {
-  top: 16px; min-height: var(--chrome); max-width: max(360px, calc(100vw - 920px - (var(--ts) - 1) * 400px));
+  top: var(--chrome-top); min-height: var(--chrome); max-width: max(360px, calc(100vw - 920px - (var(--ts) - 1) * 400px));
   display: flex; flex-wrap: wrap; align-items: baseline; justify-content: center; column-gap: 16px; row-gap: 0;
   padding: 9px 26px 10px; border-radius: 28px; font-size: calc(clamp(22px, 2.8vh, 32px) * var(--ts));
 }
-#stage[data-mode="assess"] #prompt small { margin-top: 0; font-size: .66em; }
+#stage[data-mode="assess"] #prompt small { margin-top: 0; font-size: .72em; }
 
 /* the coach's praise and posture cues: a white pill. A posture cue gets a
    dashed ring and a "!" instead of the check, never colour alone. */
 /* bottom centre, never wider than the gap between the two coach-dock
-   corners (js/ui.js dockRect: 337 x 150 px, 34 px in from a bottom corner) */
+   corners (js/ui.js dockRect: 416 x 185 px, 34 px in from a bottom corner) */
 #cue {
   position: absolute; z-index: 3; left: 50%; bottom: max(40px, 4.4vh); transform: translateX(-50%);
   display: flex; align-items: center; gap: 14px;
   width: max-content; max-width: 50vw; padding: 12px 30px 12px 16px; border-radius: var(--r-pill);
   background: var(--card); color: var(--ink); box-shadow: var(--e2), var(--hair);
-  font-weight: 800; font-size: calc(clamp(22px, 3vh, 34px) * var(--ts)); line-height: 1.2;
+  font-weight: 800; font-size: calc(clamp(22px, min(3.6vh, 3.4vw), 42px) * var(--ts)); line-height: 1.2;
   pointer-events: none;
 }
 #cue::before {
@@ -603,7 +661,7 @@ body:has(:is(#screen-select, #screen-between, #screen-schedule, #screen-romcompa
    keeps free under its card, and on the welcome screen under the tracking
    line at the top, clear of the words card along the bottom */
 body:has(#screen-login:not(.hidden)) #caption { bottom: 66px; max-width: min(1100px, 88vw); }
-body:has(#screen-welcome:not(.hidden)) #caption { bottom: auto; top: calc(16px + var(--chrome) + 66px * var(--ts)); max-width: min(1100px, 88vw); }
+body:has(#screen-welcome:not(.hidden)) #caption { bottom: auto; top: calc(var(--chrome-top) + var(--brand-w) + 66px * var(--ts)); max-width: min(1100px, 88vw); }
 
 /* paused (tracking lost, or Space): a night veil and one white card */
 #paused {
@@ -625,14 +683,14 @@ body:has(#screen-welcome:not(.hidden)) #caption { bottom: auto; top: calc(16px +
    (each listed once; nothing listed sits inside another listed element) */
 body.t125 :is(.headline, .subline, .welcome-actions,
   .login-head, .login-sub, .login-actions, .login-skip, .login-person, #login-name,
-  #screen-select h1, .select-sub, .bubble, .workout-label, .today-line, .plan-what, .plan-strip .btn, .hub-label,
-  .gcard .title, .gcard .trains, .gcard .lock, .menu-actions, .duo-row, .duo-big, .hint:not(.board .hint), .board, .sub-btn,
+  #screen-select h1, .select-sub, .bubble, .workout-label, .today-line, .today-reps, .plan-what, .plan-strip .btn, .hub-label,
+  .gcard .title, .gcard .trains, .gcard .lock, .cards-row-head, .menu-actions, .hub-board, .duo-row, .duo-big, .hint:not(.board .hint), .board, .sub-btn,
   .rc-top, .rc-head, .rc-hero-l, .rc-trend-l, .rc-next, .rc-ask, .faces, .rc-note, .rc-actions,
   #screen-schedule h1, #screen-romcompare h1, .rom-big, #btn-rom-done) { zoom: 1.25; }
 body.t150 :is(.headline, .subline, .welcome-actions,
   .login-head, .login-sub, .login-actions, .login-skip, .login-person, #login-name,
-  #screen-select h1, .select-sub, .bubble, .workout-label, .today-line, .plan-what, .plan-strip .btn, .hub-label,
-  .gcard .title, .gcard .trains, .gcard .lock, .menu-actions, .duo-row, .duo-big, .hint:not(.board .hint), .board, .sub-btn,
+  #screen-select h1, .select-sub, .bubble, .workout-label, .today-line, .today-reps, .plan-what, .plan-strip .btn, .hub-label,
+  .gcard .title, .gcard .trains, .gcard .lock, .cards-row-head, .menu-actions, .hub-board, .duo-row, .duo-big, .hint:not(.board .hint), .board, .sub-btn,
   .rc-top, .rc-head, .rc-hero-l, .rc-trend-l, .rc-next, .rc-ask, .faces, .rc-note, .rc-actions,
   #screen-schedule h1, #screen-romcompare h1, .rom-big, #btn-rom-done) { zoom: 1.5; }
 
@@ -668,12 +726,28 @@ body.hc .btn.ghost, body.hc .btn.ghost-light { box-shadow: inset 0 0 0 4px var(-
 #handcursor.grasping { transform: translate(-50%, -50%) scale(.7); }
 
 /* ---------- the session plan (Oct 2026): a line of 15-minute blocks and the tiles that add them ---------- */
-#screen-schedule { justify-content: flex-start; overflow-y: auto; padding: 32px 0 56px; gap: 18px; }
+#screen-schedule { --sched-pad: 56px; justify-content: flex-start; overflow-y: auto; padding: 32px 0 var(--sched-pad); gap: 18px; }
 #screen-schedule h1 { font-weight: 900; font-size: clamp(40px, 3.4vw, 64px); letter-spacing: -.5px; flex-shrink: 0; }
 #screen-schedule .select-sub { margin-top: 0; max-width: min(1180px, 90vw); text-align: center; font-size: clamp(20px, 1.35vw, 26px); }
-.plan-blocks { display: flex; flex-wrap: wrap; align-items: stretch; gap: 12px; width: min(94vw, 1180px); }
+/* one hour bar (1 Nov 2026, by request: look B): four quarters side by
+   side on one white bar, a stripe for an empty quarter, the minutes under it */
+.plan-blocks {
+  display: flex; flex-wrap: nowrap; align-items: stretch; gap: 0; width: min(94vw, 1180px); flex-shrink: 0;
+  background: var(--card); border-radius: var(--r-lg); overflow: hidden; box-shadow: var(--e1), var(--hair);
+}
+.plan-blocks .plan-seg { flex: 1 1 0; max-width: none; min-height: 118px; border-radius: 0; box-shadow: inset 0 12px 0 var(--acc, var(--ink)); }
+.plan-blocks .plan-seg + .plan-seg { border-left: 4px solid var(--paper); }
+.plan-blocks .plan-slot { border: 0; border-left: 4px solid var(--paper); box-shadow: none; background: repeating-linear-gradient(135deg, var(--paper) 0 12px, var(--card) 12px 24px); }
+.plan-blocks .plan-slot:first-child { border-left: 0; }
+.hour-scale { position: relative; flex-shrink: 0; width: min(94vw, 1180px); height: 24px; margin-top: -10px; font-weight: 900; font-size: 20px; color: var(--ink2); }
+.hour-scale span { position: absolute; top: 0; transform: translateX(-50%); white-space: nowrap; }
+.hour-scale span:nth-child(1) { left: 0; transform: none; }
+.hour-scale span:nth-child(2) { left: 25%; }
+.hour-scale span:nth-child(3) { left: 50%; }
+.hour-scale span:nth-child(4) { left: 75%; }
+.hour-scale span:nth-child(5) { left: 100%; transform: translateX(-100%); }
 .plan-seg {
-  flex: 1 1 150px; min-width: 150px; max-width: 240px;
+  flex: 1 1 150px; min-width: 150px; max-width: 290px;
   display: flex; flex-direction: column; gap: 8px;
   padding: 16px 14px 14px; border-radius: var(--r-md);
   background: var(--card); box-shadow: inset 0 7px 0 var(--acc, var(--ink)), var(--e1);
@@ -703,7 +777,7 @@ body.hc .btn.ghost, body.hc .btn.ghost-light { box-shadow: inset 0 0 0 4px var(-
 .plan-foot { display: flex; align-items: center; gap: 18px; width: min(94vw, 1180px); }
 .plan-total { font-weight: 800; font-size: 22px; }
 .plan-total b { font-size: 1.2em; font-weight: 900; }
-.plan-picks { display: flex; flex-wrap: wrap; justify-content: center; gap: 16px; width: min(94vw, 1180px); margin-top: 6px; }
+.plan-picks { display: flex; flex-wrap: wrap; justify-content: center; gap: 16px; width: min(94vw, 1300px); margin-top: 6px; }
 .plan-picks .gcard { width: 230px; aspect-ratio: 230 / 270; }
 .plan-picks .gcard .art > svg { bottom: auto; height: 68%; }
 .plan-picks .gcard .title { left: 18px; bottom: 14px; font-size: 24px; }
@@ -715,7 +789,14 @@ body.hc .btn.ghost, body.hc .btn.ghost-light { box-shadow: inset 0 0 0 4px var(-
   background: var(--ok) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M6 12.5l4 4 8-9' fill='none' stroke='%23fff' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 70% no-repeat;
 }
 .plan-picks .gcard.full { opacity: .45; }
-.plan-actions { display: flex; gap: 14px; margin-top: 6px; }
+/* Save and Skip stay in view however long the screen runs (1 Nov 2026, by
+   request): pinned to the bottom of the scrolling screen on a band of paper */
+.plan-actions {
+  position: sticky; bottom: calc(-1 * var(--sched-pad)); z-index: 3; flex-shrink: 0;   /* stuck to the screen's own bottom edge, not above its padding */
+  display: flex; justify-content: center; gap: 14px;
+  width: 100%; margin: 6px 0 calc(-1 * var(--sched-pad)); padding: 22px 0 20px;
+  background: linear-gradient(to bottom, transparent, var(--paper) 22px);
+}
 
 /* ---------- P5 the round card (results): white card on paper ---------- */
 /* One template for every game (28 Oct 2026, by request), in the 30 Oct look:
@@ -763,8 +844,8 @@ body.hc .btn.ghost, body.hc .btn.ghost-light { box-shadow: inset 0 0 0 4px var(-
 @keyframes rcPlus { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
 body.calm .rc-star-plus { animation: none; }
 .rc-main { display: flex; align-items: center; gap: 26px; }
-.rc-coach { width: clamp(120px, 15vh, 170px); height: clamp(140px, 18vh, 200px); margin: -20px 0 -10px; }
-.rc-head { font-weight: 900; font-size: clamp(40px, 3.4vw, 64px); line-height: 1.05; letter-spacing: -.5px; }
+.rc-coach { width: clamp(78px, 10.5vh, 120px); height: clamp(92px, 12.3vh, 140px); margin: -14px 0 -8px; }
+.rc-head { font-weight: 900; font-size: clamp(30px, 2.4vw, 46px); line-height: 1.05; letter-spacing: -.5px; }
 .rc-hero { text-align: center; margin-top: -8px; }
 .rc-hero-n { font-weight: 900; font-size: clamp(88px, 13vh, 150px); line-height: .95; letter-spacing: -2px; color: var(--acc-deep); font-variant-numeric: tabular-nums; }
 .rc-hero-l { margin-top: 4px; font-weight: 800; font-size: clamp(22px, 1.65vw, 32px); color: var(--ink2); }
@@ -815,8 +896,9 @@ body.calm .face { transition: none; }
   flex-direction: column; gap: 2px;
   font-size: clamp(24px, 1.9vw, 36px); font-weight: 900;
 }
-.rc-actions .btn.big small { font-size: .5em; font-weight: 800; }
-#btn-next-round { background: var(--acc); color: var(--acc-on); }
+.rc-actions .btn.big small { font-size: .62em; font-weight: 800; }
+#btn-next-round { background: linear-gradient(to right, var(--acc-deep) calc(var(--auto, 0) * 100%), var(--acc) 0); color: var(--acc-on); }
+/* (--auto: the count to the next planned game, 0..1, fills the button from the left; main.js startAutoNext) */
 
 /* ---------- S3 staff profile (laptop density, staff sizes) ---------- */
 #screen-profile { position: fixed; inset: 0; display: block; overflow-y: auto; background: var(--paper); color: var(--ink); }
@@ -824,7 +906,7 @@ body.calm .face { transition: none; }
   position: sticky; top: 0; z-index: 3;
   display: flex; align-items: center; justify-content: space-between; gap: 16px;
   /* clear of the chrome: the gear and Help on the left, the Today pill on the right */
-  min-height: calc(16px + var(--chrome) + 16px);
+  min-height: calc(var(--chrome-top) + var(--chrome) + 16px);
   padding: 14px calc(410px * var(--ts)) 14px calc(16px + var(--chrome) + 12px + 170px * var(--ts));
   background: var(--card); color: var(--ink); box-shadow: var(--e1);
 }
@@ -917,13 +999,15 @@ table.log td { padding: 7px 4px; font-size: 14px; font-weight: 700; border-top: 
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* ---------- P6b after the assessment: one big number, the shape, a plot ---------- */
-#screen-romcompare { justify-content: flex-start; overflow-y: auto; padding: 32px 4vw 48px; gap: 10px; }
+#screen-romcompare { justify-content: flex-start; overflow-y: auto; padding: 24px 4vw 24px; gap: 8px; }
 #screen-romcompare h1 { font-weight: 900; font-size: clamp(40px, 3.4vw, 64px); letter-spacing: -.5px; flex-shrink: 0; }
 #screen-romcompare .select-sub { margin-top: 0; }
 .rom-hero { display: flex; flex-wrap: wrap; gap: 32px; align-items: center; justify-content: center; width: min(1300px, 92vw); margin: 12px auto 14px; flex-shrink: 0; }
 .rom-live-wrap { flex: 1 1 560px; max-width: 900px; padding: 16px 16px 12px; border-radius: var(--r-lg); background: var(--card); box-shadow: var(--e2); }
-#rom-live { display: block; width: 100%; aspect-ratio: 16 / 9; border-radius: var(--r-md); background: var(--card); }
-.rom-live-legend { margin-top: 8px; text-align: center; font-size: 17px; font-weight: 800; color: var(--ink2); }
+/* the picture's height is capped so the whole screen, Continue included,
+   fits a 1080 TV without scrolling (31 Oct 2026) */
+#rom-live { display: block; width: 100%; max-height: 33vh; aspect-ratio: 16 / 9; margin: 0 auto; border-radius: var(--r-md); background: var(--card); }
+.rom-live-legend { margin-top: 8px; text-align: center; font-size: clamp(16px, 2.1vh, 24px); font-weight: 800; color: var(--ink2); }
 .rom-big { flex: 0 1 400px; text-align: center; }
 .rom-big .pct { font-size: clamp(96px, 12vh, 150px); font-weight: 900; line-height: 1; letter-spacing: -3px; color: var(--assess-deep); }
 .rom-big .of { margin-top: 6px; font-size: clamp(20px, 1.45vw, 28px); font-weight: 800; color: var(--ink2); }
@@ -931,16 +1015,212 @@ table.log td { padding: 7px 4px; font-size: 14px; font-weight: 700; border-top: 
 .rom-big .chip.up { color: var(--ok); background: var(--card); box-shadow: inset 0 0 0 3px var(--ok); }
 .rom-big .chip.dn { color: var(--ink2); background: var(--card); box-shadow: inset 0 0 0 3px var(--ink3); }
 .rom-big .chip.sm { color: var(--ink2); background: var(--card); box-shadow: inset 0 0 0 2px var(--line); }
-.rom-plot-wrap { width: min(1100px, 92vw); margin: 0 auto 22px; padding: 18px 22px 12px; border-radius: var(--r-lg); background: var(--card); box-shadow: var(--e1); flex-shrink: 0; }
+.rom-plot-wrap { width: min(760px, 92vw); margin: 0 auto 12px; padding: 18px 22px 12px; border-radius: var(--r-lg); background: var(--card); box-shadow: var(--e1); flex-shrink: 0; }
 #rom-plot svg { display: block; width: 100%; height: auto; font-family: var(--font); }
 #rom-plot .ax { stroke: var(--track); stroke-width: 2; }
-#rom-plot .lbl { fill: var(--ink2); font-weight: 700; font-size: 15px; }
+#rom-plot .lbl { fill: var(--ink2); font-weight: 700; font-size: 20px; }
 #rom-plot .ln { fill: none; stroke: var(--assess-solid); stroke-width: 3; stroke-linejoin: round; stroke-linecap: round; }
 #rom-plot .dot { fill: var(--assess-solid); stroke: var(--card); stroke-width: 2; }
 #rom-plot .dot.now { fill: var(--assess-deep); }
-#rom-plot .val { fill: var(--assess-deep); font-weight: 900; font-size: 17px; }
-#rom-plot .one { fill: var(--ink2); font-weight: 700; font-size: 16px; }
+#rom-plot .val { fill: var(--assess-deep); font-weight: 900; font-size: 24px; }
+#rom-plot .one { fill: var(--ink2); font-weight: 700; font-size: 21px; }
 #btn-rom-done { background: var(--assess-solid); color: var(--assess-on); min-width: 260px; }
+
+/* TV edges (31 Oct 2026, by request: the main use is a 42-50 inch TV at 6-12
+   ft). Many TVs crop 2-5% off every edge of a computer's picture
+   (overscan), which would cut off the chrome and the games' edges. The TV's
+   own fix is its picture size ("Just Scan", "Screen Fit", "PC mode"); where
+   that is not possible, the staff drawer's "TV edges" setting (device-level,
+   localStorage strive-tv-safe) draws the whole app 5% in from every edge.
+   The transform makes body the box every fixed element sits in, so all of
+   it moves together; pointer input is mapped through the canvases' rects. */
+html.tv-safe { background: #000; }
+html.tv-safe body { transform: scale(.95); transform-origin: 50% 50%; }
+
+/* ---------- any screen (31 Oct 2026, by request: "auto fit the interface
+   for the screen size / device"). A wide screen or a TV keeps the layout
+   above as it is; these only step in where it would not fit. The canvas does
+   its own part (js/ui.js u, topInset; each game's layout). ---------- */
+/* narrower than a laptop: the chrome's row runs across the top, so the
+   words over a game start under it and under the canvas's top band (which
+   js/ui.js topInset moves down by the same row), and keep inside the screen */
+@media (max-width: 1099px) {
+  :root { --hub-w: calc(100vw - 64px); --brand-w: var(--chrome); }
+  /* the welcome screen's chrome row holds Help and Today here: no room for the title between them */
+  #screen-welcome .brand-title { display: none; }
+  #screen-select, #screen-schedule, #screen-romcompare { padding-top: calc(var(--chrome-top) + var(--chrome) + 14px); }
+  #stage #prompt { top: calc(var(--chrome-top) + var(--chrome) + 10px + min(11.5vh, 12.4vw)); max-width: 92vw; }
+  #stage[data-mode="assess"] #prompt { top: calc(var(--chrome-top) + var(--chrome) + 10px); max-width: 92vw; }
+  #stage[data-mode="warmup"] #prompt { max-width: 92vw; }
+  #cue { max-width: 92vw; }
+  #caption { max-width: 92vw; }
+  .prof-head { flex-wrap: wrap; padding: calc(var(--chrome-top) + var(--chrome) + 10px) 18px 14px; }
+}
+@media (orientation: portrait) {
+  #cue { bottom: calc(min(20.3vh, 21.9vw) + 12px); }
+}
+/* portrait, a phone, a small tablet: one column, smaller chrome, everything
+   inside the width. The posture card sits in a bottom corner (js/ui.js
+   dockRect, 219 u tall with its margin, u = min(vh/10.8, vw/10)), so the
+   coach's line goes above it rather than over it. */
+@media (max-width: 760px) {
+  :root { --chrome: 44px; --chrome-top: 10px; --hub-w: calc(100vw - 28px); }
+  #btn-staff { font-size: 20px; }
+  #btn-help { left: calc(var(--chrome-top) + var(--chrome) + 8px); padding: 0 16px; font-size: calc(19px * var(--ts)); }
+  #today-pill { padding: 0 12px; gap: 6px; font-size: calc(14px * var(--ts)); }
+  #today-pill .tp-bar { display: none; }
+  body:has(#stage:not(.hidden)) #today-pill { right: calc(var(--chrome-top) + var(--chrome) + 8px); }
+  #btn-quit { font-size: 20px; }
+  .brand-foot { bottom: 8px; max-width: 94vw; padding: 6px 12px; font-size: 11px; white-space: normal; text-align: center; }
+  .btn { min-height: 48px; padding: 11px 22px; font-size: 18px; }
+  .btn.big { min-height: 56px; padding: 12px 22px; font-size: 20px; }
+
+  /* the stage's words */
+  #prompt { padding: 10px 18px 12px; font-size: calc(22px * var(--ts)); }
+  #stage[data-mode="assess"] #prompt, #stage[data-mode="warmup"] #prompt { padding: 8px 16px 9px; font-size: calc(18px * var(--ts)); }
+  #cue { bottom: calc(min(20.3vh, 21.9vw) + 12px); gap: 10px; padding: 10px 18px 10px 12px; font-size: calc(18px * var(--ts)); }
+  #caption { padding: 12px 18px; font-size: calc(18px * var(--ts)); }
+  .paused-card { padding: 24px 22px; font-size: calc(24px * var(--ts)); }
+  #assess-hand-btns { flex-direction: column; gap: 10px; width: 80vw; }
+
+  /* login and welcome */
+  #screen-login { padding: calc(var(--chrome-top) + var(--chrome) + 12px) 0 calc(60px * var(--ts)); }
+  .login-card { padding: 26px 18px 24px; }
+  .login-head { font-size: 30px; }
+  .card-brand { font-size: 36px; margin-bottom: 12px; }
+  .card-brand ~ div .login-head { font-size: 26px; }
+  .login-sub { font-size: 19px; }
+  .login-actions { margin-top: 24px; gap: 12px; }
+  .login-people { grid-template-columns: 1fr 1fr; max-height: 50vh; }
+  .welcome-card { bottom: 44px; flex-direction: column; align-items: stretch; gap: 8px; padding: 14px 16px 18px; text-align: center; max-width: 94vw; }
+  .welcome-card .coach-canvas { width: 76px; height: 88px; align-self: center; margin: -6px 0 -10px; }
+  .headline { font-size: 28px; }
+  .subline { margin-top: 6px; font-size: 18px; }
+  .welcome-actions { justify-content: center; gap: 10px; margin-top: 14px; }
+  .welcome-actions .btn.big { flex: 1 1 100%; }
+  .coaches { width: 92vw; }
+
+  /* the hub */
+  #screen-select { padding: calc(var(--chrome-top) + var(--chrome) + 14px) 0 40px; gap: 16px; }
+  .hub-head { min-height: 0; flex-direction: column; align-items: stretch; gap: 10px; }
+  #screen-select h1 { font-size: 30px; }
+  .select-sub { margin-top: 6px; font-size: 18px; }
+  .hub-coach { justify-content: flex-end; }
+  #hub-coach { width: 84px; height: 104px; margin: -10px 0 -8px; }
+  .bubble { max-width: none; padding: 12px 16px; font-size: 17px; }
+  .workout { gap: 12px; padding: 18px 16px 20px; }
+  .workout-label, .hub-label { font-size: 17px; }
+  .cards-row-head { font-size: 19px; margin-bottom: -4px; }
+  .today-strip { flex-direction: column; align-items: stretch; gap: 10px; }
+  .today-line { font-size: 24px; white-space: normal; }
+  .plan-strip { flex-direction: column; align-items: stretch; gap: 14px; }
+  .plan-btns { flex-wrap: wrap; }
+  .plan-btns .btn { flex: 1 1 auto; }
+  .plan-what, .plan-chip { font-size: 16px; }
+  .cards { gap: 12px; }
+  .gcard { width: calc((var(--hub-w) - 12px) / 2); }
+  .gcard .title { left: 14px; right: 10px; bottom: 12px; font-size: 18px; }
+  .gcard .trains { top: 10px; left: 10px; padding: 4px 10px; font-size: 12px; }
+  .gcard .suggest { top: 40px; left: 10px; right: auto; padding: 4px 10px; font-size: 12px; }   /* under the movement chip */
+  .gcard .lock { padding: 8px 12px; font-size: 13px; }
+  .menu-actions { padding: 0 14px; gap: 10px; }
+  .menu-actions .btn { flex: 1 1 100%; }
+  .duo-setup { padding: 18px 16px; gap: 14px; }
+  .duo-row { font-size: 18px; }
+  .duo-row select, .duo-ctl, .duo-ctl input { min-width: 0; width: 100%; }
+  .sub-btn { min-width: 0; width: 100%; }
+  .board { padding: 12px 10px; font-size: 15px; }
+  .board table { font-size: 15px; }
+  .board th, .board td { padding: 5px 6px; }
+
+  /* the round card: under the chrome, one column, both buttons full width */
+  #screen-between { justify-content: flex-start; padding: calc(var(--chrome-top) + var(--chrome) + 8px) 0 10px; }
+  .round-card { width: calc(100vw - 20px); max-height: 100%; gap: 12px; padding: 18px 16px 20px; border-radius: 28px; }
+  .rc-top { flex-wrap: wrap; gap: 10px; }
+  .rc-time { flex: 1 1 100%; padding: 10px 14px 12px; }
+  .rc-time-line { font-size: 18px; white-space: normal; }
+  .rc-level { margin: 0; padding: 8px 14px; font-size: 18px; white-space: normal; }
+  .rc-level .rc-step { width: 36px; height: 36px; margin: 0 4px; }
+  .rc-stars { padding: 8px 14px 8px 10px; font-size: 20px; }
+  .rc-main { gap: 12px; }
+  .rc-coach { width: 76px; height: 88px; margin: -8px 0; }
+  .rc-head { font-size: 26px; }
+  .rc-hero-n { font-size: 60px; }
+  .rc-hero-l { font-size: 18px; }
+  .rc-trend { display: none !important; }      /* the card keeps to what matters; staff see the trend on the profile */
+  .rc-next { font-size: 22px; text-align: center; }
+  .rc-ask { font-size: 17px; text-align: center; }
+  .faces { flex-wrap: wrap; justify-content: center; gap: 8px; }
+  .face { padding: 5px 14px 5px 6px; }
+  .face .disc { width: 36px; height: 36px; }
+  .face .disc svg { width: 30px; height: 30px; }
+  .face .lbl { font-size: 17px; }
+  .rc-note { font-size: 16px; }
+  .rc-actions { flex-direction: column; gap: 10px; }
+  .rc-actions .btn.big { min-width: 0; width: 100%; min-height: 64px; font-size: 22px; }
+
+  /* the session plan and the reach screen */
+  #screen-schedule, #screen-romcompare { padding: calc(var(--chrome-top) + var(--chrome) + 14px) 14px 40px; }
+  #screen-schedule { --sched-pad: 40px; }
+  #screen-schedule h1, #screen-romcompare h1 { font-size: 30px; text-align: center; }
+  #screen-schedule .select-sub { font-size: 17px; }
+  .plan-blocks { flex-wrap: wrap; }
+  .plan-blocks .plan-seg { flex: 1 1 calc(50% - 4px); min-width: 0; min-height: 96px; }
+  .plan-blocks .plan-seg:nth-child(3) { border-left: 0; }
+  .plan-blocks .plan-seg:nth-child(n+3) { border-top: 4px solid var(--paper); }
+  .hour-scale { display: none; }
+  .plan-picks .gcard { width: calc((100vw - 44px) / 2); }
+  .plan-picks .gcard .title { font-size: 18px; }
+  .plan-picks .gcard .title small { font-size: 13px; }
+  .plan-actions { flex-wrap: wrap; justify-content: center; }
+  .rom-hero { gap: 14px; margin: 6px auto 10px; }
+  .rom-live-wrap { flex-basis: 100%; padding: 10px; }
+  .rom-big .pct { font-size: 80px; }
+  .rom-big .of { font-size: 18px; }
+  .rom-plot-wrap { padding: 12px; }
+  #btn-rom-done { min-width: 0; width: 100%; }
+
+  /* the staff screens stay usable: full-width drawer, the profile's grids in one column */
+  #drawer { width: 100vw; }
+  .prof-grid4 { grid-template-columns: 1fr 1fr; }
+}
+/* a phone held sideways, or any short screen: the same smaller chrome, and
+   the cards that stood tall keep to the height (the screens scroll) */
+@media (max-height: 520px) and (min-width: 761px) {
+  :root { --chrome: 42px; --chrome-top: 8px; --brand-h: 54px; }
+  .brand-title { font-size: 26px; padding: 0 calc(22px - .35em) 0 22px; }
+  #btn-help { padding: 0 18px; font-size: calc(18px * var(--ts)); }
+  #today-pill { padding: 0 14px; font-size: calc(15px * var(--ts)); }
+  #today-pill .tp-bar { width: 48px; }
+  .brand-foot { display: none; }
+  .btn.big { min-height: 50px; padding: 10px 26px; font-size: 19px; }
+  #prompt { padding: 8px 18px 10px; font-size: calc(20px * var(--ts)); }
+  #cue { bottom: 10px; padding: 8px 18px 8px 12px; font-size: calc(17px * var(--ts)); }
+  #caption { bottom: 10px; padding: 10px 18px; font-size: calc(17px * var(--ts)); }
+  .paused-card { padding: 20px 30px; font-size: calc(24px * var(--ts)); }
+  #screen-login { padding: calc(var(--chrome-top) + var(--chrome) + 8px) 0 8px; }
+  .login-card { padding: 20px 26px; }
+  .login-head { font-size: 28px; }
+  .login-sub { font-size: 18px; }
+  .login-actions { margin-top: 16px; }
+  .welcome-card { bottom: 10px; gap: 16px; padding: 12px 22px 14px 12px; }
+  .welcome-card .coach-canvas { width: 72px; height: 84px; }
+  .headline { font-size: 26px; }
+  .subline { margin-top: 4px; font-size: 17px; }
+  .welcome-actions { margin-top: 10px; gap: 10px; }
+  #screen-select, #screen-schedule, #screen-romcompare { padding-top: calc(var(--chrome-top) + var(--chrome) + 10px); }
+  .hub-head { min-height: 0; }
+  #hub-coach { width: 84px; height: 104px; margin: -10px 0; }
+  #screen-select h1, #screen-schedule h1, #screen-romcompare h1 { font-size: 30px; }
+  #screen-between { justify-content: flex-start; padding: calc(var(--chrome-top) + var(--chrome) + 6px) 0 6px; }
+  .round-card { max-height: 100%; gap: 10px; padding: 16px 26px 18px; border-radius: 28px; }
+  .rc-coach { width: 76px; height: 88px; margin: -8px 0; }
+  .rc-head { font-size: 30px; }
+  .rc-hero-n { font-size: 64px; }
+  .rc-trend { display: none !important; }
+  .rc-actions .btn.big { min-height: 60px; font-size: 22px; }
+  .rom-big .pct { font-size: 72px; }
+}
 
 @media (prefers-reduced-motion: reduce) {
   .screen { animation: none; }
