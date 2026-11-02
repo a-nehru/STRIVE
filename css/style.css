@@ -90,7 +90,7 @@
   --chrome-top: 16px;        /* the chrome's distance from the screen's edges (js/ui.js topInset reads it) */
   --brand-h: calc(var(--chrome) * 1.6);   /* the STRIVE title on the login and welcome screens, bigger than the chrome (31 Oct 2026, by request) */
   --brand-w: var(--brand-h);              /* what the welcome screen's lines sit under: the title, or the chrome where the title is hidden */
-  --hub-w: min(1640px, calc(100vw - 192px));
+  --hub-w0: min(1640px, calc(100vw - 192px));   /* the hub's width; #screen-select divides it by its fit (main.js fitHub) as --hub-w */
   --ts: 1;                   /* the text-size setting for the fixed overlays (body.t125 / t150) */
 }
 
@@ -226,6 +226,12 @@ body:has(#stage:not(.hidden)) #today-pill { right: calc(var(--chrome-top) + var(
   box-shadow: var(--e1), var(--hair);
 }
 .track-status:empty { display: none; }
+/* the tracking's start-up progress (main.js bootProgress): the words over a slim bar */
+.track-status:has(.ts-bar) { min-width: min(440px, 80vw); }
+.track-status .ts-words { display: block; }
+.track-status .ts-bar { display: block; height: 10px; margin: 8px 0 2px; border-radius: 5px; background: var(--track); overflow: hidden; }
+.login-card #login-track .ts-bar { background: var(--card); }
+.track-status .ts-bar i { display: block; height: 100%; width: 0; border-radius: 5px; background: var(--ink); transition: width .25s linear; }
 #welcome-track { bottom: auto; top: calc(var(--chrome-top) + var(--brand-w) + 14px); font-size: calc(clamp(16px, 1.05vw, 20px) * var(--ts)); }
 /* the login's line sits inside the card, at its foot, so nothing can run into it */
 .login-card #login-track:empty { display: none; }
@@ -338,6 +344,9 @@ body:has(#stage:not(.hidden)) #today-pill { right: calc(var(--chrome-top) + var(
 #screen-select {
   justify-content: flex-start; overflow-y: auto; overflow-x: hidden;
   padding: 16px 0 64px; gap: 18px;
+  /* drawn smaller to fit a short window (main.js fitHub sets zoom and --hub-fit):
+     the width is divided back so the hub still spans the screen */
+  --hub-w: calc(var(--hub-w0) / var(--hub-fit, 1));
 }
 .hub-head {
   width: var(--hub-w); flex-shrink: 0;
@@ -345,7 +354,7 @@ body:has(#stage:not(.hidden)) #today-pill { right: calc(var(--chrome-top) + var(
 }
 #screen-select h1 { font-weight: 900; font-size: clamp(40px, 3.4vw, 64px); line-height: 1.05; letter-spacing: -.5px; }
 .select-sub { margin-top: 10px; font-weight: 700; font-size: clamp(22px, 1.6vw, 32px); color: var(--ink2); }
-.hub-coach { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+.hub-coach { display: flex; align-items: center; gap: 18px; flex-shrink: 0; }
 .bubble {
   position: relative; max-width: 440px;
   padding: 11px 18px; border-radius: var(--r-md);
@@ -484,6 +493,44 @@ body.calm .gcard { transition: none; }
 /* on the hub the actions end the last row, bottom right beside the two-player card */
 .cards > .menu-actions { flex-direction: column; align-self: center; justify-content: center; margin-left: auto; padding: 0; gap: 12px; }
 .cards > .menu-actions .btn { width: 100%; }
+/* the next coin at the end of the Today row (1 Nov 2026 clean-up): the coin
+   inside a ring that fills towards it, its name and the stars to go */
+.hub-coins { display: flex; align-items: center; gap: 12px; flex: none; padding: 0 0 0 24px; border: 0; border-left: 3px solid var(--track);
+  background: none; color: var(--ink); text-align: left; cursor: pointer; }
+.hub-coins.kbd-focus, .hub-coins:hover { outline: 3px solid var(--ink3); outline-offset: 6px; border-radius: 8px; }
+.hc-ring { display: grid; place-items: center; width: 54px; height: 54px; border-radius: 50%; flex: none;
+  background: conic-gradient(var(--coin) var(--f), var(--track) 0); }
+.hc-ring .coin { width: 42px; height: 42px; box-shadow: 0 0 0 3px var(--card), inset 0 0 0 3px #00000022, inset 0 -4px 0 #00000026; }
+.hc-text { display: flex; flex-direction: column; font-weight: 800; font-size: clamp(18px, 1.2vw, 23px); color: var(--ink2); white-space: nowrap; line-height: 1.15; }
+.hc-text b { color: var(--ink); font-weight: 900; }
+.hc-text small { font-size: .82em; font-weight: 700; }
+.coin { --coin: #C27C3E; display: inline-grid; place-items: center; width: 38px; height: 38px; border-radius: 50%; flex: none;
+  background: radial-gradient(circle at 35% 30%, #ffffffaa 0 18%, transparent 19%), var(--coin);
+  box-shadow: inset 0 0 0 3px #00000022, inset 0 -4px 0 #00000026; color: #ffffffee; font-weight: 900; font-size: 18px; line-height: 1; }
+.coin small { font-size: 11px; }
+.coin.off { background: var(--paper); box-shadow: inset 0 0 0 3px var(--line); color: var(--ink3); }
+.coin.big { width: 64px; height: 64px; font-size: 30px; }
+.coin.big small { font-size: 16px; }
+/* the toast: what was just given, under the Today pill */
+#star-toast { position: fixed; z-index: 60; top: calc(var(--chrome-top) + var(--chrome) + 14px); right: 16px;
+  display: flex; align-items: center; gap: 14px; padding: 12px 22px 12px 14px; border-radius: var(--r-pill);
+  background: var(--card); color: var(--ink); box-shadow: var(--e2); animation: toastIn .4s var(--ease-out); }
+#star-toast b { font-weight: 900; font-size: clamp(20px, 1.4vw, 28px); }
+#star-toast > span:not(.coin) { font-weight: 700; font-size: clamp(16px, 1.1vw, 21px); color: var(--ink2); }
+#star-toast.is-coin { padding: 14px 28px 14px 16px; box-shadow: var(--e2), 0 0 0 4px #F2B33D; }
+@keyframes toastIn { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: none; } }
+body.calm #star-toast { animation: none; }
+/* stars and coins: what each coin costs and the ways to earn stars */
+.ci-coins { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 10px; }
+.ci-coin { display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 130px; padding: 12px; border-radius: var(--r-md); background: var(--card); }
+.ci-coin b { font-weight: 900; font-size: 20px; } .ci-coin > span:not(.coin) { font-weight: 700; color: var(--ink2); }
+.ci-coin:not(.got) { opacity: .75; }
+.ci-ways { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 18px; margin-top: 8px; }
+.ci-way { display: flex; align-items: baseline; gap: 12px; font-size: clamp(18px, 1.2vw, 22px); }
+.ci-way b { min-width: 3em; font-weight: 900; } .ci-way span { color: var(--ink2); font-weight: 700; }
+.coinlog { flex-shrink: 0; font-size: 14px; line-height: 1.6; color: var(--ink2); max-height: 180px; overflow: auto; }
+.coinlog b { color: var(--ink); }
+
 /* the board on the hub (1 Nov 2026): six rows, stars per day since each player started */
 .hub-board {
   flex: 1 1 480px; max-width: 820px; align-self: stretch;
@@ -613,11 +660,13 @@ body.calm .lvl-svg .node.cur .halo { animation: none; }
    of the way down: its words go in the chrome row, between Help and the
    Today pill, one row (and above the video stage's card, which starts at 7.5%) */
 #stage[data-mode="assess"] #prompt {
-  top: var(--chrome-top); min-height: var(--chrome); max-width: max(360px, calc(100vw - 920px - (var(--ts) - 1) * 400px));
+  top: var(--chrome-top); min-height: var(--chrome); max-width: calc(100vw - 2 * var(--chrome-side, 470px));
   display: flex; flex-wrap: wrap; align-items: baseline; justify-content: center; column-gap: 16px; row-gap: 0;
   padding: 9px 26px 10px; border-radius: 28px; font-size: calc(clamp(22px, 2.8vh, 32px) * var(--ts));
 }
 #stage[data-mode="assess"] #prompt small { margin-top: 0; font-size: .72em; }
+/* too little room between Help and the Today pill (main.js fitChromeGap): under the row */
+body.prompt-below #stage[data-mode="assess"] #prompt { top: calc(var(--chrome-top) + var(--chrome) + 10px); max-width: 92vw; }
 
 /* the coach's praise and posture cues: a white pill. A posture cue gets a
    dashed ring and a "!" instead of the check, never colour alone. */
@@ -636,6 +685,13 @@ body.calm .lvl-svg .node.cur .halo { animation: none; }
   background: var(--ok) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M6 12.5l4 4 8-9' fill='none' stroke='%23fff' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 78% no-repeat;
 }
 #cue.posture { outline: 4px dashed var(--attention); outline-offset: 4px; }
+/* while the assessment's recording plays: under the patient's own box, the
+   size of the recording's caption under the demonstrator (assessment.js _placeCue) */
+#stage.cue-slot #cue {
+  left: var(--cue-x); top: var(--cue-y); bottom: auto; transform: translate(-50%, -50%);
+  max-width: var(--cue-w); gap: 10px; padding: 7px 22px 7px 10px; font-size: calc(var(--cue-fs) * var(--ts));
+}
+#stage.cue-slot #cue.posture { outline-width: 3px; outline-offset: 3px; }
 #cue.posture::before {
   background: var(--attention) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 6v8' stroke='%23fff' stroke-width='3.4' stroke-linecap='round'/%3E%3Ccircle cx='12' cy='18.4' r='1.9' fill='%23fff'/%3E%3C/svg%3E") center / 80% no-repeat;
 }
@@ -654,6 +710,7 @@ body.calm .lvl-svg .node.cur .halo { animation: none; }
 /* the menu screens: with captions on they end above a strip of their own at
    the bottom, and the caption sits in that strip, never over a card */
 body.captions :is(#screen-select, #screen-between, #screen-schedule, #screen-romcompare) { bottom: var(--cap-strip); }
+body.captions #screen-select { bottom: calc(var(--cap-strip) / var(--hub-fit, 1)); }   /* its zoom scales the inset too */
 body:has(:is(#screen-select, #screen-between, #screen-schedule, #screen-romcompare):not(.hidden)) #caption {
   bottom: 14px; max-width: min(1400px, 92vw); font-size: calc(clamp(20px, 1.6vw, 30px) * var(--ts)); padding: 12px 30px;
 }
@@ -774,8 +831,11 @@ body.hc .btn.ghost, body.hc .btn.ghost-light { box-shadow: inset 0 0 0 4px var(-
 }
 .plan-slot span { font-size: 24px; font-weight: 900; }
 .plan-slot small { font-size: 14px; font-weight: 800; }
-.plan-foot { display: flex; align-items: center; gap: 18px; width: min(94vw, 1180px); }
+.plan-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 18px; width: min(94vw, 1180px); }
 .plan-total { font-weight: 800; font-size: 22px; }
+/* when they play: beside the total, on the right */
+.plan-when { margin-left: auto; display: flex; align-items: center; gap: 12px; font-weight: 900; font-size: 22px; }
+.plan-when input, .plan-when select { padding: 9px 14px; border-radius: var(--r-sm); border: 2px solid var(--ink3); background: var(--card); color: var(--ink); font: 800 20px var(--font); }
 .plan-total b { font-size: 1.2em; font-weight: 900; }
 .plan-picks { display: flex; flex-wrap: wrap; justify-content: center; gap: 16px; width: min(94vw, 1300px); margin-top: 6px; }
 .plan-picks .gcard { width: 230px; aspect-ratio: 230 / 270; }
@@ -804,9 +864,12 @@ body.hc .btn.ghost, body.hc .btn.ghost-light { box-shadow: inset 0 0 0 4px var(-
    headline; the one number the game trains, big, in the game's colour; its
    last seven games; what comes next; the optional feeling check; Play
    again in the game's colour. --acc* are set per round by renderBetween. */
+/* the round card sits under the chrome row (Help, Today), centred in what is
+   left, and is drawn smaller to fit a short window (main.js fitCard) */
+#screen-between { padding-top: calc(var(--chrome-top) + var(--chrome) + 8px); }
 .round-card {
   --acc: var(--pong-solid); --acc-deep: var(--pong-deep); --acc-tint: var(--pong-tint); --acc-on: var(--pong-on);
-  width: min(1400px, 94vw); max-height: calc(100% - 3vh); overflow-y: auto;
+  width: calc(min(1400px, 94vw) / var(--card-fit, 1)); max-height: calc(100% - 3vh); overflow-y: auto;
   display: flex; flex-direction: column; gap: 16px;
   padding: 32px 50px 34px; border-radius: 44px;
   background: var(--card); color: var(--ink); box-shadow: var(--e2);
@@ -1045,7 +1108,7 @@ html.tv-safe body { transform: scale(.95); transform-origin: 50% 50%; }
    words over a game start under it and under the canvas's top band (which
    js/ui.js topInset moves down by the same row), and keep inside the screen */
 @media (max-width: 1099px) {
-  :root { --hub-w: calc(100vw - 64px); --brand-w: var(--chrome); }
+  :root { --hub-w0: calc(100vw - 64px); --brand-w: var(--chrome); }
   /* the welcome screen's chrome row holds Help and Today here: no room for the title between them */
   #screen-welcome .brand-title { display: none; }
   #screen-select, #screen-schedule, #screen-romcompare { padding-top: calc(var(--chrome-top) + var(--chrome) + 14px); }
@@ -1064,7 +1127,7 @@ html.tv-safe body { transform: scale(.95); transform-origin: 50% 50%; }
    dockRect, 219 u tall with its margin, u = min(vh/10.8, vw/10)), so the
    coach's line goes above it rather than over it. */
 @media (max-width: 760px) {
-  :root { --chrome: 44px; --chrome-top: 10px; --hub-w: calc(100vw - 28px); }
+  :root { --chrome: 44px; --chrome-top: 10px; --hub-w0: calc(100vw - 28px); }
   #btn-staff { font-size: 20px; }
   #btn-help { left: calc(var(--chrome-top) + var(--chrome) + 8px); padding: 0 16px; font-size: calc(19px * var(--ts)); }
   #today-pill { padding: 0 12px; gap: 6px; font-size: calc(14px * var(--ts)); }

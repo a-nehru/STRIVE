@@ -321,8 +321,27 @@ export class Assessment {
   stop() {
     this.active = false;
     this._prompt("");
+    this._placeCue(null);
     if (this.vid) { try { this.vid.pause(); this.vid.remove(); } catch {} this.vid = null; }
     hushVoice();
+  }
+
+  // THE POSTURE CUE UNDER THE PATIENT'S OWN BOX while the recording plays
+  // (2 Nov 2026, by request: at the bottom centre it covered the recording's
+  // caption, which sits under the demonstrator). The recording leaves the
+  // same strip free under the patient's box, so the cue goes there, at the
+  // size of the recording's own caption; _drawVideoStage measures it.
+  _placeCue(at) {
+    const st = document.getElementById("stage");
+    const key = at ? [at.x, at.y, at.w, at.fs].map(Math.round).join() : "";
+    if (!st || key === this._cueKey) return;
+    this._cueKey = key;
+    st.classList.toggle("cue-slot", !!at);
+    if (!at) return;
+    st.style.setProperty("--cue-x", Math.round(at.x) + "px");
+    st.style.setProperty("--cue-y", Math.round(at.y) + "px");
+    st.style.setProperty("--cue-w", Math.round(at.w) + "px");
+    st.style.setProperty("--cue-fs", Math.round(at.fs) + "px");
   }
 
   // true when the body has sat somewhere else for MOVED_MS since the
@@ -390,6 +409,7 @@ export class Assessment {
     const ctx = this.canvas.getContext("2d");
     const c = this.canvas;
 
+    this._placeCue(this.state === "video" ? this._cueAt : null);
     if (this.state === "video") {
       this._drawVideoStage(ctx, c, now);
     } else {
@@ -1513,6 +1533,10 @@ export class Assessment {
     const fr = videoFrame(W, H, srcW / srcH), barH = fr.barH;
     const vx = fr.x, vy = fr.y, vidW = fr.w, vidH = fr.h;
     const S = VIDEO_PERSON_SLOT;
+    // where the posture cue goes (_placeCue): centred under the patient's
+    // box, in the strip the recording's caption uses on the other side
+    this._cueAt = { x: vx + vidW * (S.x0 + S.x1) / 2, y: vy + vidH * (S.y1 + 1) / 2 + vidH * 0.004,
+      w: vidW * 0.47, fs: Math.max(16, vidH * 0.034) };
 
     // the recording (mirrored for the other arm only when it has no
     // burnt-in text, VIDEO_MIRROR)
@@ -1575,8 +1599,11 @@ export class Assessment {
       ctx.font = `800 ${fs}px Nunito, sans-serif`;
       const txt = "Finish the move, then we carry on";
       const tw = Math.min(panel.w - 24, ctx.measureText(txt).width + fs * 1.6), th = fs * 2;
-      // at the top of the picture: the posture figure has its bottom corner
-      const tx = panel.x + (panel.w - tw) / 2, ty = panel.y + 14;
+      // at the top of the picture, under the "You" tag (drawPersonSlot puts
+      // it in the top corner; 2 Nov 2026: centred at the very top they ran
+      // into each other in a narrow box): the posture figure has the bottom
+      const youR = Math.round(Math.min(panel.w, panel.h) * 0.06), youH = Math.round(Math.round(H * 0.024) * 1.5);
+      const tx = panel.x + (panel.w - tw) / 2, ty = panel.y + youR * 0.6 + youH + 8;
       ctx.fillStyle = C.card;
       ctx.beginPath(); ctx.roundRect(tx, ty, tw, th, th / 2); ctx.fill();
       ctx.strokeStyle = AC.solid; ctx.lineWidth = 3; ctx.stroke();

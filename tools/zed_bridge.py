@@ -9,6 +9,7 @@ layout the game's tracker already consumes, and serves it on localhost:
     GET /status      -> {"ok": true, "w": .., "h": .., "profile": ..}
     GET /stream      -> Server-Sent Events, one JSON skeleton per frame
     GET /video.mjpg  -> MJPEG preview of the left eye (the game's mirror)
+    GET /video.sse   -> the same JPEGs, base64, as server-sent events (what the game reads)
     GET /relock      -> forget the seat assignment and re-seat on the next frame
     GET /select?id=N -> pin seat 0 to that tracking id (staff clicked a person);
                         &seat=S for another seat, ?clear=1 to let it float again
@@ -52,6 +53,7 @@ Keys: Ctrl+C to quit.
 
 import argparse
 import collections
+import base64
 import json
 import math
 import os
@@ -284,7 +286,7 @@ class Seats:
             n if o is None else (o if n is None else o + (n - o) * 0.05)
             for o, n in zip(old, sig))
 
-    def assign(self, bodies, x_of, now, sig_of=None):
+    def assign(self, bodies, x_of, now, sig_of=None, near_of=None):
         """Return a seat-length list of bodies (None where the seat is empty).
 
         `bodies` has already been filtered to the play volume by the caller,
@@ -330,9 +332,15 @@ class Seats:
         # A sticky seat waits instead, unless there is exactly one person
         # in view (the SDK hands a returning person a fresh id, so a lone
         # body is almost certainly them coming back).
-        free_bodies.sort(key=x_of)
         lone = len(bodies) == 1
         free_seats = [s for s in free_seats if not self.sticky[s] or lone]
+        # more people than seats: the NEAREST take them, then sit left to
+        # right (2 Nov 2026: with one seat, left-most handed the patient's
+        # seat to a colleague at a desk 2 m behind them, on the left)
+        if near_of is not None and len(free_bodies) > len(free_seats):
+            free_bodies.sort(key=near_of)
+            del free_bodies[len(free_seats):]
+        free_bodies.sort(key=x_of)
         for s, body in zip(free_seats, free_bodies):
             self._take(s, body, now)
             if sig_of is not None:
@@ -432,6 +440,27 @@ class Handler(BaseHTTPRequestHandler):
                         self.wfile.write(b": heartbeat\n\n")
                     else:
                         self.wfile.write(b"data: " + lm_json + b"\n\n")
+                    self.wfile.flush()
+            except (BrokenPipeError, ConnectionError, OSError):
+                pass
+        elif self.path.startswith("/video.sse"):
+            # the same JPEGs as server-sent events, base64 (2 Nov 2026): Edge
+            # on the lab laptop handed the page no byte of an endless BINARY
+            # response (multipart, octet-stream, image/jpeg, even binary
+            # labelled text/event-stream; tested), so the picture came late
+            # or never, while the text of /stream arrived at once. A third
+            # bigger, which on localhost costs nothing. The game reads this.
+            self.send_response(200)
+            self._cors()
+            self.send_header("Content-Type", "text/event-stream")
+            self.end_headers()
+            seen = 0
+            try:
+                while True:
+                    seen, _, jpg = LATEST.wait_newer(seen)
+                    if jpg is None:
+                        continue
+                    self.wfile.write(b"data: " + base64.b64encode(jpg) + b"\n\n")
                     self.wfile.flush()
             except (BrokenPipeError, ConnectionError, OSError):
                 pass
@@ -869,6 +898,12 @@ def body_center_3d(body, shoulders):
     return None
 
 
+def body_distance(body, shoulders):
+    """How far this person is from the camera, metres (unknown: far)."""
+    c = body_center_3d(body, shoulders)
+    return float(c[2]) if c is not None else 1e9
+
+
 def in_play(body, shoulders, near, far, half_w):
     """Is this person inside the play volume (i.e. a candidate at all)?
 
@@ -984,7 +1019,8 @@ def capture(zed, rt, run, table, shoulders, res_w, res_h, preview_w, jpeg_every,
                       or in_play(b, shoulders, play["near"], play["far"], play["half_w"])]
         seated = seats.assign(candidates,
                               lambda b: image_x(b, shoulders), now,
-                              lambda b: build_signature(b, shoulders, hips))
+                              lambda b: build_signature(b, shoulders, hips),
+                              lambda b: body_distance(b, shoulders))
         entries = []
         for s, body in enumerate(seated):
             if body is None:

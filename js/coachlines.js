@@ -113,10 +113,13 @@ const BOOK = {
       { text: () => "A new best. Well done." },
     ],
     compensation: {
-      lean: ["Sit tall, reach with your arm", "Let the arm do the reaching. Sit tall."],
-      hike: ["Let your shoulder relax", "Let your shoulder rest as you reach."],
-      rotation: ["Keep your chest facing me", "Chest to the camera, gently."],
-      tilt: ["Straighten up gently, nice and tall", "Gently upright. Nice and tall."],
+      // each cue says what is wrong, then what to do (2 Nov 2026, by request)
+      lean: ["You are leaning forward. Sit back and reach with your arm.", "Leaning forward. Sit back, let your arm reach."],
+      hike: ["Your shoulder is lifting. Let it drop down.", "Your shoulder is lifting. Let it relax."],
+      rotation: ["You are turning your body. Face the screen.", "Your body is turning. Face the screen again."],
+      tilt: ["You are leaning to one side. Sit up straight.", "Leaning to the side. Sit up straight."],
+      tiltLeft: ["You are leaning to your left. Sit up straight.", "Leaning to your left. Sit up straight."],
+      tiltRight: ["You are leaning to your right. Sit up straight.", "Leaning to your right. Sit up straight."],
     },
     miss: [
       { text: () => "No rush. Watch it come, and start your reach early." },
@@ -233,12 +236,14 @@ function pick(coach, list, data) {
 }
 
 // A line in the active coach's style, at once, from the phrasebook.
-// compensation: data.type is lean | hike | rotation | tilt.
+// compensation: data.type is lean | hike | rotation | tilt, and for a tilt
+// data.toward (left | right) picks the line that names the side.
 export function coachLine(event, data = {}, coach = A11Y.coach) {
   const book = BOOK[coach] || BOOK.lumi;
   let line = "";
   if (event === "compensation") {
-    const opts = book.compensation[data.type] || book.compensation.lean;
+    const sided = data.type === "tilt" && data.toward ? book.compensation[data.toward === "left" ? "tiltLeft" : "tiltRight"] : null;
+    const opts = sided || book.compensation[data.type] || book.compensation.lean;
     const last2 = (recent[coach] || []).slice(-2);
     const fresh = opts.filter(o => !last2.includes(o));
     line = (fresh.length ? fresh : opts)[Math.floor(Math.random() * (fresh.length ? fresh : opts).length)];

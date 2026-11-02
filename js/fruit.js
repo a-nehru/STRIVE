@@ -122,7 +122,11 @@ export const FRUIT_MAX = 20;      // levels on the map (fruitLevelDef works for 
 const FRUIT_ROUND_S = 180;        // a round: one level, up to three minutes of play
 const FRUIT_STILL_SW = 0.07;      // a hold: the hand stays within this, SW (tremor-tolerant)
 const FRUIT_STILL_GRACE = 350;    // ms a hold survives a wobble outside it
-const FRUIT_GRASP_MS = 300;       // a squeeze counts once the hand has been closed this long
+const FRUIT_GRASP_MS = 300;
+// the fruit in hand is drawn this much bigger (2 Nov 2026, by request: too
+// small to follow while carried); it eases back to its size as it drops
+const FRUIT_HELD_SCALE = 1.4;
+const FRUIT_DROP_EASE_MS = 220;       // a squeeze counts once the hand has been closed this long
 const FRUIT_NEXT_MS = 480;        // the next fruit arrives after a drop (the mockup's)
 const FRUIT_OVER_MS = 2200;       // a box full past its line this long lets the top fruit go
 const FRUIT_RAISE = 0.8;          // of rangeScale x the reach straight up: a raised hand
@@ -806,6 +810,7 @@ export class CozyFruit extends GameBase {
     const { Body } = MATTER;
     this._clampAim();
     const b = this._makeFruit(this.current, this.aimX, HOLD_Y);
+    b.droppedAt = now;
     Body.setVelocity(b, { x: 0, y: 2 });
     if (this.tut) { this.tut.droppedAt = now; this.tut.firstBody ??= b; }
     this.canDrop = false; this.holding = false; this.nextAt = now + FRUIT_NEXT_MS;
@@ -1214,8 +1219,8 @@ export class CozyFruit extends GameBase {
     // the aim guide, under the fruit in hand
     const playing = this.state === "play" && this.canDrop && !this.shakeMode;
     const holding = playing && this.holding;
-    if (holding) {
-      const r = FRUITS[this.current].r;
+    if (holding && this.curX >= this.BOX_L && this.curX <= this.BOX_R) {
+      const r = FRUITS[this.current].r * FRUIT_HELD_SCALE;
       ctx.save(); ctx.setLineDash([2, 10]); ctx.lineCap = "round"; ctx.lineWidth = 4;
       ctx.strokeStyle = "rgba(214,150,120,.45)";
       ctx.beginPath(); ctx.moveTo(this.aimX, HOLD_Y + r + 6); ctx.lineTo(this.aimX, FLOOR - 4); ctx.stroke(); ctx.restore();
@@ -1233,6 +1238,7 @@ export class CozyFruit extends GameBase {
     for (const b of this.fruits) {
       let sc = 1;
       if (b.popped && !A11Y.calm) { const t = (now - b.born) / 240; if (t < 1) sc = .55 + .45 * easeOutBack(Math.max(0, t)); }
+      if (b.droppedAt) { const t = (now - b.droppedAt) / FRUIT_DROP_EASE_MS; if (t < 1) sc = FRUIT_HELD_SCALE + (1 - FRUIT_HELD_SCALE) * Math.sin(t * Math.PI / 2); }
       this._drawFruitAt(ctx, b.fi, b.position.x, b.position.y, b.angle, sc);
     }
     // fruit rolling away from a full box: up, turning, fading
@@ -1246,25 +1252,8 @@ export class CozyFruit extends GameBase {
     this._drawEffects(ctx, dtv);
     ctx.restore();
 
-    // the patient's own hand behind the fruit it carries (Pong's hand on its
-    // paddle): translucent, fitted by the palm, screen space
-    if (holding) this._drawHandAt(ctx, c, L, this.aimX);
     ctx.save();
     ctx.setTransform(L.S, 0, 0, L.S, L.ox + (Math.abs(this.boxOff) > .2 ? this.boxOff * L.S : 0), L.oy);
-    if (holding) {
-      const r = FRUITS[this.current].r;
-      const bob = A11Y.calm ? 0 : Math.sin(now / 260) * 2;
-      this._drawFruitAt(ctx, this.current, this.aimX, HOLD_Y + bob, A11Y.calm ? 0 : Math.sin(now / 500) * .08, 1);
-      // the hold's progress, a ring round the fruit
-      const f = this.hold ? Math.min(1, this.hold.acc / A11Y.dwellMs) : 0;
-      ctx.lineCap = "round";
-      ctx.strokeStyle = "rgba(255,143,112,.25)"; ctx.lineWidth = 5;
-      if (this.dropMode !== "grasp" && this.armed) { ctx.beginPath(); ctx.arc(this.aimX, HOLD_Y + bob, r + 9, 0, TAU); ctx.stroke(); }
-      if (f > 0) {
-        ctx.strokeStyle = PALETTE.accent; ctx.lineWidth = 6;
-        ctx.beginPath(); ctx.arc(this.aimX, HOLD_Y + bob, r + 9, -Math.PI / 2, -Math.PI / 2 + TAU * f); ctx.stroke();
-      }
-    }
     // an empty hand that has not gone for the fruit in a while: say where it is
     if (playing && !this.holding && !this.tut && this.emptyFor > 5000) {
       ctx.font = `600 20px ${FONT}`; ctx.textAlign = "center"; ctx.lineJoin = "round";
@@ -1277,6 +1266,30 @@ export class CozyFruit extends GameBase {
     this._drawPanels(ctx, c, L, now);
     // the empty hand rides the rail out to the fruit, over the Next card
     if (playing && !this.holding) this._drawHandAt(ctx, c, L, this.curX, true);
+    // THE FRUIT IN HAND stays where the hand is (2 Nov 2026, by request: it
+    // used to jump into the box the moment it was picked up, so the hand
+    // seemed to move on its own): picked up at the bubble, it is carried
+    // from there with the hand, over the Next card too, and only dropped
+    // over the box (aimX, the drop point, is the hand's place kept inside
+    // the box). Drawn after the panels so the Next card never covers it.
+    if (holding) {
+      this._drawHandAt(ctx, c, L, this.curX);
+      ctx.save();
+      ctx.setTransform(L.S, 0, 0, L.S, L.ox, L.oy);
+      const r = FRUITS[this.current].r * FRUIT_HELD_SCALE;
+      const bob = A11Y.calm ? 0 : Math.sin(now / 260) * 2;
+      this._drawFruitAt(ctx, this.current, this.curX, HOLD_Y + bob, A11Y.calm ? 0 : Math.sin(now / 500) * .08, FRUIT_HELD_SCALE);
+      // the hold's progress, a ring round the fruit
+      const f = this.hold ? Math.min(1, this.hold.acc / A11Y.dwellMs) : 0;
+      ctx.lineCap = "round";
+      ctx.strokeStyle = "rgba(255,143,112,.25)"; ctx.lineWidth = 5;
+      if (this.dropMode !== "grasp" && this.armed) { ctx.beginPath(); ctx.arc(this.curX, HOLD_Y + bob, r + 9, 0, TAU); ctx.stroke(); }
+      if (f > 0) {
+        ctx.strokeStyle = PALETTE.accent; ctx.lineWidth = 6;
+        ctx.beginPath(); ctx.arc(this.curX, HOLD_Y + bob, r + 9, -Math.PI / 2, -Math.PI / 2 + TAU * f); ctx.stroke();
+      }
+      ctx.restore();
+    }
     this.confetti.draw(ctx, now);
     const used = Math.max(0, this.elapsed(now) - this.storyS) / FRUIT_ROUND_S;
     if (this.tut) this._tutDrawChrome(ctx, c, L, now);
@@ -1382,7 +1395,7 @@ export class CozyFruit extends GameBase {
       const ext = Math.hypot(m.x - w.x, m.y - w.y) * 2;      // an open hand's length from its palm
       if (ext > 2) {
         const r = FRUITS[this.current].r;
-        const want = Math.max(70, r * 2.4) * L.S;
+        const want = Math.max(70, r * 2.4 * (empty ? 1 : FRUIT_HELD_SCALE)) * L.S;
         const k = Math.max(0.12, Math.min(3, want / ext));
         ctx.save(); ctx.globalAlpha = empty ? 0.75 : 0.5;
         drawn = drawHand(ctx, c, this.t, this.side, { map: q => ({ x: (q.x - pm.x) * k + cx, y: (q.y - pm.y) * k + cy }), scale: k, fallback: false, surface: "day" });
@@ -1481,7 +1494,11 @@ export class CozyFruit extends GameBase {
       const s1 = waiting ? this.queue[0] : this.queue[1], s2 = waiting ? this.queue[1] : this.queue[2];
       const bob = waiting && !A11Y.calm ? Math.sin(now / 260) * 3 * s : 0;
       const lift = A11Y.calm ? 0 : pf * 10 * s, grow = 1 + (A11Y.calm ? 0 : pf * 0.12);
+      // while a fruit is in hand the next one waits faded, so the one being
+      // carried away from the bubble is never confused with it
+      if (this.holding) { ctx.save(); ctx.globalAlpha = 0.35; }
       this._icon(ctx, big, bx, by + bob - lift, 94 * s * grow);
+      if (this.holding) ctx.restore();
       if (pf > 0) {
         ctx.save();
         const rr = 50 * s * grow;

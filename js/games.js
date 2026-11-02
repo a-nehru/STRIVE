@@ -2688,10 +2688,11 @@ export class ArcPong extends GameBase {
     if (!this.pongLevel) { this._lvlHit = null; return; }
     // in the bottom corner opposite the coach dock, under the court: the top
     // band carries the clock and the scores, and inside the court the ball
-    // would run through it (30 Oct 2026)
+    // would run through it (30 Oct 2026). The dock sits by the patient's own
+    // paddle (coachDock, the trained arm's side) since 31 Oct, so this goes
+    // to the other side; it had stayed put and hid under the dock (2 Nov).
     const k = uu(c);
-    const dockLeft = this.side !== "left";
-    const cx = dockLeft ? c.width - 200 * k : 200 * k;
+    const cx = this.side === "left" ? c.width - 200 * k : 200 * k;
     const y = c.height - 64 * k, fs = Math.round(26 * k), gap = fs * 4.8, r = fs * 1.05;
     const minus = { x: cx - gap }, plus = { x: cx + gap };
     this._lvlHit = { y, r: r * 1.4, minus, plus };

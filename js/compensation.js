@@ -45,7 +45,9 @@ export function compFeatures(t, now = performance.now()) {
   if (!p?.shL || !p?.shR) return null;
   const sw = Math.hypot(p.shL.x - p.shR.x, p.shL.y - p.shR.y);
   if (!(sw > 1e-3)) return null;
-  const f = { sw, midX: (p.shL.x + p.shR.x) / 2, tilt: t._trunkTilt?.() ?? null, earShL: null, earShR: null, rotDeg: null, fwdM: null, src3: null };
+  // lr: which way the patient's own left lies along x (the picture may or
+  // may not be mirrored), so a sideways lean can be named left or right
+  const f = { sw, midX: (p.shL.x + p.shR.x) / 2, lr: Math.sign(p.shL.x - p.shR.x) || 1, tilt: t._trunkTilt?.() ?? null, earShL: null, earShR: null, rotDeg: null, fwdM: null, src3: null };
   // image y grows downward: the gap shrinks as the shoulder rises
   if (p.earL && now - (p.earL.at ?? 0) < EAR_FRESH_MS) f.earShL = (p.shL.y - p.earL.y) / sw;
   if (p.earR && now - (p.earR.at ?? 0) < EAR_FRESH_MS) f.earShR = (p.shR.y - p.earR.y) / sw;
@@ -65,18 +67,25 @@ export function compFeatures(t, now = performance.now()) {
   return f;
 }
 
-// the four scores of features f against the baseline b, 1.0 = at the threshold
+// the four scores of features f against the baseline b, 1.0 = at the threshold,
+// plus tiltLR: the tilt score signed by which way the trunk went, + toward
+// the patient's own left, - toward their right (2 Nov 2026, by request: the
+// cue says which way they are leaning, not only "straighten up")
 export function compScores(f, b, side, T = COMP_T) {
   const ratio = f.sw / b.sw - 1;
   const fwdCm = f.fwdM != null && b.fwdM != null ? (b.fwdM - f.fwdM) * 100 : null;
   const lean = Math.max(0, ratio / T.fwdRatio, fwdCm != null ? fwdCm / T.fwdCm : 0);
   const rotation = f.rotDeg != null && b.rotDeg != null ? Math.abs(f.rotDeg - b.rotDeg) / T.rotDeg
     : Math.max(0, -ratio) / T.narrow;
-  const tilt = Math.max(Math.abs(f.midX - b.midX) / b.sw / T.lateral,
-    f.tilt != null && b.tilt != null ? Math.abs(f.tilt - b.tilt) / T.tiltDeg : 0);
+  // the shoulders shifting toward the left shoulder's side, or the spine
+  // (shoulders to hips) swinging that way, is a lean to the patient's left
+  const lat = (f.midX - b.midX) / b.sw / T.lateral * f.lr;
+  const spine = f.tilt != null && b.tilt != null ? -(f.tilt - b.tilt) / T.tiltDeg * f.lr : 0;
+  const tilt = Math.max(Math.abs(lat), Math.abs(spine));
+  const tiltLR = Math.abs(lat) >= Math.abs(spine) ? lat : spine;
   const k = side === "left" ? "earShL" : "earShR";
   const elev = side === "left" ? f.armL : f.armR;
   const allow = 1 + Math.max(0, ((elev ?? 0) - 90) / 60);
   const hike = f[k] != null && b[k] != null ? Math.max(0, b[k] - f[k]) / (T.hike * allow) : 0;
-  return { lean, hike, rotation, tilt };
+  return { lean, hike, rotation, tilt, tiltLR };
 }

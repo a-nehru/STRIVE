@@ -101,6 +101,14 @@ const RESTING_SAMPLES = 45;
 // buffer does not hold a whole frame yet: {frame: Uint8Array, rest: Uint8Array}.
 // Reads the part header's Content-Length (the bridge always sends one); a
 // header without it falls back to scanning for the JPEG end marker.
+// base64 text to bytes (the ZED preview's frames, video.sse)
+function fromB64(b64) {
+  if (Uint8Array.fromBase64) return Uint8Array.fromBase64(b64);
+  const bin = atob(b64), out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
 export function splitMjpeg(buf) {
   const CRLF2 = [13, 10, 13, 10];
   let hEnd = -1;
@@ -382,9 +390,18 @@ export class Tracker {
     const firstShown = new Promise(res => { first = res; });
     const run = async () => {
       let res;
-      try { res = await fetch(`${ZED_BRIDGE}/video.mjpg`, { cache: "no-store" }); } catch { return false; }
+      // video.sse first: the same JPEGs as base64 text events. Edge on the
+      // lab laptop handed the page no byte of an endless binary response
+      // (2 Nov 2026: the picture came late or never) and passes text at
+      // once. An older bridge answers 404 there; the next try asks for the
+      // binary video.mjpg.
+      const path = this._previewPath || "video.sse", sse = path === "video.sse";
+      try { res = await fetch(`${ZED_BRIDGE}/${path}`, { cache: "no-store" }); } catch { return false; }
+      if (res.status === 404 && sse) { this._previewPath = "video.mjpg"; return false; }
       if (!res.ok || !res.body) return false;
       const reader = res.body.getReader();
+      const td = new TextDecoder();
+      let text = "";
       let buf = new Uint8Array(0);
       let decoding = false, pending = null;
       const show = async bytes => {
@@ -410,6 +427,16 @@ export class Tracker {
         try { chunk = await reader.read(); } catch { break; }
         if (chunk.done) break;
         if (!this.running && this.frames > 0) { try { reader.cancel(); } catch {} return true; }
+        if (sse) {
+          text += td.decode(chunk.value, { stream: true });
+          for (let i; (i = text.indexOf("\n\n")) >= 0;) {
+            const ev = text.slice(0, i);
+            text = text.slice(i + 2);
+            if (ev.startsWith("data: ")) show(fromB64(ev.slice(6)));
+          }
+          if (text.length > 16 * 1024 * 1024) text = "";
+          continue;
+        }
         const merged = new Uint8Array(buf.length + chunk.value.length);
         merged.set(buf); merged.set(chunk.value, buf.length);
         buf = merged;

@@ -110,6 +110,31 @@ export const store = {
     save(db);
   },
 
+  // BONUS STARS (1 Nov 2026, by request): added to the spendable and the
+  // lifetime count like a round's. `key` makes a bonus once ever ("created",
+  // "newGame:pong-fe") or once a day ("login@2026-11-01"); a key already
+  // given gives nothing. Returns the stars given. Daily keys older than 40
+  // days are dropped so the record does not grow for ever.
+  awardStars(name, n, key) {
+    const db = load(); const p = patient(db, name);
+    p.bonusGiven ??= {};
+    if (key && p.bonusGiven[key]) return 0;
+    const now = new Date();
+    if (key) p.bonusGiven[key] = now.toISOString();
+    for (const [k, at] of Object.entries(p.bonusGiven)) if (k.includes("@") && now - new Date(at) > 40 * 864e5) delete p.bonusGiven[k];
+    p.stars += n; p.starsLifetime += n;
+    (p.starLog ??= []).push({ at: now.toISOString(), n, key: key || "" });
+    p.starLog = p.starLog.slice(-300);
+    save(db);
+    return n;
+  },
+  // the challenge coins a participant has earned, in order (never removed)
+  addCoin(name, coin) {
+    const db = load(); const p = patient(db, name);
+    (p.coins ??= []).push({ at: coin.at, name: coin.name, date: new Date().toISOString() });
+    save(db);
+  },
+
   // Play time per LOCAL day: rounds and assessments, in ms. Menus and the
   // welcome screen are not play, so they are not counted.
   logPlaytime(name, ms, kind) {

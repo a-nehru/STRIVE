@@ -180,6 +180,36 @@ function saveSetting(patch) {
 }
 
 /* ================= tracker boot ================= */
+// The start-up's progress on the camera screens (2 Nov 2026, by request: the
+// screen stayed dark until the tracking models had loaded). The models load
+// inside MediaPipe, which reports no bytes, so each phase's bar eases from
+// its start towards its end and the next phase picks up from there.
+const BOOT_PHASES = {
+  body: { from: 0.12, to: 0.72, tau: 4000, words: "Getting the body tracking ready" },
+  hand: { from: 0.72, to: 0.97, tau: 5000, words: "Getting the hand tracking ready" },
+};
+let boot0 = null;
+function bootPhase(phase) {
+  if (boot0?.phase === phase) return;
+  boot0 = { phase, at: performance.now(), from: boot0 ? bootFrac(performance.now()) : BOOT_PHASES[phase].from };
+}
+function bootFrac(now) {
+  const p = BOOT_PHASES[boot0.phase];
+  const from = Math.max(p.from, boot0.from);
+  return from + (p.to - from) * (1 - Math.exp(-(now - boot0.at) / p.tau));
+}
+// the words and the bar in a camera screen's status line, built once
+function bootProgress(el, now) {
+  if (!el || !boot0) return;
+  let bar = el.querySelector(".ts-bar i");
+  if (!bar) {
+    el.innerHTML = `<span class="ts-words"></span><span class="ts-bar"><i></i></span>`;
+    bar = el.querySelector(".ts-bar i");
+  }
+  const words = el.querySelector(".ts-words"), w = BOOT_PHASES[boot0.phase].words;
+  if (words.textContent !== w) words.textContent = w;
+  bar.style.width = (bootFrac(now) * 100).toFixed(1) + "%";
+}
 async function boot() {
   $("loading").classList.remove("hidden");
   try {
@@ -194,8 +224,8 @@ async function boot() {
     // and hand models finish loading behind it (state.camPreview); only
     // then is the tracker handed over as state.tracker.
     await t.init($("video"), localStorage.getItem("strive-cam-source") || "auto",
-      s => { $("loading-text").textContent = s; },
-      () => { state.camPreview = t; $("loading").classList.add("hidden"); });
+      s => { $("loading-text").textContent = s; if (/hand/i.test(s)) bootPhase("hand"); },
+      () => { state.camPreview = t; bootPhase("body"); $("loading").classList.add("hidden"); });
     t.start();
     state.tracker = t;
     $("camstate").textContent = t.source === "zed"
@@ -366,6 +396,9 @@ function applyLogin(name, arm) {
 
 function finishLogin(name, isNew, arm) {
   applyLogin(name, arm);
+  // bonus stars: 10 for joining, then a little for coming in each day
+  if (isNew) giveStars("created", { once: true });
+  giveStars("login");
   // a participant made just now sees the intro first (Oct 2026, by
   // request), then the welcome screen and the greeting
   Warmup.preload(arm);                    // the stretch recording for this arm, fetched now
@@ -422,10 +455,11 @@ function createLogin() {
   // new or not is read BEFORE the contact is saved: setContact creates the
   // record, and a new participant who gave an email then missed the intro
   const isNew = !store.hasPatient(name);
-  // optional contact and reminder, asked once here; the staff drawer can change it
+  // the optional email, asked once here (the staff drawer can change it);
+  // when to play, the reminder's time and days, is asked with the plan
+  // (1 Nov 2026, by request: it used to sit here)
   const email = $("login-email").value.trim();
-  const remindAt = $("login-remind-time").value, remindDays = $("login-remind-days").value;
-  if (email || remindDays !== "off") store.setContact(name, { email, remindAt, remindDays });
+  if (email) store.setContact(name, { ...(store.getPatient(name)?.contact || {}), email });
   // an existing name logs in (choosing a coach first if it never did); a
   // new participant chooses the coach, then the arm, then sees the intro
   loginOrPickCoach(name, isNew);
@@ -574,15 +608,16 @@ function watchWelcome() {
     const ctx = c.getContext("2d");
     ctx.clearRect(0, 0, c.width, c.height);
     const t = state.tracker;
+    const now = performance.now();
     if (!t) {
       // the camera is live but the models are still loading: the picture
-      // alone, so the screen is never an empty frame
-      if (state.camPreview && drawVideoMirror(ctx, c, state.camPreview, onLogin ? 0.42 : 0.30)) {
-        setText(onLogin ? loginEl : trackEl, "Starting the tracking…");
-      }
+      // alone, so the screen is never an empty frame, and how far along the
+      // tracking is (this loop runs from the first moment, not after boot)
+      if (state.camPreview) drawVideoMirror(ctx, c, state.camPreview, onLogin ? 0.42 : 0.30);
+      bootProgress(onLogin ? loginEl : trackEl, now);
+      if (!onLogin) { setText(head, "One moment"); setText(sub, "Getting the tracking ready"); }
       return;
     }
-    const now = performance.now();
 
     // (the "Tracking: body ✓ · hand ✓ · squeeze ✓" line was taken off the
     // patient's screen on 1 Nov 2026, clean-up: the drawer's camera line says
@@ -662,6 +697,7 @@ function startWarmup(then = null) {
   w.start(res => {
     state.current = null; state.warmupThen = null;
     if (res?.seconds) store.logPlaytime(state.patient, res.seconds * 1000, "warmup");
+    if ((res?.seconds || 0) >= 30) giveStars("warmup");
     next();
   });
 }
@@ -1156,13 +1192,13 @@ function pillBtn(label, sub, onClick, gameId = null) {
 // the row labels' little figures (hub, 1 Nov 2026 look C)
 const ONE_PERSON_SVG = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="7" r="4.2" fill="currentColor"/><path d="M3.5 22c0-4.8 3.8-8.4 8.5-8.4s8.5 3.6 8.5 8.4z" fill="currentColor"/></svg>`;
 const TWO_PEOPLE_SVG = `<svg class="two" viewBox="0 0 32 24" aria-hidden="true"><circle cx="10" cy="7" r="4" fill="currentColor"/><path d="M2 22c0-4.6 3.6-8 8-8s8 3.4 8 8z" fill="currentColor"/><circle cx="22" cy="7" r="4" fill="currentColor" opacity=".75"/><path d="M14 22c0-4.6 3.6-8 8-8s8 3.4 8 8z" fill="currentColor" opacity=".75"/></svg>`;
-const MENU_ACTIONS = document.querySelector("#screen-select .menu-actions");
 function renderSelect() {
   const wrap = $("cards");
   wrap.innerHTML = "";
   $("screen-select").classList.remove("sub");
   syncHelp();
   renderToday();
+  renderCoins();
   // each enabled game's next music track starts downloading while the
   // patient chooses, so the round opens on it (audio.js, js/tracks.js)
   audio.preloadMusic(["assessment", ...GAMES.filter(g => !g.disabled).map(g => g.id)]);
@@ -1196,7 +1232,8 @@ function renderSelect() {
   // again" (28 Oct 2026, by request: redo it as needed; it used to lock
   // until tomorrow), and the games, not it, are the recommended next step.
   const today = measuredToday(prof);
-  const assessBtn = mk("assess", today ? "Measure again" : prof ? "Today's measurement" : "Measure your reach", false,
+  // (once measured today the card reads "Redo assessment", 1 Nov 2026, by request; it was "Measure again")
+  const assessBtn = mk("assess", today ? "Redo assessment" : prof ? "Today's measurement" : "Measure your reach", false,
     () => startAssessment({ force: true, override: true }));
   const gameBtns = {};
   const gameLock = !prof ? "Measure your reach first" : !today ? "Today's measurement first" : null;
@@ -1225,12 +1262,10 @@ function renderSelect() {
     gameBtns["pong-duo"] = mk("pongDuo", "Pong: two players", !!gameLock,
       () => { state.pongMode = "duo"; state.pongAxis = "fe"; $("in-pong").value = "duo"; renderDuoSetup(); }, "Play together", gameLock);
   }
-  // the board's card and the hub's two small actions (help, email) sit at
-  // the end of the last row, in the room beside the two-player card, rather
-  // than in a row of their own under the fold (1 Nov 2026 clean-up); the
-  // actions' node is kept and moved, so its listeners stay
+  // the board's card ends the last row, beside the two-player card (Help is
+  // in the hub's head and Email my progress in the staff drawer since the
+  // 1 Nov 2026 clean-up)
   if (state.patient && state.patient !== "guest") wrap.appendChild(renderBoardCard());
-  wrap.appendChild(MENU_ACTIONS);
   // the session plan, if the therapist made one: a strip above the cards
   // with its start button, which is the recommended action once the arm is
   // measured today (the plan's games wait for the measurement like the cards)
@@ -1238,7 +1273,6 @@ function renderSelect() {
   // today's workout card holds the day's minutes and the plan: shown when either is
   $("hub-workout").classList.toggle("hidden", $("today-strip").classList.contains("hidden") && $("plan-strip").classList.contains("hidden"));
   // the coach's word beside it: what to do first, else the old question
-  $("hub-bubble").textContent = gameLock ? `${gameLock}.` : "What shall we play today?";
   // default-first: one clearly recommended card, pre-focused so a single
   // Enter continues the flow (no measurement today → assess; else the plan;
   // else last played game; else the first game)
@@ -1250,7 +1284,62 @@ function renderSelect() {
       else suggested.insertAdjacentHTML("beforeend", `<div class="suggest">Start here</div>`);
     }
   }
+  fitHub();
 }
+
+// THE HUB FITS THE WINDOW (2 Nov 2026, by request: on a laptop it ran past
+// the bottom and the cards wrapped). It is laid out for a 1080 TV; on a
+// shorter window the whole hub is drawn smaller (CSS zoom, with the hub's
+// width divided by the same factor so the cards keep their row) until all
+// of it is in view, never below HUB_FIT_MIN, never bigger than 1. The level
+// maps and the other sub-screens scroll as before, and so does a phone's
+// one-column layout.
+const FIT_MIN = 0.6;
+// the largest zoom in [FIT_MIN, 1] at which fits(f) holds, set on `el` as
+// its zoom and as the custom property `prop` (the CSS divides widths by it)
+function fitZoom(el, prop, fits) {
+  const set = f => { el.style.zoom = f === 1 ? "" : String(f); el.style.setProperty(prop, String(f)); };
+  set(1);
+  if (fits(1)) return;
+  set(FIT_MIN);
+  if (!fits(FIT_MIN)) return;
+  let lo = FIT_MIN, hi = 1;
+  for (let i = 0; i < 7; i++) { const mid = (lo + hi) / 2; set(mid); if (fits(mid)) lo = mid; else hi = mid; }
+  set(Math.floor(lo * 1000) / 1000);
+}
+function fitHub() {
+  const el = $("screen-select");
+  if (el.classList.contains("hidden") || el.classList.contains("sub") || innerWidth <= 760) {
+    el.style.zoom = ""; el.style.setProperty("--hub-fit", "1"); return;
+  }
+  // the content's height in the hub's own (zoomed) units times the factor
+  // against the room on screen
+  fitZoom(el, "--hub-fit", f => el.scrollHeight * f <= el.getBoundingClientRect().height + 1);
+}
+// THE ROUND CARD FITS TOO (2 Nov 2026: on a laptop its buttons were below
+// the card's own scroll and Help sat on its time bar): the card starts under
+// the chrome row (css) and is drawn smaller until all of it is in view.
+function fitCard() {
+  const scr = $("screen-between"), card = scr.querySelector(".round-card");
+  if (!card) return;
+  if (scr.classList.contains("hidden") || innerWidth <= 760) {
+    card.style.zoom = ""; card.style.maxHeight = ""; card.style.setProperty("--card-fit", "1"); return;
+  }
+  card.style.maxHeight = "none";
+  const cs = getComputedStyle(scr);
+  const room = scr.getBoundingClientRect().height - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom) - 8;
+  fitZoom(card, "--card-fit", () => card.getBoundingClientRect().height <= room);
+}
+let _fitQueued = false;
+function refit() {
+  if (_fitQueued) return;
+  _fitQueued = true;
+  requestAnimationFrame(() => { _fitQueued = false; fitHub(); fitCard(); });
+}
+addEventListener("resize", refit);
+document.fonts?.ready.then(refit);
+new MutationObserver(refit).observe($("screen-select"), { attributes: true, attributeFilter: ["class"] });
+new MutationObserver(refit).observe($("screen-between"), { attributes: true, attributeFilter: ["class"], childList: true, subtree: true, characterData: true });
 
 /* ================= the session plan (Oct 2026, by request) ================= */
 // The therapist's plan for the session: blocks of PLAN_BLOCK_MIN minutes, a
@@ -1314,7 +1403,9 @@ function renderToday() {
   if (!el || !state.patient || state.patient === "guest") { el?.classList.add("hidden"); return; }
   el.classList.remove("hidden");
   el.innerHTML = todayHubHTML(todayStats());
+  el.appendChild(HUB_COINS);       // the next coin ends the Today row (1 Nov 2026 clean-up)
 }
+const HUB_COINS = document.getElementById("hub-coins");
 // TODAY ON EVERY SCREEN (28 Oct 2026, by request: easier to see): a small
 // pill at the top centre, the minutes against the goal and a thin bar. It
 // counts live while a game, the assessment or the warm-up is on the stage
@@ -1339,6 +1430,21 @@ function updateTodayPill() {
     + `<span class="tp-reps"><b>${t.reps}</b> ${t.reps === 1 ? "rep" : "reps"}</span>`;
 }
 setInterval(updateTodayPill, 5000);
+// The assessment's and the warm-up's words sit in the chrome row, between
+// Help and the Today pill (2 Nov 2026: with the reps added the pill grew and
+// the words ran into it on a laptop). The room is measured, not guessed: how
+// far in from either edge the chrome reaches, as --chrome-side; with too
+// little room left in the middle the words drop under the row instead.
+function fitChromeGap() {
+  const help = $("btn-help").getBoundingClientRect(), pill = $("today-pill").getBoundingClientRect();
+  const l = help.width ? help.right : 0, r = pill.width ? innerWidth - pill.left : 0;
+  const side = Math.ceil(Math.max(l, r, 160)) + 16;
+  document.documentElement.style.setProperty("--chrome-side", side + "px");
+  document.body.classList.toggle("prompt-below", innerWidth - 2 * side < 420);
+}
+new ResizeObserver(fitChromeGap).observe($("today-pill"));
+new ResizeObserver(fitChromeGap).observe($("btn-help"));
+addEventListener("resize", fitChromeGap);
 
 // REPS TODAY (1 Nov 2026, by request; js/reps.js): counted every frame
 // while a game, the assessment or the warm-up is on the stage, on the
@@ -1412,6 +1518,11 @@ function renderSchedule(then, opts = {}) {
   // going back keeps it as it was
   $("btn-plan-skip").textContent = saved?.blocks?.length ? "Back" : "Skip for now";
   $("btn-plan-skip").classList.toggle("hidden", !!opts.setup);
+  $("plan-title").textContent = opts.setup ? "Set your plan" : "Your plan";
+  // when they play: the reminder's time and days (an email is sent then if they gave one)
+  const c = store.getPatient(state.patient)?.contact || {};
+  $("plan-time").value = c.remindAt || "10:00";
+  $("plan-days").value = c.remindDays && c.remindDays !== "off" ? c.remindDays : (c.remindAt ? "off" : "daily");
   show("screen-schedule");
   document.querySelectorAll("#screen-schedule .kbd-focus").forEach(el => el.classList.remove("kbd-focus"));
   focusHint(planDraft.length ? $("btn-plan-save") : document.querySelector("#plan-picks .gcard"));
@@ -1477,6 +1588,9 @@ function drawPlan() {
 }
 $("btn-plan-save").addEventListener("click", () => {
   store.setSchedule(state.patient, planDraft.map(b => ({ game: b.game, axis: b.axis, level: b.level ?? null, minutes: b.minutes })));
+  const c = store.getPatient(state.patient)?.contact || {};
+  store.setContact(state.patient, { email: c.email || "", remindAt: $("plan-time").value, remindDays: $("plan-days").value });
+  syncReminder(state.patient);
   speak(`Plan saved. ${planDraft.length} block${planDraft.length === 1 ? "" : "s"}, ${planMinutes(planDraft)} minutes.`);
   const then = planReturn; planReturn = null;
   (then || (() => { renderSelect(); show("screen-select"); }))();
@@ -1501,13 +1615,13 @@ function renderPlanStrip(gameLock) {
   edit.addEventListener("click", () => renderSchedule(() => { renderSelect(); show("screen-select"); }));
   const btns = document.createElement("div"); btns.className = "plan-btns";
   if (!plan?.blocks?.length) {
-    strip.innerHTML = `<div class="plan-what">No plan for today yet</div>`;
+    strip.innerHTML = `<div class="plan-what">No plan yet</div>`;
     btns.appendChild(edit); strip.appendChild(btns);
     return null;
   }
   // the blocks as chips in their games' colours (30 Oct 2026 look)
   const chips = plan.blocks.map(b => `<span class="plan-chip" style="${accentVars(b.game)}"><i></i>${planName(b)}${b.level ? ` level ${b.game === "windy" ? windyStageOf(b.level) : b.level}` : ""} <small>${b.minutes || PLAN_BLOCK_MIN} min</small></span>`).join("");
-  strip.innerHTML = `<div class="plan-what">Today's plan: ${chips}</div>`;
+  strip.innerHTML = `<div class="plan-what">Your plan: ${chips}</div>`;
   const btn = document.createElement("button");
   btn.className = "btn big"; btn.dataset.dwell = "1";
   btn.textContent = gameLock ? gameLock : "Start the plan";
@@ -2051,6 +2165,7 @@ function startAssessment(opts = {}) {
     setTimeout(() => backupNow("assessment", true), 2000);
     store.saveProfile(state.patient, profile.arm, profile);
     store.logPlaytime(state.patient, performance.now() - t0, "assessment");
+    giveStars("assess");
     snapshot(state.patient);
     audio.stopBgm();
     audio.fanfare();
@@ -2434,7 +2549,15 @@ function onRoundEnd(round) {
 
   round.date ??= new Date().toISOString();
   round.day = localDayKey();
+  const starsBefore = lifetimeStars();
   store.logRound(state.patient, round);
+  // bonus stars at the round's end (said on the card's star count and the toast)
+  if (round.stars > 0 || round.seconds > 30) {
+    const gameKey = round.game === "pong" ? `pong-${round.pongMode === "duo" ? "duo" : round.axis || "fe"}` : round.game;
+    round.bonusStars = giveStars("newGame", { once: gameKey });
+    if (todayStats().minutes >= dailyGoal(state.patient)) round.bonusStars += giveStars("goalDay");
+  }
+  coinCheck(starsBefore, lifetimeStars());
   if (round.game === "pong" && round.pongMode === "duo") store.logRivalry(state.patient, round.p2Name || "guest", round.matchWon, round.bestRally);
   state.sessionStars += round.stars;
   // the lantern street only ever gains (village.js)
@@ -2734,7 +2857,7 @@ function renderBetween(round, note, opts = {}) {
   // the round's own stars rising off it
   const p = store.getPatient(state.patient);
   const total = Math.max(p?.starsLifetime || 0, p?.stars || 0);
-  const n = round.stars || 0;
+  const n = (round.stars || 0) + (round.bonusStars || 0);
   $("rc-stars").innerHTML = `${RC_STAR}<span class="rc-star-n" id="rc-star-n">${Math.max(0, total - n)}</span>`
     + (n > 0 ? `<span class="rc-star-plus">+${n}</span>` : "");
   clearInterval(_rcStarTimer);
@@ -3209,15 +3332,8 @@ function requestHelp() {
     `${diagnostics(state, state.tracker)}\n`, "help request");
 }
 for (const id of ["btn-help", "btn-welcome-help", "btn-select-help"]) $(id).addEventListener("click", requestHelp);
-// the patient's own "email my progress": the same report the staff button
-// sends, with a spoken confirmation so they know it went
-$("btn-select-mail").addEventListener("click", async () => {
-  const p = store.getPatient(state.patient);
-  speak("Sending your progress to your therapist.");
-  await doMail("progress", `Progress — participant ${state.patient} (${state.side})`,
-    progressReport(state.patient, p, state.side), "progress summary");
-  speak(mailReady() ? "Sent." : "Your mail app has opened. Press Send there.");
-});
+// (the hub's "Email my progress" button was removed in the 1 Nov 2026
+// clean-up; the staff drawer's Email progress sends the same report)
 
 $("btn-mail-progress").addEventListener("click", () => {
   const p = store.getPatient(state.patient);
@@ -3486,9 +3602,13 @@ if (previewOf === "pongscore") {
   });
 } else if (new URLSearchParams(location.search).get("go")) {
   // ?go=<target>: straight to one game or screen (see testJump)
-  boot().then(() => { state.tracker?.setSqueezeEase?.(A11Y.squeezeEase); watchWelcome(); testJump(new URLSearchParams(location.search)); });
+  watchWelcome();
+  boot().then(() => { state.tracker?.setSqueezeEase?.(A11Y.squeezeEase); testJump(new URLSearchParams(location.search)); });
 } else {
-  boot().then(() => { state.tracker?.setSqueezeEase?.(A11Y.squeezeEase); watchWelcome(); });
+  // the camera screens' loop starts now, so the picture shows the moment the
+  // camera gives one, with the tracking's progress, while the models load
+  watchWelcome();
+  boot().then(() => { state.tracker?.setSqueezeEase?.(A11Y.squeezeEase); });
 }
 
 /* ================= test shortcuts (Oct 2026, by request) ================= */
@@ -3635,6 +3755,130 @@ $("btn-restore").addEventListener("click", async () => {
 });
 probeLauncher().then(renderBackupUI);
 startAutoBackup();
+
+/* ================= stars, bonus stars and challenge coins ================= */
+// (1 Nov 2026, by request.) A star is a minute of play (onRoundEnd); these
+// small bonuses reward what matters clinically, never skill: joining, coming
+// in, the warm-up, the day's measurement, the whole plan done, trying a game.
+// Each is once ever or once a day (store.awardStars keys), so redoing a thing
+// is not worth points. Lifetime stars earn CHALLENGE COINS at 30, 100, 300,
+// 500 and 1000 (bronze, silver, gold, platinum, diamond), then a numbered
+// coin every 500, so a long stay always has a next one. A coin is never taken
+// away; earning one is said, shown and sounded, and staff get an email at the
+// Help address (through the relay only) and a line in the drawer's list, so a
+// real coin can be ready. The 10 for joining and the 10 for the first
+// measurement put the first coin about ten minutes of play away, on day one.
+const STAR_BONUS = { created: 10, login: 2, warmup: 5, assess: 10, goalDay: 5, newGame: 5 };
+const STAR_BONUS_WHY = { created: "for joining", login: "for coming in today", warmup: "for the warm-up",
+  assess: "for today's measurement", goalDay: "for your whole plan today", newGame: "for trying a new game" };
+const COINS = [[30, "Bronze", "#C27C3E"], [100, "Silver", "#AEB5C1"], [300, "Gold", "#E2B23A"], [500, "Platinum", "#8FB9C9"], [1000, "Diamond", "#6FC3E8"]];
+const COIN_EVERY = 500;
+function coinAt(i) {
+  if (i < COINS.length) return { at: COINS[i][0], name: COINS[i][1], col: COINS[i][2] };
+  const at = COINS[COINS.length - 1][0] + COIN_EVERY * (i - COINS.length + 1);
+  return { at, name: String(at), col: "#7B68D9" };
+}
+function coinState(total) { let i = 0; while (coinAt(i).at <= total) i++; return { earned: i, next: coinAt(i), prev: i ? coinAt(i - 1).at : 0 }; }
+const lifetimeStars = (name = state.patient) => { const p = store.getPatient(name); return Math.max(p?.starsLifetime || 0, p?.stars || 0); };
+// a coin drawn in HTML: its colour, a star, or its number past diamond
+const coinHTML = (c, on = true, big = false) => `<span class="coin${on ? "" : " off"}${big ? " big" : ""}" style="--coin:${c.col}" title="${c.name} coin, ${c.at} stars">${c.at > 1000 && on ? `<small>${c.at}</small>` : "★"}</span>`;
+// give a bonus (kind from STAR_BONUS): `once` true = once ever, a string =
+// once ever per that string (a game), else once a day. Returns the stars given.
+function giveStars(kind, opts = {}) {
+  const name = state.patient;
+  if (!name || name === "guest" || A11Y.practice) return 0;
+  const key = opts.once ? (opts.once === true ? kind : `${kind}:${opts.once}`) : `${kind}@${localDayKey()}`;
+  const before = lifetimeStars(name);
+  const got = store.awardStars(name, STAR_BONUS[kind], key);
+  if (got) {
+    if (!opts.quiet) starToast(`+${got} ★`, STAR_BONUS_WHY[kind]);
+    coinCheck(before, before + got);
+  }
+  return got;
+}
+// a coin earned between two lifetime totals: kept, shown, said, sounded, and sent to staff
+function coinCheck(before, after) {
+  const a = coinState(before).earned, b = coinState(after).earned;
+  // coins a long-standing participant passed before coins existed: kept quietly
+  const have = (store.getPatient(state.patient)?.coins || []).length;
+  for (let i = have; i < a; i++) store.addCoin(state.patient, coinAt(i));
+  for (let i = a; i < b; i++) {
+    const c = coinAt(i);
+    store.addCoin(state.patient, c);
+    starToast(`New coin: ${c.name}!`, `${c.at} stars`, c, 6000);
+    audio.sfx("levelUp");
+    speak(`Well done. You earned your ${c.name.toLowerCase()} coin.`);
+    notifyCoin(state.patient, c);
+  }
+  renderCoins();
+}
+async function notifyCoin(name, c) {
+  renderCoinLog();
+  if (!mailReady()) await probeMail();
+  if (!mailReady()) return;      // through the relay only: never a mail window on a patient
+  const p = store.getPatient(name);
+  await sendMail("help", `Coin earned: ${name}, ${c.name} (${c.at} stars)`,
+    `Participant ${name} earned the ${c.name} challenge coin at ${new Date().toLocaleString()}.\n` +
+    `Lifetime stars: ${lifetimeStars(name)}. Training arm: ${p.arm || state.side}.\n` +
+    `Coins so far: ${(p.coins || []).map(x => x.name).join(", ")}.\n`);
+}
+// the small card at the top that says what was just given ("+2 ★ for coming in today")
+let _toastQ = [], _toastOn = false;
+function starToast(big, small, coin = null, ms = 3600) {
+  _toastQ.push({ big, small, coin, ms });
+  if (!_toastOn) nextToast();
+}
+function nextToast() {
+  const el = $("star-toast"), t = _toastQ.shift();
+  if (!t) { _toastOn = false; el.classList.add("hidden"); return; }
+  _toastOn = true;
+  el.innerHTML = (t.coin ? coinHTML(t.coin, true, true) : "") + `<b>${t.big}</b><span>${t.small}</span>`;
+  el.classList.toggle("is-coin", !!t.coin);
+  el.classList.remove("hidden");
+  setTimeout(nextToast, t.ms);
+}
+// the hub's coin shelf: the coins so far, then the stars to the next one
+function renderCoins() {
+  const el = HUB_COINS;
+  if (!el) return;
+  if (!state.patient || state.patient === "guest") { el.classList.add("hidden"); return; }
+  el.classList.remove("hidden");
+  // one line (1 Nov 2026, by request: the hub was too busy): the next coin,
+  // the stars to it and a bar; the coins already earned are on the click
+  const total = lifetimeStars(), S = coinState(total);
+  const left = S.next.at - total, f = (total - S.prev) / (S.next.at - S.prev);
+  // the next coin with its progress as a ring round it, and the stars to go
+  el.innerHTML = `<span class="hc-ring" style="--f:${Math.round(f * 100)}%;--coin:${S.next.col}">${coinHTML(S.next, true)}</span>`
+    + `<span class="hc-text"><span>Next coin: <b>${S.next.name}</b></span><small>${left} more ${left === 1 ? "star" : "stars"}</small></span>`;
+}
+HUB_COINS.addEventListener("click", renderCoinsInfo);
+// what the coins cost and how stars are earned (a click on the shelf)
+function renderCoinsInfo() {
+  const wrap = $("cards");
+  wrap.innerHTML = "";
+  subView("Stars and coins");
+  const total = lifetimeStars(), S = coinState(total);
+  const list = Array.from({ length: Math.max(COINS.length, S.earned + 1) }, (_, i) => coinAt(i))
+    .map((c, i) => `<div class="ci-coin${i < S.earned ? " got" : ""}">${coinHTML(c, i < S.earned, true)}<b>${c.name}</b><span>${c.at} stars</span></div>`).join("");
+  const ways = [["1 ★", "every minute of a game"], [`+${STAR_BONUS.login}`, "each day you come in"], [`+${STAR_BONUS.warmup}`, "for the warm-up, once a day"],
+    [`+${STAR_BONUS.assess}`, "for the day's measurement"], [`+${STAR_BONUS.goalDay}`, "on a day your whole plan is done"], [`+${STAR_BONUS.newGame}`, "the first time you try a game"]]
+    .map(([n, t]) => `<div class="ci-way"><b>${n}</b><span>${t}</span></div>`).join("");
+  wrap.innerHTML = `<div class="duo-setup"><div class="board"><h3>You have ${total} ★. ${S.next.at - total} more for your ${S.next.name.toLowerCase()} coin.</h3>
+    <div class="ci-coins">${list}</div><h3 style="margin-top:18px">How to earn stars</h3><div class="ci-ways">${ways}</div>
+    <p class="hint">Coins are never taken away. After diamond there is a new coin every ${COIN_EVERY} stars.</p></div></div>`;
+  const back = pillBtn("↩ Back", "All games", renderSelect);
+  wrap.prepend(back);
+  focusHint(back);
+}
+// the staff drawer's list: every coin earned on this computer, newest first
+function renderCoinLog() {
+  const el = $("coinlog"); if (!el) return;
+  const rows = store.listPatients().filter(p => p.name !== "guest")
+    .flatMap(p => (store.getPatient(p.name).coins || []).map(c => ({ who: p.name, ...c })))
+    .sort((a, b) => b.date.localeCompare(a.date)).slice(0, 20);
+  el.innerHTML = rows.length ? rows.map(r => `<div><b>${r.who}</b> · ${r.name} (${r.at}) · ${new Date(r.date).toLocaleDateString()}</div>`).join("") : "None yet";
+}
+renderCoinLog();
 
 /* ================= the boards: one for every game, on the hub ================= */
 // FOUR BOARDS (1 Nov 2026, by request: "do all ideas", then "No need

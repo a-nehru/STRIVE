@@ -77,7 +77,9 @@ export class Coach {
           this.state = "alert"; this.type = worst[0]; this.alertStart = now; this.stateT = now;
           if (!this.quiet) {
             audio.whoosh();
-            const cue = coachLine("compensation", { type: this.type });
+            // a sideways lean is named by its side, the patient's own
+            const toward = this.type === "tilt" && c.tiltLR ? (c.tiltLR > 0 ? "left" : "right") : null;
+            const cue = coachLine("compensation", { type: this.type, toward });
             this._speak(cue);
             this._cuePill(cue, true);
           }
