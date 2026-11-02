@@ -10,6 +10,8 @@ tools/coach_config.json
 tools/reminders.json
 # progress snapshots pushed by the game for update-by-email: patient data
 tools/snapshots/
+# test notes from the Note button: screenshots of this screen (people in view)
+tools/testnotes/
 # downloaded on first use by tools/zed_track.py (MediaPipe hand model)
 tools/models/
 # raw recordings, logs and scratch: not part of the site (two are over GitHub's 100 MB limit)

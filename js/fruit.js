@@ -15,9 +15,9 @@
 // the mockup's drawn fruit with faces as the last fallback. T cycles them.
 //
 // What is STRIVE's:
-//  - THE LADDER: eight fruit, strawberry to the pumpkin (the mockup's eleven
-//    ran Suika's own sequence to the watermelon); the pumpkin is drawn in the
-//    mockup's style.
+//  - THE LADDER: eight fruit, strawberry to the watermelon (the mockup had
+//    eleven; a pumpkin topped it from 31 Oct to 2 Nov 2026); the watermelon
+//    is drawn in code for the public pictures, Fluent's being a slice.
 //  - THE ARM drives it. The hand's SIDEWAYS position moves along the top of
 //    the box over the assessment's own x range about the body centre (Pong
 //    Abd-Add's lane) times rangeScale. Height is free: the arm may rest on a
@@ -82,9 +82,18 @@ function loadGlossy() {
 // left out, so each fruit's body fills its physics circle
 const FLUENT_FIT = {
   strawberry: [157.5, 127.5, 128], grape: [166.5, 117, 138.5], orange: [171.5, 127.5, 147], apple: [200, 128, 146],
-  peach: [209, 127.5, 116.5], pineapple: [175, 120.5, 140.5], melon: [175.5, 127.5, 145], pumpkin: [199.5, 127.5, 148],
+  peach: [209, 127.5, 116.5], pineapple: [175, 120.5, 140.5], melon: [175.5, 127.5, 145],
 };
 const FLUENT_FILL = 1.06;        // a touch over the circle, so touching fruit look touching
+// THE SHINE (2 Nov 2026, by request: the glossy pictures may not go public,
+// so the public Fluent fruit get a glossy look in code): a soft shadow under
+// each fruit and a light on its upper left, drawn with the screen's light,
+// not turning with the fruit. 0 off, 1 soft, 2 strong; device-level
+// localStorage strive-fruit-gloss overrides FRUIT_GLOSS.
+const FRUIT_GLOSS = 0;             // off: on 2 Nov 2026 the user kept the Fluent fruit as they are
+const GLOSS = [null,
+  { shadow: 0.22, blur: 0.28, drop: 0.10, spec: 0.55, specR: 0.42, rim: 0 },
+  { shadow: 0.30, blur: 0.34, drop: 0.13, spec: 0.8, specR: 0.5, rim: 0.35 }];
 let FLUENT = null;
 function loadFluent(onEach) {
   if (FLUENT) return FLUENT;
@@ -114,7 +123,10 @@ export const FRUITS = [
   { n: "Peach", r: 46, pts: 15, col: "#ff9ea0", art: "peach" },
   { n: "Pineapple", r: 59, pts: 21, col: "#ffc933", art: "pineapple" },
   { n: "Melon", r: 76, pts: 28, col: "#9fd462", art: "melon" },
-  { n: "Pumpkin", r: 96, pts: 36, col: "#ff8c2a", art: "pumpkin" },
+  // the top fruit: a watermelon since 2 Nov 2026, by request (a pumpkin
+  // from 31 Oct, chosen then to keep off Suika's ladder; the game around it
+  // is STRIVE's own)
+  { n: "Watermelon", r: 96, pts: 36, col: "#3fa34d", art: "watermelon" },
 ];
 const TOP = FRUITS.length - 1;
 export const FRUIT_MAX = 20;      // levels on the map (fruitLevelDef works for any level)
@@ -140,7 +152,7 @@ const SHAKE_MS = 4500;
 // drop it; pick up the next and drop it on the first so the two join; then a
 // grape on the grape, while
 // the evolution ring shows each pair growing into the next fruit, all the way
-// to the pumpkin. Then the box empties and level 1 begins, so the practice
+// to the watermelon. Then the box empties and level 1 begins, so the practice
 // never counts. Skip with the pill, Enter or Escape.
 const TUT_OVER_MS = 600;          // the fruit held over the box this long counts as brought
 const TUT_PICK_GIVE_MS = 25000;   // a fruit out of reach is handed over after this, gently
@@ -226,6 +238,43 @@ function face(ctx, r, eyes = "open", mouth = "w", oy = .08) {
   }
   ctx.restore();
 }
+// a watermelon's dark stripes: wavy bands along the meridians from the stem
+// to the bottom, narrowing toward the edges (already clipped to the body)
+function melonBands(ctx, r, col) {
+  ctx.fillStyle = col;
+  for (const k of [-.86, -.52, -.18, .18, .52, .86]) {
+    const w0 = r * .1 * (1 - Math.abs(k) * .4), L = [], R = [];
+    for (let t = -1; t <= 1.001; t += .05) {
+      const y = t * r, c = Math.sqrt(Math.max(0, 1 - t * t)), x = k * r * c;
+      const w = w0 * (.35 + .65 * c) * (1 + Math.sin(t * 15 + k * 4) * .35);
+      L.push([x - w, y]); R.push([x + w, y]);
+    }
+    ctx.beginPath(); ctx.moveTo(...L[0]);
+    for (const p of L) ctx.lineTo(...p);
+    for (const p of R.reverse()) ctx.lineTo(...p);
+    ctx.closePath(); ctx.fill();
+  }
+}
+// the watermelon among the Fluent pictures (2 Nov 2026: Fluent's own is a
+// slice, which cannot fill a round fruit): drawn in code with the same soft
+// 3D light, no face
+function drawWatermelon3D(ctx, r) {
+  const g = ctx.createRadialGradient(-r * .38, -r * .42, r * .05, 0, 0, r * 1.02);
+  g.addColorStop(0, "#A6EA78"); g.addColorStop(.5, "#45A852"); g.addColorStop(1, "#1C6330");
+  ctx.save();
+  ctx.beginPath(); ctx.arc(0, 0, r, 0, TAU); ctx.fillStyle = g; ctx.fill(); ctx.clip();
+  melonBands(ctx, r, "rgba(18,78,34,.72)");
+  const sh = ctx.createLinearGradient(-r * .6, -r * .7, r * .7, r * .9);
+  sh.addColorStop(0, "rgba(0,0,0,0)"); sh.addColorStop(1, "rgba(0,30,10,.32)");
+  ctx.fillStyle = sh; ctx.fillRect(-r, -r, r * 2, r * 2);
+  const hl = ctx.createRadialGradient(-r * .4, -r * .46, 0, -r * .4, -r * .46, r * .42);
+  hl.addColorStop(0, "rgba(255,255,255,.55)"); hl.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = hl; ctx.beginPath(); ctx.ellipse(-r * .4, -r * .46, r * .42, r * .3, -.6, 0, TAU); ctx.fill();
+  ctx.restore();
+  ctx.strokeStyle = "#6E5326"; ctx.lineWidth = r * .07; ctx.lineCap = "round";
+  ctx.beginPath(); ctx.moveTo(0, -r * .9); ctx.quadraticCurveTo(r * .02, -r * 1.04, r * .1, -r * 1.09); ctx.stroke();
+}
+
 function drawFruit(ctx, art, r) {
   switch (art) {
     case "strawberry": {
@@ -334,13 +383,20 @@ function drawFruit(ctx, art, r) {
       leaf(ctx, -r * .06, -r * .98, r * .5, r * .18, -2.7);
       break;
     }
+    case "watermelon": {
+      bodyFill(ctx, r, "#b4ea86", "#36974a");
+      ctx.save(); clipBody(ctx, r); melonBands(ctx, r, "rgba(24,92,40,.62)"); ctx.restore();
+      rim(ctx, r, "#1f6b2f"); gloss(ctx, r); face(ctx, r, "happy", "big", .1);
+      stem(ctx, [0, -r * .9, r * .03, -r * 1.04, r * .12, -r * 1.1], r * .07, "#6e5326");
+      break;
+    }
   }
 }
 
 /* ---------- levels: gentle start, one new idea every few levels (the mockup's) ---------- */
 function mulberry32(a) { return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
 export function fruitLevelDef(n) {
-  const goal = Math.min(TOP, 1 + Math.floor(n / 2));              // L1 grape, L2-3 orange, L4-5 apple ... L12 on the pumpkin
+  const goal = Math.min(TOP, 1 + Math.floor(n / 2));              // L1 grape, L2-3 orange, L4-5 apple ... L12 on the watermelon
   const count = (n % 2 === 1 && n > 1 && goal < TOP - 1) ? 2 : 1;  // the second visit to a fruit asks for two
   const maxDrop = Math.max(0, Math.min(3, 1 + Math.floor(n / 3), goal - 1));   // early levels drop only small fruit
   const rnd = mulberry32(n * 7919 + 13);
@@ -564,7 +620,7 @@ export class CozyFruit extends GameBase {
           else this.say(`One ${fruitName(i + 1).toLowerCase()}. One more to go.`, true);
         }
       } else {
-        // two pumpkins: a harvest! both go, and a shake is earned
+        // two watermelons: a harvest! both go, and a shake is earned
         this.harvests++; this.merges++;
         this.score += 100; this.stats.stars += 100;
         this._burst(x, y, i, 40);
@@ -933,14 +989,14 @@ export class CozyFruit extends GameBase {
       match: ["Pick up the next one", "Drop it on top of the first", "Now pick up the next one, and drop it right on top of the first. Two the same join together."],
       grew1: ["They joined!", "Two strawberries make a grape", "They joined! Two strawberries make a grape. Look at the ring: every pair grows into the next fruit."],
       evolve: ["Now the grape on the grape", "Two grapes make an orange", "Now pick up the grape, and drop it right on top of the grape."],
-      grew2: ["An orange!", "Every pair grows into the next fruit", "An orange! Every pair grows into the next fruit, all the way to the pumpkin. Let's play!"],
+      grew2: ["An orange!", "Every pair grows into the next fruit", "An orange! Every pair grows into the next fruit, all the way to the watermelon. Let's play!"],
       done: ["Well done", "Let's play", "Well done. Let's play!"],
     }[step];
     t.title = lines[0]; t.sub = lines[1];
     this.say(lines[2], true);
     t.picksOn = step === "pick" || step === "match" || step === "evolve";
     t.dropsOn = step === "drop" || step === "match" || step === "evolve";
-    // the evolution ring shows what just grew into what; grew2 sweeps on to the pumpkin
+    // the evolution ring shows what just grew into what; grew2 sweeps on to the watermelon
     t.ringShow = step === "grew1" ? { from: 0, to: 1, at: now } : step === "grew2" ? { from: 1, to: 2, at: now, sweep: true } : null;
     if (step === "evolve") {
       // grapes from now on: the one waiting under Next too
@@ -1158,8 +1214,10 @@ export class CozyFruit extends GameBase {
     if (gl && gl.naturalWidth) {
       const fit = f.r * 2.18 / Math.max(gl.naturalWidth, gl.naturalHeight);
       x.drawImage(gl, -gl.naturalWidth * fit / 2, -gl.naturalHeight * fit / 2, gl.naturalWidth * fit, gl.naturalHeight * fit);
+    } else if (style !== "drawn" && f.art === "watermelon") {
+      drawWatermelon3D(x, f.r);           // Fluent's 🍉 is a slice: the public site's watermelon is drawn
     } else if (fl && fl.complete && fl.naturalWidth) {
-      // the glossy set has no pumpkin: it, and every fruit on the public site, is Fluent's
+      // every fruit on the public site is Fluent's
       const [d, cx, cy] = FLUENT_FIT[f.art], u = fl.naturalWidth / 256, sc = f.r * 2 * FLUENT_FILL / (d * u);
       x.drawImage(fl, -cx * u * sc, -cy * u * sc, fl.naturalWidth * sc, fl.naturalHeight * sc);
     } else drawFruit(x, f.art, f.r);
@@ -1167,16 +1225,36 @@ export class CozyFruit extends GameBase {
   }
   // a fruit drawn at a logical radius in the current (board) transform
   _drawFruitAt(ctx, i, x, y, ang = 0, sc = 1) {
-    const s = this._sprite(i);
-    ctx.save(); ctx.translate(x, y); if (ang) ctx.rotate(ang); if (sc !== 1) ctx.scale(sc, sc);
+    const s = this._sprite(i), G = this._artStyle() === "fluent" ? GLOSS[this.gloss] : null;
+    ctx.save(); ctx.translate(x, y);
+    if (G) {
+      // canvas shadows ignore the transform: scale them by the board's own
+      const T = ctx.getTransform(), k = Math.hypot(T.a, T.b), r = FRUITS[i].r * sc;
+      ctx.shadowColor = `rgba(110,60,30,${G.shadow})`; ctx.shadowBlur = r * G.blur * k; ctx.shadowOffsetY = r * G.drop * k;
+    }
+    ctx.save(); if (ang) ctx.rotate(ang); if (sc !== 1) ctx.scale(sc, sc);
     ctx.drawImage(s.c, -s.half, -s.half, s.half * 2, s.half * 2); ctx.restore();
+    if (G) { ctx.shadowColor = "transparent"; this._shine(ctx, FRUITS[i].r * sc, G); }
+    ctx.restore();
+  }
+  // the light on a fruit of radius r at the origin, inside its body circle
+  _shine(ctx, r, G) {
+    const hx = -r * 0.36, hy = -r * 0.42;
+    const g = ctx.createRadialGradient(hx, hy, 0, hx, hy, r * G.specR);
+    g.addColorStop(0, `rgba(255,255,255,${G.spec})`); g.addColorStop(0.45, `rgba(255,255,255,${G.spec * 0.35})`); g.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = g; ctx.beginPath(); ctx.ellipse(hx, hy, r * G.specR, r * G.specR * 0.72, -0.65, 0, TAU); ctx.fill();
+    if (G.rim) {
+      ctx.strokeStyle = `rgba(255,255,255,${G.rim})`; ctx.lineWidth = r * 0.07; ctx.lineCap = "round";
+      ctx.beginPath(); ctx.arc(0, 0, r * 0.84, Math.PI * 1.08, Math.PI * 1.42); ctx.stroke();
+    }
   }
   // a fruit icon at a screen point, `size` px across its body
   _icon(ctx, i, x, y, size, dim = false) {
-    const s = this._sprite(i), sc = size / (FRUITS[i].r * 2);
+    const s = this._sprite(i), sc = size / (FRUITS[i].r * 2), G = this._artStyle() === "fluent" ? GLOSS[this.gloss] : null;
     ctx.save();
     if (dim) { ctx.globalAlpha = 0.45; ctx.filter = "saturate(0.6)"; }
     ctx.drawImage(s.c, x - s.half * sc, y - s.half * sc, s.half * 2 * sc, s.half * 2 * sc);
+    if (G && !dim) { ctx.translate(x, y); this._shine(ctx, size / 2, G); }
     ctx.restore();
   }
 
@@ -1201,6 +1279,7 @@ export class CozyFruit extends GameBase {
   }
 
   draw(ctx, c, now) {
+    { const g = localStorage.getItem("strive-fruit-gloss"); this.gloss = g == null ? FRUIT_GLOSS : +g || 0; }
     const L = this._lay(c);
     if (Math.abs(this.spriteS - L.S) > 0.01) { this.spriteS = L.S; this.sprites = []; }
     if (!this.engine) {
@@ -1528,7 +1607,7 @@ export class CozyFruit extends GameBase {
     });
     this._label(ctx, "Evolution", ccx, ccy + 6 * s, s);
     // the guided start: an arrow round the ring from what joined to what it
-    // made, both glowing; then a light sweeping on to the pumpkin
+    // made, both glowing; then a light sweeping on to the watermelon
     const rs = this.tut?.ringShow;
     if (rs && now >= (this.tut.pauseUntil || 0)) {
       const ang = i => (i * 360 / FRUITS.length - 90) * Math.PI / 180;
@@ -1551,7 +1630,7 @@ export class CozyFruit extends GameBase {
       ctx.lineTo(hx - tx * 4 * s - Math.cos(a1) * 10 * s, hy - ty * 4 * s - Math.sin(a1) * 10 * s);
       ctx.closePath(); ctx.fill();
       if (rs.sweep) {
-        // a light travelling from the new fruit on round to the pumpkin, again and again
+        // a light travelling from the new fruit on round to the watermelon, again and again
         const f = A11Y.calm ? 1 : ((now - rs.at) % 2600) / 2600, at = rs.to + f * (FRUITS.length - 1 - rs.to);
         const p = { x: ccx + Math.cos(ang(at)) * R, y: ccy + Math.sin(ang(at)) * R };
         const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, 34 * s);

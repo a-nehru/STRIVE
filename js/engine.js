@@ -568,7 +568,7 @@ export class GameBase {
       return;
     }
     // arc encouragement once per round when playing safe & shallow
-    if (!this.fb.saidReach && this.stats.hits >= 5 && this.stats.reachFracs.length >= 5) {
+    if (!this.noReachNudge && !this.fb.saidReach && this.stats.hits >= 5 && this.stats.reachFracs.length >= 5) {
       const mean = this.stats.reachFracs.reduce((s, v) => s + v, 0) / this.stats.reachFracs.length;
       if (mean < 0.58) {
         this.fb.saidReach = true;

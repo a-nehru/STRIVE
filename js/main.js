@@ -14,7 +14,7 @@ import { A11Y, applySettings, speakLine, showCaption, hushVoice, COACHES } from 
 import { coachLine, phrasebookLines } from "./coachlines.js";
 import { probeCoach, coachRelayReady, coachRelayInfo } from "./coachline.js";
 import { probeTts, ttsReady, ttsInfo, prerenderVoice } from "./tts.js";
-import { probeMail, sendMail, mailTarget, mailReady, diagnostics, progressReport, setReminder, pushSnapshot } from "./mail.js";
+import { probeMail, sendMail, mailTarget, mailReady, diagnostics, progressReport, setReminder, pushSnapshot, grabScreen, saveTestNote } from "./mail.js";
 import { applyThemeCSS, accentOf } from "./theme.js";
 import { mountCharacter } from "./cast.js";
 
@@ -1331,15 +1331,23 @@ function fitCard() {
   fitZoom(card, "--card-fit", () => card.getBoundingClientRect().height <= room);
 }
 let _fitQueued = false;
+// the reach result screen, the same way (2 Nov 2026, by request: on a laptop
+// the plot was cut off and Continue needed a scroll)
+function fitRom() {
+  const el = $("screen-romcompare");
+  if (el.classList.contains("hidden") || innerWidth <= 760) { el.style.zoom = ""; el.style.setProperty("--rom-fit", "1"); return; }
+  fitZoom(el, "--rom-fit", f => el.scrollHeight * f <= el.getBoundingClientRect().height + 1);
+}
 function refit() {
   if (_fitQueued) return;
   _fitQueued = true;
-  requestAnimationFrame(() => { _fitQueued = false; fitHub(); fitCard(); });
+  requestAnimationFrame(() => { _fitQueued = false; fitHub(); fitCard(); fitRom(); });
 }
 addEventListener("resize", refit);
 document.fonts?.ready.then(refit);
 new MutationObserver(refit).observe($("screen-select"), { attributes: true, attributeFilter: ["class"] });
 new MutationObserver(refit).observe($("screen-between"), { attributes: true, attributeFilter: ["class"], childList: true, subtree: true, characterData: true });
+new MutationObserver(refit).observe($("screen-romcompare"), { attributes: true, attributeFilter: ["class"], childList: true, subtree: true });
 
 /* ================= the session plan (Oct 2026, by request) ================= */
 // The therapist's plan for the session: blocks of PLAN_BLOCK_MIN minutes, a
@@ -2743,7 +2751,7 @@ function roundSummary(round) {
     case "windy": {
       const n = r.gapsPassed || 0;
       head = r.completed ? "Nice flying!" : n > 0 ? "A windy ride!" : "A bumpy start.";
-      text = `You flew through ${plural(n, "gap")}${r.feathers ? ` and caught ${plural(r.feathers, "feather")}` : ""}.`;
+      text = `You flew through ${plural(n, "gap")}${r.feathers ? ` and caught ${plural(r.feathers, "coin")}` : ""}.`;
       glyph = "jet"; count = n; break;
     }
     case "lens": {
@@ -3477,6 +3485,80 @@ $("btn-quit").addEventListener("click", () => {
 // request): arrow keys move the highlight through the [data-dwell] elements
 // of the current menu screen, Enter or Space selects, mouse clicks work as
 // always. Right/Down = next, Left/Up = previous, wrapping around.
+// TEST NOTES (2 Nov 2026, by request: "a button where I add text about the
+// error, and the screenshot is sent so it is easy to troubleshoot"): on this
+// computer only (localhost), a Note button under the gear, or F2. Pressing it
+// takes a picture of the whole screen at once through the local relay (before
+// anything covers it), pauses a running game, then asks what went wrong and
+// files the words with the diagnostics under the same id in tools/testnotes/
+// (mail.js grabScreen / saveTestNote, tools/mail_bridge.py /grab, /testnote).
+const NOTES_ON = ["localhost", "127.0.0.1"].includes(location.hostname);
+let noteId = null, notePaused = false, notePage = null;
+// the page's own picture: every visible canvas where it sits, on the paper
+// colour (the DOM's words and buttons are not in it; the desktop picture has them)
+function snapCanvases() {
+  try {
+    const out = document.createElement("canvas");
+    out.width = innerWidth; out.height = innerHeight;
+    const x = out.getContext("2d");
+    x.fillStyle = "#F6F2EA"; x.fillRect(0, 0, out.width, out.height);
+    for (const cv of document.querySelectorAll("canvas")) {
+      if (cv.offsetParent === null || !cv.width || !cv.height) continue;
+      const r = cv.getBoundingClientRect();
+      if (r.width < 2 || r.height < 2) continue;
+      x.drawImage(cv, r.left, r.top, r.width, r.height);
+    }
+    return out.toDataURL("image/jpeg", 0.82);
+  } catch { return null; }
+}
+function shownScreen() {
+  if (!$("stage").classList.contains("hidden")) return "stage" + ($("stage").dataset.game ? ": " + $("stage").dataset.game : "") + ($("stage").dataset.mode ? " (" + $("stage").dataset.mode + ")" : "");
+  return document.querySelector('[id^="screen-"]:not(.hidden)')?.id || state.screen || "";
+}
+async function openNote() {
+  if (!$("note-panel").classList.contains("hidden")) return;
+  const btn = $("btn-note");
+  btn.style.visibility = "hidden";                 // not in its own picture
+  notePage = snapCanvases();                       // the game screen, this instant
+  noteId = await grabScreen();                     // the whole desktop, a moment later
+  btn.style.visibility = "";
+  // a camera flash: the screenshot is taken
+  const fl = document.createElement("div");
+  fl.style.cssText = "position:fixed;inset:0;z-index:199;background:#fff;opacity:.85;pointer-events:none;transition:opacity .35s ease-out";
+  document.body.appendChild(fl);
+  requestAnimationFrame(() => { fl.style.opacity = "0"; setTimeout(() => fl.remove(), 400); });
+  const g = state.current;
+  notePaused = !!(g?.togglePause && !g.userPaused);
+  if (notePaused) g.togglePause();
+  $("note-text").value = "";
+  $("note-status").textContent = noteId ? "Screenshot taken." : "No screenshot of the desktop (is the mail relay running? tools/mail_bridge.py). The game screen is still saved with the note.";
+  $("note-panel").classList.remove("hidden");
+  $("note-text").focus();
+}
+function closeNote() {
+  $("note-panel").classList.add("hidden");
+  if (notePaused && state.current?.userPaused) state.current.togglePause();
+  notePaused = false;
+}
+if (NOTES_ON) {
+  $("btn-note").classList.remove("hidden");
+  $("btn-note").onclick = openNote;
+  $("note-cancel").onclick = closeNote;
+  $("note-save").onclick = async () => {
+    $("note-status").textContent = "Saving…";
+    const ok = await saveTestNote({ id: noteId, text: $("note-text").value, screen: shownScreen(), page: notePage,
+      diag: diagnostics(state, state.tracker) + `\nScreen shown:  ${shownScreen()}\nState:         ${JSON.stringify({ screen: state.screen, game: state.current?.id ?? null, plan: !!state.plan })}` });
+    if (ok) closeNote(); else $("note-status").textContent = "Could not save: is the mail relay running?";
+  };
+  // typing in the note must not reach the games' and menus' keys
+  $("note-panel").addEventListener("keydown", e => {
+    e.stopPropagation();
+    if (e.key === "Escape") closeNote();
+    else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) $("note-save").click();
+  });
+  addEventListener("keydown", e => { if (e.key === "F2") { e.preventDefault(); openNote(); } }, true);
+}
+
 function kbdTargets() {
   return [...$(state.screen).querySelectorAll("[data-dwell]")]
     .filter(el => el.offsetParent !== null);   // visible only

@@ -2247,14 +2247,29 @@ export class ArcPong extends GameBase {
       };
       dots(usSide, this.games.us); dots(themSide, this.games.them);
     }
-    // the orb: a glowing, breathing light mid court, waiting for the ball
+    // the power-up waiting mid court for the ball: a turning gold star with a
+    // lightning bolt on it (2 Nov 2026, by request: the glowing amber orb it
+    // was read as a second ball), in a dashed ring
     if (this.orb && !tut) {
       const op = P(this.orb.x, this.orb.y), pulse = A11Y.calm ? 0.5 : Math.sin(now / 220) * 0.5 + 0.5;
-      const r = c.height * ORB_R * (0.85 + pulse * 0.3);
-      this.glow(ctx, op.x, op.y, r, "#FFF4D6", C.star, 18 + pulse * 8);
+      const r = c.height * ORB_R * 1.5 * (0.92 + pulse * 0.16);
       ctx.save();
-      ctx.strokeStyle = alpha("#D98E04", 0.4 + pulse * 0.4); ctx.lineWidth = 3; ctx.setLineDash([4, 6]);
-      ctx.beginPath(); ctx.arc(op.x, op.y, r * 1.6, now / 900, now / 900 + TAU); ctx.stroke();
+      ctx.fillStyle = alpha(C.star, 0.18 + pulse * 0.12);
+      ctx.beginPath(); ctx.arc(op.x, op.y, r * 1.35, 0, TAU); ctx.fill();
+      ctx.strokeStyle = alpha("#D98E04", 0.45 + pulse * 0.4); ctx.lineWidth = 3; ctx.setLineDash([4, 6]);
+      ctx.beginPath(); ctx.arc(op.x, op.y, r * 1.35, now / 900, now / 900 + TAU); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.translate(op.x, op.y); ctx.rotate(A11Y.calm ? 0 : Math.sin(now / 700) * 0.25);
+      ctx.shadowColor = alpha("#B87400", 0.45); ctx.shadowBlur = 10;
+      starShape(ctx, 0, 0, r, "#F6C343");
+      ctx.shadowBlur = 0;
+      ctx.lineJoin = "round"; ctx.strokeStyle = "#FFFFFF"; ctx.lineWidth = Math.max(2, r * 0.09); ctx.stroke();
+      // the bolt
+      const b = r * 0.42;
+      ctx.fillStyle = "#1E2235";
+      ctx.beginPath();
+      ctx.moveTo(b * 0.15, -b); ctx.lineTo(-b * 0.5, b * 0.12); ctx.lineTo(-b * 0.02, b * 0.12);
+      ctx.lineTo(-b * 0.18, b); ctx.lineTo(b * 0.5, -b * 0.18); ctx.lineTo(b * 0.04, -b * 0.18); ctx.closePath(); ctx.fill();
       ctx.restore();
     }
     // the challenge, small, under the clock, until it is taken
@@ -8895,20 +8910,26 @@ export class MemoryPairs extends GameBase {
  */
 const WINDY_LEVELS = [
   // speed: the mockup's px/frame at 640 px high; gap and mov: fractions of
-  // the lane; spacing: px between towers at 640 high; vary: how far the gap
-  // wanders from the middle of the lane (1 = anywhere)
-  { speed: 1.5, gap: 0.77, mov: 0, wind: 0, drones: 0, slide: 0, vary: 0.25, spacing: 430, note: "Learn to fly. Slow, wide and steady" },
-  { speed: 1.8, gap: 0.69, mov: 0, wind: 0, drones: 0, slide: 0.4, vary: 0.6, spacing: 390, note: "From now on the pilot can slide off. Keep the jet level" },
-  { speed: 2.3, gap: 0.64, mov: 0, wind: 0, drones: 0, slide: 0.45, note: "The city flies faster. Move early and gently" },
-  { speed: 2.3, gap: 0.64, mov: 0, wind: 0, drones: 0.35, slide: 0.45, note: "Drones appear. Fly around them, a bump costs a heart" },
-  { speed: 2.3, gap: 0.64, mov: 0.043, wind: 0, drones: 0.35, slide: 0.48, note: "Bridges move up and down. Wait for the gap, then fly through" },
-  { speed: 2.3, gap: 0.61, mov: 0.043, wind: 0, drones: 0.35, slide: 0.48, note: "The gaps get narrower. Aim for the middle" },
-  { speed: 2.6, gap: 0.61, mov: 0.043, wind: 0, drones: 0.35, slide: 0.5, note: "Faster again. Small, early moves" },
-  { speed: 2.6, gap: 0.61, mov: 0.043, wind: 0.10, drones: 0.35, slide: 0.5, note: "A crosswind tilts the jet. Lean against it to keep level" },
-  { speed: 2.6, gap: 0.61, mov: 0.043, wind: 0.10, drones: 0.6, slide: 0.52, note: "More drones. Keep an eye on them" },
-  { speed: 2.6, gap: 0.61, mov: 0.075, wind: 0.10, drones: 0.6, slide: 0.52, note: "Bridges move further. Watch, then go" },
-  { speed: 2.6, gap: 0.61, mov: 0.075, wind: 0.16, drones: 0.6, slide: 0.55, note: "A stronger crosswind. Lean against it to keep level" },
-  { speed: 3.0, gap: 0.58, mov: 0.086, wind: 0.16, drones: 0.6, slide: 0.6, note: "The finale. Everything at once, nice and steady" },
+  // the lane; spacing: px between towers at 640 high. WHERE THE GAPS GO
+  // (2 Nov 2026, by request: every gap used to be over half the lane, so a
+  // jet held in the middle flew through every tower and nothing asked for a
+  // move): a gap is never across the lane's middle; it sits above or below
+  // it, its near edge at least `aside` from the middle (plus up to `extra`,
+  // which asks for more of the range), and changes side from one tower to
+  // the next with chance `flip`, so the flight is lifting and lowering the
+  // arms. The jet itself is about 5% of the lane.
+  { speed: 1.5, gap: 0.44, aside: 0.03, extra: 0, flip: 0.7, mov: 0, wind: 0, drones: 0, slide: 0, spacing: 430, note: "Fly up or down to each gap. Slow and steady" },
+  { speed: 1.8, gap: 0.42, aside: 0.03, extra: 0.04, flip: 0.6, mov: 0, wind: 0, drones: 0, slide: 0.4, spacing: 390, note: "From now on the pilot can slide off. Keep the jet level" },
+  { speed: 2.3, gap: 0.40, aside: 0.03, extra: 0.06, flip: 0.6, mov: 0, wind: 0, drones: 0, slide: 0.45, note: "The city flies faster. Move early and gently" },
+  { speed: 2.3, gap: 0.40, aside: 0.03, extra: 0.06, flip: 0.6, mov: 0, wind: 0, drones: 0.35, slide: 0.45, note: "Drones appear. Fly around them, a bump costs a heart" },
+  { speed: 2.3, gap: 0.40, aside: 0.03, extra: 0.06, flip: 0.6, mov: 0.043, wind: 0, drones: 0.35, slide: 0.48, note: "Bridges move up and down. Wait for the gap, then fly through" },
+  { speed: 2.3, gap: 0.37, aside: 0.03, extra: 0.08, flip: 0.6, mov: 0.043, wind: 0, drones: 0.35, slide: 0.48, note: "The gaps get narrower. Aim for the middle" },
+  { speed: 2.6, gap: 0.37, aside: 0.03, extra: 0.08, flip: 0.6, mov: 0.043, wind: 0, drones: 0.35, slide: 0.5, note: "Faster again. Small, early moves" },
+  { speed: 2.6, gap: 0.37, aside: 0.03, extra: 0.08, flip: 0.6, mov: 0.043, wind: 0.10, drones: 0.35, slide: 0.5, note: "A crosswind tilts the jet. Lean against it to keep level" },
+  { speed: 2.6, gap: 0.37, aside: 0.03, extra: 0.08, flip: 0.6, mov: 0.043, wind: 0.10, drones: 0.6, slide: 0.52, note: "More drones. Keep an eye on them" },
+  { speed: 2.6, gap: 0.37, aside: 0.03, extra: 0.08, flip: 0.6, mov: 0.075, wind: 0.10, drones: 0.6, slide: 0.52, note: "Bridges move further. Watch, then go" },
+  { speed: 2.6, gap: 0.37, aside: 0.03, extra: 0.08, flip: 0.6, mov: 0.075, wind: 0.16, drones: 0.6, slide: 0.55, note: "A stronger crosswind. Lean against it to keep level" },
+  { speed: 3.0, gap: 0.34, aside: 0.03, extra: 0.1, flip: 0.6, mov: 0.086, wind: 0.16, drones: 0.6, slide: 0.6, note: "The finale. Everything at once, nice and steady" },
 ];
 // SUB-LEVELS (23 Oct 2026, by request): every stage above is played three
 // times, 1.1, 1.2, 1.3, each a little faster and a touch tighter than the
@@ -8927,11 +8948,11 @@ export function windyLevel(n) {
   if (st <= WINDY_LEVELS.length) base = WINDY_LEVELS[st - 1];
   else {
     const k = st - WINDY_LEVELS.length;
-    base = { speed: Math.min(4.6, 3.0 + k * 0.12), gap: Math.max(0.5, 0.58 - k * 0.008), mov: Math.min(0.124, 0.086 + k * 0.0054),
+    base = { speed: Math.min(4.6, 3.0 + k * 0.12), gap: Math.max(0.3, 0.34 - k * 0.008), aside: 0.03, extra: 0.1, flip: 0.6, mov: Math.min(0.124, 0.086 + k * 0.0054),
       wind: Math.min(0.24, 0.16 + k * 0.008), drones: Math.min(0.8, 0.6 + k * 0.02), slide: Math.min(0.75, 0.6 + k * 0.01), note: "A little faster and tighter. Keep it steady" };
   }
   return { ...base, stage: st, sub, label: `${st}.${sub}`,
-    speed: base.speed * (1 + 0.08 * f), gap: Math.max(0.5, base.gap - 0.015 * f), spacing: Math.round((base.spacing || 340) * (1 - 0.04 * f)),
+    speed: base.speed * (1 + 0.08 * f), gap: Math.max(0.3, base.gap - 0.015 * f), spacing: Math.round((base.spacing || 340) * (1 - 0.04 * f)),
     note: f === 0 ? base.note : f === 1 ? "The same city, a little faster" : "Faster still. One more, then the next stage" };
 }
 // the sky by time of day (the sub-level) and the city by season (the stage)
@@ -8948,7 +8969,13 @@ const WINDY_LIFETIME_REF = 3.0;           // params.lifetime at which the city f
 // Rook's slide (23 Oct 2026, by request: it was too quick in level 2): he
 // only starts to slide once the jet has been tilted past WINDY_SLIDE_DEG for
 // WINDY_SLIDE_DELAY_S, and then at WINDY_SLIDE_K of the mockup's rate
-const WINDY_SLIDE_DEG = 6, WINDY_SLIDE_DELAY_S = 1.0, WINDY_SLIDE_K = 0.55;
+// the pilot's slide (2 Nov 2026, by request: at level 2 the pilot fell too
+// quickly, with no warning): tilt past WINDY_SLIDE_DEG for WINDY_SLIDE_DELAY_S
+// before the slide starts, at WINDY_SLIDE_K of the rate; at the jet's end the
+// pilot hangs on for WINDY_TEETER_S with a warning, and falls only if the jet
+// is still tilted; the fall itself takes WINDY_FALL_FRAMES
+const WINDY_SLIDE_DEG = 8, WINDY_SLIDE_DELAY_S = 2.0, WINDY_SLIDE_K = 0.3;
+const WINDY_TEETER_S = 2.0, WINDY_WARN_AT = 0.5, WINDY_FALL_FRAMES = 100;
 const WINDY_CAT_SCALE = 1.6;              // Rook drawn bigger (23 Oct 2026, by request; 1.35 -> 1.6 on 31 Oct for the TV)
 const WINDY_FINISH_MS = 6500;             // the finish-line celebration before the card
 const WINDY_STEP_MAX = 0.55;              // consecutive gaps are never further apart than this share of the lane, so
@@ -9148,6 +9175,7 @@ export class WindyCity extends GameBase {
   // spoken combo, one spoken bump and one fall per round; the sounds, the
   // sparks and the shake say the rest
   quietPraise = true;
+  noReachNudge = true;     // the gaps are placed by the game, so "reach further" means nothing here
   setup() {
     this.tips = { objective: "Lift both arms together to climb, lower them to dive, and keep them level to fly through the gaps." };
     this.level = Math.max(1, Math.min(WINDY_MAX, this.opts.level || 1));
@@ -9276,8 +9304,12 @@ export class WindyCity extends GameBase {
   // ---- the world ---------------------------------------------------------
   _spawn(x) {
     const lvl = this.lvl, k = this.k, R = Math.random;
-    const gap = lvl.gap * this.laneH, vary = lvl.vary == null ? 1 : lvl.vary;
-    let top = this.laneTop + (0.5 + (R() - 0.5) * vary) * (this.laneH - gap);
+    const gap = lvl.gap * this.laneH;
+    // above or below the middle, never across it (WINDY_LEVELS)
+    const side = this.lastGapSide == null ? (R() < 0.5 ? -1 : 1) : R() < (lvl.flip ?? 0.6) ? -this.lastGapSide : this.lastGapSide;
+    this.lastGapSide = side;
+    const g = lvl.gap, u = Math.max(g / 2, Math.min(1 - g / 2, 0.5 + side * (g / 2 + (lvl.aside ?? 0.03) + R() * (lvl.extra ?? 0))));
+    let top = this.laneTop + (u - g / 2) * this.laneH;
     // the gap wanders from tower to tower, but never by more than WINDY_STEP_MAX of the lane
     if (this.lastGapCy != null) {
       const cy = Math.max(this.lastGapCy - WINDY_STEP_MAX * this.laneH, Math.min(this.lastGapCy + WINDY_STEP_MAX * this.laneH, top + gap / 2));
@@ -9301,12 +9333,13 @@ export class WindyCity extends GameBase {
   _feedback(text, col = "#3b4a5a") { if (WINDY_CLEAN) return; this.fbText = text; this.fbAt = this.frame; this.fbCol = col; }
   _riderPos() {
     const c = Math.cos(this.board.ang), s = Math.sin(this.board.ang), k = this.k;
-    if (this.fallT > 0) { const q = 60 - this.fallT, dir = Math.sign(this.rider.off || 1); return { x: this.bx + c * this.rider.off + q * 1.2 * k * dir, y: this.board.y + s * this.rider.off - 16 * k + q * q * 0.12 * k }; }
+    if (this.fallT > 0) { const q = (this.fallLen || 60) - this.fallT, g = this.fallLen > 60 ? 0.05 : 0.12, dir = Math.sign(this.rider.off || 1); return { x: this.bx + c * this.rider.off + q * (g > 0.1 ? 1.2 : 0.8) * k * dir, y: this.board.y + s * this.rider.off - 16 * k + q * q * g * k }; }
     return { x: this.bx + c * this.rider.off + s * 14 * k, y: this.board.y + s * this.rider.off - c * 14 * k };
   }
   _loseLife(kind, what = "tower") {
     if (this.invuln > 0 || this.fallT > 0 || this.over) return;
-    this.fallT = 60; this.shake = A11Y.calm ? 0 : 10 * this.k;
+    this.fallLen = kind === "fall" ? WINDY_FALL_FRAMES : 60;
+    this.fallT = this.fallLen; this.shake = A11Y.calm ? 0 : 10 * this.k;
     this.lives--; this.heartsLost++; this.combo = 1; this.steadyT = 0;
     if (kind === "fall") { this.falls++; audio.windy("fall"); this._toast("The pilot slid off!", "#d97b6c"); this._feedback("Keep the arms level", "#d97b6c"); }
     else { this.crashes++; this.crashBy[what] = (this.crashBy[what] || 0) + 1; audio.windy("hit"); this._toast("Bonk!", "#d97b6c"); this._feedback(what === "drone" ? "Mind the drones" : what === "ground" ? "Lift a little" : "Aim for the gap", "#d97b6c"); }
@@ -9407,9 +9440,19 @@ export class WindyCity extends GameBase {
         this.tiltHeld = tiltAbs > WINDY_SLIDE_DEG ? this.tiltHeld + 1 / 60 : Math.max(0, this.tiltHeld - 2 / 60);
         if (this.tiltHeld > WINDY_SLIDE_DELAY_S) this.rider.v += Math.sin(this.board.ang) * lvl.slide * k * WINDY_SLIDE_K;
         this.rider.v *= 0.9;
-        if (tiltAbs < 4) this.rider.off *= 0.96;
+        if (tiltAbs < WINDY_SLIDE_DEG) this.rider.off *= 0.96;    // level again: the pilot walks back to the middle
         this.rider.off += this.rider.v;
-        if (Math.abs(this.rider.off) > this.boardLen / 2 - k) this._loseLife("fall");
+        const edge = this.boardLen / 2 - k;
+        // past half way to an end: warn, once per slide, in words and a sound
+        const warn = Math.abs(this.rider.off) > edge * WINDY_WARN_AT;
+        if (warn && !this._slipWarned) { this._slipWarned = true; audio.windy("tick"); this._prompt("Keep your arms level", "The pilot is sliding"); }
+        else if (!warn && this._slipWarned && Math.abs(this.rider.off) < edge * 0.3) { this._slipWarned = false; this._prompt(""); }
+        // at the end the pilot hangs on, and falls only if the jet stays tilted
+        if (Math.abs(this.rider.off) >= edge) {
+          this.rider.off = Math.sign(this.rider.off) * edge; this.rider.v = 0;
+          this.teeterT = tiltAbs < WINDY_SLIDE_DEG ? Math.max(0, (this.teeterT || 0) - 2 / 60) : (this.teeterT || 0) + 1 / 60;
+          if (this.teeterT >= WINDY_TEETER_S) { this.teeterT = 0; this._slipWarned = false; this._prompt(""); this._loseLife("fall"); }
+        } else this.teeterT = 0;
       } else { this.rider.v = 0; this.rider.off *= 0.85; }
       if (tiltAbs < WINDY_STEADY_DEG) {
         this.steadyT += 1 / 60;
@@ -9578,15 +9621,19 @@ export class WindyCity extends GameBase {
     ctx.strokeStyle = "#4e7f45"; ctx.lineWidth = 2 * k;
     for (let q = 0; q < 3; q++) { const vx = x + (14 + q * 19) * k, len = (16 + windyRnd(o.seed + q) * 22) * k; ctx.beginPath(); ctx.moveTo(vx, bot); ctx.quadraticCurveTo(vx + 3 * k, bot + len / 2, vx, bot + len); ctx.stroke(); }
   }
+  // a gold coin to collect (2 Nov 2026, by request: "can we change to
+  // coins?"; a feather until then), turning slowly as it bobs
   _feather(ctx, it) {
     const k = this.k, bob = Math.sin(this.frame * 0.08 + it.ph) * 4 * k;
-    ctx.save(); ctx.translate(it.x, it.y + bob); ctx.rotate(-0.5);
-    // white with a blue quill and a cool glow (24 Oct 2026, by request: the
-    // yellow feather read as a piece of the cream towers)
-    ctx.fillStyle = "rgba(120,190,255,.35)"; ctx.beginPath(); ctx.arc(0, 0, 16 * k, 0, TAU); ctx.fill();
-    ctx.fillStyle = "#f4fbff"; ctx.beginPath(); ctx.ellipse(0, 0, 5 * k, 12 * k, 0, 0, TAU); ctx.fill();
-    ctx.strokeStyle = "#3f8fd6"; ctx.lineWidth = 1.6 * k; ctx.beginPath(); ctx.moveTo(0, -12 * k); ctx.lineTo(0, 14 * k); ctx.stroke();
-    ctx.strokeStyle = "rgba(63,143,214,.8)"; ctx.lineWidth = 1.2 * k; ctx.beginPath(); ctx.ellipse(0, 0, 5 * k, 12 * k, 0, 0, TAU); ctx.stroke();
+    const turn = A11Y.calm ? 1 : Math.max(0.25, Math.abs(Math.cos(this.frame * 0.05 + it.ph)));
+    const r = 13 * k;
+    ctx.save(); ctx.translate(it.x, it.y + bob);
+    ctx.fillStyle = "rgba(255,206,84,.30)"; ctx.beginPath(); ctx.arc(0, 0, r * 1.45, 0, TAU); ctx.fill();
+    ctx.scale(turn, 1);
+    ctx.fillStyle = "#C98A12"; ctx.beginPath(); ctx.arc(0, 1.5 * k, r, 0, TAU); ctx.fill();
+    ctx.fillStyle = "#F6C343"; ctx.beginPath(); ctx.arc(0, 0, r, 0, TAU); ctx.fill();
+    ctx.strokeStyle = "#E0A526"; ctx.lineWidth = 2 * k; ctx.beginPath(); ctx.arc(0, 0, r * 0.7, 0, TAU); ctx.stroke();
+    ctx.fillStyle = "rgba(255,255,255,.75)"; ctx.beginPath(); ctx.ellipse(-r * 0.35, -r * 0.4, r * 0.18, r * 0.32, 0.5, 0, TAU); ctx.fill();
     ctx.restore();
   }
   _drone(ctx, d) {
@@ -9600,7 +9647,7 @@ export class WindyCity extends GameBase {
   }
   _catPos() {
     const c = Math.cos(this.board.ang), s = Math.sin(this.board.ang), o = this.rider.off, k = this.k;
-    if (this.fallT > 0) { const q = 60 - this.fallT, dir = Math.sign(this.rider.off || 1); return { x: this.bx + c * o + q * 1.1 * k * dir, y: this.board.y + s * o - 10 * k + q * q * 0.12 * k, r: q * 0.2 * dir }; }
+    if (this.fallT > 0) { const q = (this.fallLen || 60) - this.fallT, g = this.fallLen > 60 ? 0.05 : 0.12, dir = Math.sign(this.rider.off || 1); return { x: this.bx + c * o + q * (g > 0.1 ? 1.1 : 0.75) * k * dir, y: this.board.y + s * o - 10 * k + q * q * g * k, r: q * (g > 0.1 ? 0.2 : 0.1) * dir }; }
     return { x: this.bx + c * o + s * 10 * k, y: this.board.y + s * o - c * 10 * k, r: this.board.ang };
   }
   _jet(ctx, front) {

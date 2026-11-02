@@ -23,9 +23,11 @@
 //             (shoulder widths) or the spine angling (degrees)
 //   hike      the trained side's shoulder rising toward its ear: the
 //             VERTICAL ear-to-shoulder gap shrinking (shoulder widths). Its
-//             allowance widens once the arm is above 90 degrees (double at
-//             150): taking an arm overhead normally lifts the shoulder girdle
-//             with it (the shoulder blade rotates up), which is not a shrug.
+//             allowance widens once the arm is above 60 degrees (double at
+//             120, triple at 180; it began at 90 until 2 Nov 2026): taking
+//             an arm up normally lifts the shoulder girdle with it (the
+//             shoulder blade rotates up), which is not a shrug.
+//   (rotation's allowance widens as the hand reaches across the body)
 // MediaPipe's own "world landmarks" are NOT used (tested 31 Oct on the fake
 // camera's seated person): a webcam has no depth, their z is a guess that
 // moved with the arm and between runs, and against the round's baseline it
@@ -53,6 +55,8 @@ export function compFeatures(t, now = performance.now()) {
   if (p.earR && now - (p.earR.at ?? 0) < EAR_FRESH_MS) f.earShR = (p.shR.y - p.earR.y) / sw;
   // the arms' elevation (0 down, 180 overhead), for the hike's allowance
   f.armL = t.armAngle?.("left") ?? null; f.armR = t.armAngle?.("right") ?? null;
+  // where the wrists are across the picture, for the turn's allowance
+  f.wrLx = p.wrL?.x ?? null; f.wrRx = p.wrR?.x ?? null;
   // 3D from the ZED only: metric joints, camera frame, z = distance, so
   // leaning toward the camera makes the shoulders' z smaller
   const w = t.has3D ? t.pts3 : null;
@@ -75,8 +79,18 @@ export function compScores(f, b, side, T = COMP_T) {
   const ratio = f.sw / b.sw - 1;
   const fwdCm = f.fwdM != null && b.fwdM != null ? (b.fwdM - f.fwdM) * 100 : null;
   const lean = Math.max(0, ratio / T.fwdRatio, fwdCm != null ? fwdCm / T.fwdCm : 0);
-  const rotation = f.rotDeg != null && b.rotDeg != null ? Math.abs(f.rotDeg - b.rotDeg) / T.rotDeg
-    : Math.max(0, -ratio) / T.narrow;
+  // MINDFUL OF THE MOVE (2 Nov 2026, by request: "if I lift my arm my
+  // shoulder moves up, and reaching to the other side I turn a bit"): a
+  // reach across the body brings some trunk turn with it, so the turn's
+  // allowance grows as the hand nears and passes the midline, up to 2.5
+  // times at 0.8 shoulder widths across; and the shoulder blade rises with
+  // an arm lifted past about 60 degrees (the shoulder's normal rhythm), so
+  // the hike's allowance grows from there, 2 times at 120, 3 at 180
+  const wx = side === "left" ? f.wrLx : f.wrRx;
+  const across = wx == null ? 0 : (wx - f.midX) / f.sw * f.lr * (side === "left" ? -1 : 1);
+  const allowTurn = 1 + 1.5 * Math.max(0, Math.min(1, across + 0.2));
+  const rotation = (f.rotDeg != null && b.rotDeg != null ? Math.abs(f.rotDeg - b.rotDeg) / T.rotDeg
+    : Math.max(0, -ratio) / T.narrow) / allowTurn;
   // the shoulders shifting toward the left shoulder's side, or the spine
   // (shoulders to hips) swinging that way, is a lean to the patient's left
   const lat = (f.midX - b.midX) / b.sw / T.lateral * f.lr;
@@ -85,7 +99,7 @@ export function compScores(f, b, side, T = COMP_T) {
   const tiltLR = Math.abs(lat) >= Math.abs(spine) ? lat : spine;
   const k = side === "left" ? "earShL" : "earShR";
   const elev = side === "left" ? f.armL : f.armR;
-  const allow = 1 + Math.max(0, ((elev ?? 0) - 90) / 60);
+  const allow = 1 + Math.max(0, ((elev ?? 0) - 60) / 60);
   const hike = f[k] != null && b[k] != null ? Math.max(0, b[k] - f[k]) / (T.hike * allow) : 0;
   return { lean, hike, rotation, tilt, tiltLR };
 }

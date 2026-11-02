@@ -85,6 +85,22 @@ export async function sendMail(kind, subject, body) {
   return { ok: true, via: "mailto" };
 }
 
+// TEST NOTES (2 Nov 2026, by request): the Note button's two calls to the
+// local relay, a screenshot now (its id, or null) and the words filed with it
+export async function grabScreen() {
+  try {
+    const r = await fetch(`${MAIL_BRIDGE}/grab`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+    const s = await r.json();
+    return s.ok ? s.id : null;
+  } catch { return null; }
+}
+export async function saveTestNote(note) {
+  try {
+    const r = await fetch(`${MAIL_BRIDGE}/testnote`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(note) });
+    return (await r.json()).ok === true;
+  } catch { return false; }
+}
+
 // What a troubleshooting report needs to be useful without a phone call:
 // what the camera is, what the tracker can see right now, and what the
 // browser is. No patient identity beyond the participant label.

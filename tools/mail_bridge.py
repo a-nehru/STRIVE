@@ -33,6 +33,7 @@ Requires: stdlib only. Keys: Ctrl+C to quit.
 """
 
 import argparse
+import base64
 import json
 import os
 import smtplib
@@ -71,6 +72,7 @@ REM_LOCK = threading.Lock()
 # live in the browser, which is not running when the email arrives. Anyone
 # not on the list is ignored and logged, never answered.
 SNAP_DIR = Path(__file__).with_name("snapshots")               # gitignored: patient data
+NOTE_DIR = Path(__file__).with_name("testnotes")               # gitignored: test notes and screenshots of this screen
 SNAP_LOCK = threading.Lock()
 ASK_RE = re.compile(r"strive\s+update\s*(.*)", re.I)
 
@@ -274,6 +276,50 @@ def send_mail(subject, body, to=None):
         s.send_message(msg)
 
 
+# TEST NOTES (2 Nov 2026, by request: "a button where I add text about the
+# error, and the screenshot is sent so it is easy to troubleshoot"): the
+# game's Note button (localhost only) asks for /grab the moment it is
+# pressed, a picture of the whole desktop as it is, then files what was
+# typed with the app's diagnostics under the same id (/testnote). Everything
+# lands in tools/testnotes/: <id>.png, <id>.json and one running notes.md.
+def grab_screen():
+    from PIL import ImageGrab        # Pillow: only this feature needs it
+    NOTE_DIR.mkdir(exist_ok=True)
+    nid = datetime.now().strftime("%Y%m%d-%H%M%S-%f")[:-3]
+    img = ImageGrab.grab(all_screens=True)
+    # the picture is taken; writing a desktop-sized PNG takes a second, so
+    # it happens after the reply and the note box opens at once
+    threading.Thread(target=img.save, args=(NOTE_DIR / f"{nid}.png",), daemon=True).start()
+    return nid
+
+
+def save_note(req):
+    nid = re.sub(r"[^0-9-]", "", str(req.get("id") or ""))[:24] or datetime.now().strftime("%Y%m%d-%H%M%S-000")
+    rec = {"id": nid, "at": datetime.now().isoformat(timespec="seconds"),
+           "text": str(req.get("text") or "").strip()[:4000],
+           "screen": str(req.get("screen") or "")[:80],
+           "shot": (NOTE_DIR / f"{nid}.png").exists(),
+           "page": False,
+           "diag": str(req.get("diag") or "")[:8000]}
+    NOTE_DIR.mkdir(exist_ok=True)
+    # the browser's own picture of its canvases: there even when the desktop
+    # picture is black (a locked screen) or missing
+    page = str(req.get("page") or "")
+    if page.startswith("data:image/jpeg;base64,"):
+        try:
+            (NOTE_DIR / f"{nid}-page.jpg").write_bytes(base64.b64decode(page.split(",", 1)[1]))
+            rec["page"] = True
+        except ValueError:
+            pass
+    (NOTE_DIR / f"{nid}.json").write_text(json.dumps(rec, indent=1), encoding="utf-8")
+    with open(NOTE_DIR / "notes.md", "a", encoding="utf-8") as f:
+        f.write(f"\n## {rec['at']} - {rec['screen']}\n\n{rec['text'] or '(no words)'}\n\n"
+                + (f"Screenshot: {nid}.png\n" if rec["shot"] else "No screenshot\n")
+                + (f"Game screen: {nid}-page.jpg\n" if rec["page"] else ""))
+    print(f"  test note {nid}: {rec['text'][:70]!r}")
+    return True, None
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -311,7 +357,8 @@ class Handler(BaseHTTPRequestHandler):
             self._reply(404, {"ok": False, "error": "not found"})
 
     def do_POST(self):
-        if not (self.path.startswith("/send") or self.path.startswith("/reminder") or self.path.startswith("/snapshot")):
+        if not (self.path.startswith("/send") or self.path.startswith("/reminder") or self.path.startswith("/snapshot")
+                or self.path.startswith("/grab") or self.path.startswith("/testnote")):
             self._reply(404, {"ok": False, "error": "not found"})
             return
         try:
@@ -325,6 +372,16 @@ class Handler(BaseHTTPRequestHandler):
             req = json.loads(self.rfile.read(n))
         except ValueError:
             self._reply(400, {"ok": False, "error": "bad json"})
+            return
+        if self.path.startswith("/grab"):
+            try:
+                self._reply(200, {"ok": True, "id": grab_screen()})
+            except Exception as e:      # no Pillow, no desktop: the note still goes in without a picture
+                self._reply(200, {"ok": False, "error": str(e)})
+            return
+        if self.path.startswith("/testnote"):
+            ok, err = save_note(req)
+            self._reply(200 if ok else 400, {"ok": ok, "error": err})
             return
         if self.path.startswith("/reminder"):
             ok, err = set_reminder(req)

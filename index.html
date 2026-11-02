@@ -6,7 +6,7 @@
 <title>STRIVE</title>
 <!-- Nunito, self-hosted (SIL OFL 1.1, assets/fonts/OFL.txt): fetched at once so the first screen is in it -->
 <link rel="preload" href="assets/fonts/Nunito-latin.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="css/style.css?v=115">
+<link rel="stylesheet" href="css/style.css?v=116">
 <script>if (localStorage.getItem("strive-tv-safe") === "1") document.documentElement.classList.add("tv-safe");</script>
 </head>
 <body>
@@ -304,10 +304,12 @@
     </div>
     <div class="rom-big" id="rom-big"></div>
   </div>
-  <div class="rom-plot-wrap">
-    <div id="rom-plot"></div>
+  <div class="rom-foot">
+    <div class="rom-plot-wrap">
+      <div id="rom-plot"></div>
+    </div>
+    <div class="rom-next"><button class="btn" id="btn-rom-done" data-dwell="1">Continue</button></div>
   </div>
-  <button class="btn" id="btn-rom-done" data-dwell="1">Continue</button>
 </div>
 
 <!-- S3 staff profile -->
@@ -537,12 +539,22 @@
 <div id="handcursor" class="hidden"></div>
 
 <button id="btn-help" class="hidden" title="Ask your therapist for help">Help</button>
+<!-- test notes, on this computer only (localhost): main.js openNote -->
+<button id="btn-note" class="hidden" title="Save a test note with a screenshot (F2)">Note</button>
+<div id="note-panel" class="hidden">
+  <div class="note-card">
+    <div class="note-head">What went wrong?</div>
+    <div id="note-status" class="note-status"></div>
+    <textarea id="note-text" rows="4" placeholder="Type what you saw, what you expected"></textarea>
+    <div class="note-row"><button class="btn" id="note-save">Save note</button><button class="btn ghost" id="note-cancel">Cancel</button></div>
+  </div>
+</div>
 <div id="today-pill" class="hidden" aria-live="off"></div>
 <div id="star-toast" class="hidden" aria-live="polite"></div>
 
 <div id="loading" class="hidden"><div class="loading-card"><div class="spinner"></div><div id="loading-text">Waking up the camera&hellip;</div>
   <div id="loading-error" class="hidden"><button class="btn big" id="btn-loading-retry">Try again</button><button class="btn big ghost-light" id="btn-loading-continue">Continue without the camera</button></div></div></div>
 
-<script type="module" src="js/main.js?v=115"></script>
+<script type="module" src="js/main.js?v=116"></script>
 </body>
 </html>
