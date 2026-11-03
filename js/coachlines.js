@@ -98,7 +98,9 @@ const BOOK = {
     session_start: [
       { text: () => "Hello. Let's begin gently, in your own time." },
       { text: () => "Good to see you. We'll start slow and easy." },
-      { text: () => "Welcome back. Take a breath, and we'll begin." },
+      // not "Welcome back": the login's own hello says it (3 Nov 2026 note:
+      // "Welcome back" twice), and a brand-new participant hears this line too
+      { text: () => "Take a breath, and we'll begin when you're ready." },
     ],
     rep_result: [
       { needs: ["streak"], text: d => `${cap(numWords(d.streak))} in a row. Lovely, steady work.` },

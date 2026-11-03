@@ -107,6 +107,31 @@ def start_services(args):
         spawn("mail", [py, os.path.join(TOOLS, "mail_bridge.py")])
 
 
+def wait_for_bridge(limit_s=180, tries_max=5):
+    """The ZED first, then the browser (2 Nov 2026): a page opened before the
+    bridge answers falls back to the webcam, takes the ZED as one, and the
+    bridge can then never open it. The ZED 2i also refuses an open now and
+    then ("Corrupted frames"), so a bridge that stops before it ever
+    answered is started again, a few times."""
+    log("waiting for the ZED bridge before opening the browser ...")
+    py, t0, tries = sys.executable, time.time(), 1
+    while time.time() - t0 < limit_s:
+        if probe(8322):
+            log("the ZED bridge is up")
+            return True
+        p = CHILDREN.get("bridge")
+        if p is not None and p.poll() is not None:
+            if tries >= tries_max:
+                break
+            tries += 1
+            log(f"the ZED did not open; starting the bridge again (try {tries} of {tries_max})")
+            time.sleep(3)
+            spawn("bridge", [py, os.path.join(TOOLS, "zed_bridge.py")])
+        time.sleep(1)
+    log("the ZED bridge did not come up: the game will use the webcam (see tools/logs/bridge.log)")
+    return False
+
+
 def health():
     out = {"ok": True, "site": True, "zed_present": zed_present(), "services": {}, "at": datetime.now().isoformat(timespec="seconds")}
     with ThreadPoolExecutor(len(SERVICES)) as pool:       # a closed port can take most of the timeout on Windows
@@ -161,7 +186,61 @@ class Handler(SimpleHTTPRequestHandler):
 
     def end_headers(self):
         self.send_header("Cache-Control", "no-store")      # a ward PC must never show a stale build
+        self.send_header("Accept-Ranges", "bytes")
         super().end_headers()
+
+    # PARTIAL REQUESTS (3 Nov 2026: the assessment's recording did not show
+    # in Chrome the first time and did the second). Browsers fetch video and
+    # audio in byte ranges and resume or seek with them; a server that answers
+    # every Range with the whole file from byte 0 leaves the player streaming
+    # a file it cannot seek in or resume, which is how a ward PC loading three
+    # recordings and the music at once can leave one of them with no picture.
+    # SimpleHTTPRequestHandler has no Range support, so it is added here.
+    _range_left = None
+
+    def send_head(self):
+        rng = self.headers.get("Range")
+        if not rng or not rng.startswith("bytes="):
+            return super().send_head()
+        path = self.translate_path(self.path)
+        if not os.path.isfile(path):
+            return super().send_head()
+        size = os.path.getsize(path)
+        try:
+            a, b = rng[6:].split(",")[0].strip().split("-")
+            if a == "":
+                start, end = max(0, size - int(b)), size - 1      # the last N bytes
+            else:
+                start, end = int(a), (int(b) if b else size - 1)
+            end = min(end, size - 1)
+            if start > end:
+                raise ValueError
+        except ValueError:
+            self.send_response(416)
+            self.send_header("Content-Range", f"bytes */{size}")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return None
+        f = open(path, "rb")
+        f.seek(start)
+        self.send_response(206)
+        self.send_header("Content-Type", self.guess_type(path))
+        self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        self.send_header("Content-Length", str(end - start + 1))
+        self.end_headers()
+        self._range_left = end - start + 1
+        return f
+
+    def copyfile(self, src, dst):
+        left, self._range_left = self._range_left, None
+        if left is None:
+            return super().copyfile(src, dst)
+        while left > 0:
+            chunk = src.read(min(256 * 1024, left))
+            if not chunk:
+                break
+            dst.write(chunk)
+            left -= len(chunk)
 
     def _json(self, obj, code=200):
         body = json.dumps(obj).encode()
@@ -236,6 +315,8 @@ def main():
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     log(f"site up: http://localhost:{args.port}/  (backups in tools/backups, {len(list_backups())} on disk)")
     start_services(args)
+    if "bridge" in CHILDREN:
+        wait_for_bridge()
     if not args.no_browser:
         webbrowser.open(f"http://localhost:{args.port}{args.path}")
     try:

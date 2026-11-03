@@ -1,7 +1,8 @@
-import { Tracker } from "./tracker.js?v=73";
+import { Tracker } from "./tracker.js?v=74";
 import { Assessment } from "./assessment.js";
-import { FRUIT_MAX, fruitChapters } from "./fruit.js";
-import { GAMES, STAR_RANKS, PONG_LEVEL_MAX, PONG_LEVEL_LOOKS, CANDLE_MAX, LUMEN_STAGES, WINDY_MAX, PAIR_MAX, windyLabel, windyStageOf, windySubOf, windyPips } from "./games.js";
+import { FRUIT_MAX, fruitChapters, fruitVoiceLines } from "./fruit.js";
+import { GAMES, STAR_RANKS, PONG_LEVEL_MAX, PONG_LEVEL_LOOKS, CANDLE_MAX, LUMEN_STAGES, WINDY_MAX, PAIR_MAX, windyLabel, windyStageOf, windySubOf, windyPips,
+  PONG_LANE_FRAC, PONG_PAD_OVER, pongRangeOf, pongWindow, pongLaneFrac } from "./games.js";
 import { Warmup } from "./warmup.js";
 import { probeLauncher, launcherInfo, backupNow, listBackups, restoreBackup, backupState, startAutoBackup } from "./backup.js";
 import { SONGS } from "./songs.js";
@@ -15,7 +16,7 @@ import { coachLine, phrasebookLines } from "./coachlines.js";
 import { probeCoach, coachRelayReady, coachRelayInfo } from "./coachline.js";
 import { probeTts, ttsReady, ttsInfo, prerenderVoice } from "./tts.js";
 import { probeMail, sendMail, mailTarget, mailReady, diagnostics, progressReport, setReminder, pushSnapshot, grabScreen, saveTestNote } from "./mail.js";
-import { applyThemeCSS, accentOf } from "./theme.js";
+import { applyThemeCSS, accentOf, C as TC, ACCENTS } from "./theme.js";
 import { mountCharacter } from "./cast.js";
 
 // THE LOOK (30 Oct 2026, by request): one set of tokens for the stylesheet
@@ -61,7 +62,13 @@ const state = {
   windyLevelPick: null,   // Windy City Flap: the same, from the drawer
   pairsLevelPick: null,   // Memory Pairs: the same, from the session plan
   fruitLevelPick: null,   // Cozy Fruit Merge: the same, from the map, the drawer or the plan
-  fruitDrop: "hold",      // Cozy Fruit Merge: how a fruit is dropped (hold | grasp | both), the drawer
+  // Cozy Fruit Merge: how a fruit is picked up and dropped (hold | grasp |
+  // both): the drawer, and the level map's tick box; remembered on this
+  // computer since 2 Nov 2026
+  fruitDrop: localStorage.getItem("strive-fruit-drop") || "hold",
+  // the Lantern's grasp and release (squeeze at the basket, open in the
+  // lantern), the level map's tick box, remembered on this computer
+  candlesGrasp: localStorage.getItem("strive-candles-grasp") === "1",
   fruitBoard: null,       // Cozy Fruit Merge: an unfinished box, kept for the next round of that level
   fruitTutorial: false,   // Cozy Fruit Merge: run the guided start next round whatever (?go=fruit&tutorial=1)
   pongSpeed: "normal",   // Pong ball-speed dial: chill | normal | frantic (both the single and the two-player game)
@@ -155,7 +162,9 @@ function warmVoice() {
   const coach = A11Y.coach;
   if (voiceWarmed === coach) return;
   voiceWarmed = coach;
-  prerenderVoice(coach, phrasebookLines(coach)).then(() => voiceState());
+  // the phrasebook and Cozy Fruit's own lines (2 Nov 2026: its lines were
+  // rendered the first time they were said, a second or two late)
+  prerenderVoice(coach, [...phrasebookLines(coach), ...fruitVoiceLines()]).then(() => voiceState());
   for (const id of Object.keys(COACHES)) if (id !== coach) prerenderVoice(id, [COACHES[id].sample, COACHES[id].intro]);
 }
 function voiceState() {
@@ -405,8 +414,8 @@ function finishLogin(name, isNew, arm) {
   if ((localStorage.getItem("strive-assess-style") || "video") === "video") Assessment.preload(arm);   // and the assessment's
   if (isNew && name !== "guest") {
     // the session plan is made as part of creating the profile (1 Nov 2026,
-    // by request): after the name and the arm, saved (no Skip here), then the intro
-    renderSchedule(() => playIntro(() => { show("screen-welcome"); speak(`${goodTime()}, ${name}. Nice to meet you. ` + coachLine("session_start")); }), { setup: true });
+    // by request): after the name (and the intro) and the arm, saved (no Skip here)
+    renderSchedule(() => { show("screen-welcome"); speak(`${goodTime()}, ${name}. Nice to meet you. ` + coachLine("session_start")); }, { setup: true });
   } else {
     show("screen-welcome");
     // the hello by the time of day (1 Nov 2026, by request)
@@ -460,8 +469,13 @@ function createLogin() {
   // (1 Nov 2026, by request: it used to sit here)
   const email = $("login-email").value.trim();
   if (email) store.setContact(name, { ...(store.getPatient(name)?.contact || {}), email });
-  // an existing name logs in (choosing a coach first if it never did); a
-  // new participant chooses the coach, then the arm, then sees the intro
+  // an existing name logs in. A new participant sees the intro straight
+  // after this Continue (3 Nov 2026, by request: "play it after continue";
+  // it came after the arm and the plan), then chooses the arm and makes the plan
+  if (isNew && name !== "guest") {
+    playIntro(() => { show("screen-login"); loginOrPickCoach(name, isNew); });
+    return;
+  }
   loginOrPickCoach(name, isNew);
 }
 
@@ -500,13 +514,19 @@ $("login-name").addEventListener("keydown", e => { if (e.key === "Enter") create
 // What the picture needs, in one line, or null when the whole person is in
 // it (Oct 2026, by request: the only asks are to be seen whole, so "move
 // back" when any of them is cut off, never how to sit)
+// what the picture needs, or null when all of the patient is in it: the
+// instruction as the welcome card's big heading with the reason under it
+// (2 Nov 2026, by request: "tell move back to fit frame"; the heading used to
+// stay "Let's get you settled"), and the sentence that is spoken and shown
+// under the login card (unchanged, so the voice has it ready)
 function framingMessage(t) {
-  if (!t.trackingOk) return "Take a seat facing the camera";
-  if (!t.rawVis?.waist) return "Move back a little, so we can see you down to your waist";
+  const m = (head, sub, say) => ({ head, sub, say });
+  if (!t.trackingOk) return m("Take a seat facing the camera", "We'll get you settled", "Take a seat facing the camera");
+  if (!t.rawVis?.waist) return m("Move back a little", "So we can see you down to your waist", "Move back a little, so we can see you down to your waist");
   const cut = t.shoulderWFast > 0.42 || t.anchorFast.y < 0.08 || t.anchorFast.y > 0.75;
-  if (cut) return "Move back a little, so we can see all of you";
-  if (t.shoulderWFast < 0.03) return "If you can, come a little closer to the camera";
-  if (t.anchorFast.x < 0.15 || t.anchorFast.x > 0.85) return "Move toward the middle of the picture";
+  if (cut) return m("Move back a little", "So all of you fits in the picture", "Move back a little, so we can see all of you");
+  if (t.shoulderWFast < 0.03) return m("Come a little closer", "If you can, so the camera sees you well", "If you can, come a little closer to the camera");
+  if (t.anchorFast.x < 0.15 || t.anchorFast.x > 0.85) return m("Move toward the middle", "So you are in the middle of the picture", "Move toward the middle of the picture");
   return null;
 }
 
@@ -624,10 +644,11 @@ function watchWelcome() {
     // it for staff, and the card's headline already asks a patient not yet
     // seen to sit facing the camera; only the crowd line, which staff act on
     // by clicking, stays)
+    // (the standing "3 people in view. Staff: click the patient" line went on
+    // 2 Nov 2026, by request; the rings on the picture still say who can be
+    // clicked, and a click is still confirmed for a moment)
     const crowd = (t.people?.length ?? 0) > 1;
-    const crowdLine = crowd && now - pickedAt < 4000
-      ? "Following the person you clicked"
-      : crowd ? `${t.people.length} people in view. Staff: click the patient to follow them` : "";
+    const crowdLine = crowd && now - pickedAt < 4000 ? "Following the person you clicked" : "";
     setText(trackEl, crowdLine);
 
     const msg = framingMessage(t);
@@ -642,17 +663,17 @@ function watchWelcome() {
     if (onLogin) {
       // under the card: who we see and what the picture needs; spoken only
       // when somebody is there and part of them is missing
-      setText(loginEl, crowdLine || msg || "We can see all of you");
-      if (msg && t.trackingOk) guide(msg, now);
+      setText(loginEl, crowdLine || msg?.say || "We can see all of you");
+      if (msg && t.trackingOk) guide(msg.say, now);
       return;
     }
 
     coachChar.welcome.setMood(msg ? "neutral" : "happy");
     if (msg) {
       framedSince = null;
-      setText(head, "Let's get you settled");
-      setText(sub, msg);
-      guide(msg, now);
+      setText(head, msg.head);
+      setText(sub, msg.sub);
+      guide(msg.say, now);
       return;
     }
     framedSince ??= now;
@@ -712,7 +733,16 @@ function startWarmup(then = null) {
 // screen, and from the staff drawer; Skip (or Enter / Space / Escape) goes
 // straight on. With no recording (missing file, slow network) the voice
 // still reads the whole script on the dark screen.
-const INTRO_SRC = "assets/music/STRIVE Intro.mp4";
+// THE NARRATION IS IN THE RECORDING (3 Nov 2026, by request: "add audio to
+// the STRIVE intro video always, no need for realtime generation"; it was
+// read live, a line at a time, each rendered on demand about two seconds
+// late while its caption showed at once, so voice and words drifted apart).
+// "STRIVE Intro narrated.mp4" is the silent "STRIVE Intro.mp4" with the six
+// lines below rendered once in the coach's cloned voice and laid in at
+// INTRO_CUES (all of them fit their sections: 0.4 to 4 s to spare), so it
+// plays with its own sound and no caption of the app's. The live reading
+// below is only the fallback, for a browser that refuses the sound.
+const INTRO_SRC = "assets/music/STRIVE Intro narrated.mp4";
 const INTRO_LINES = [
   "Congratulations! You are about to use the STRIVE system. Let me explain how STRIVE can help you reach your therapy goals.",
   "Your brain has the power to heal itself. This is called neuroplasticity.",
@@ -763,11 +793,15 @@ function playIntro(then = null) {
   };
   addEventListener("keydown", onKey, true);
   $("btn-intro-skip").onclick = finish;
-  // one line at a time, the next only when this one has been said
+  // the recording speaks for itself unless the browser refused its sound
+  let narrated = false;
+  // one line at a time, the next only when this one has been said (the
+  // fallback: the recording muted, or not there at all)
   const pump = () => {
-    if (done || speaking || !queue.length) return;
+    if (done || narrated || speaking || !queue.length) return;
     const i = queue.shift(); speaking = true;
-    showCaption(INTRO_LINES[i]);
+    // the recording carries its own captions: the app's only when it is missing
+    if (v.error || !(v.currentTime > 0)) showCaption(INTRO_LINES[i]);
     speakLine(introSpoken(INTRO_LINES[i]), 0.9, false, () => {
       speaking = false;
       setTimeout(pump, INTRO_GAP_MS);
@@ -779,6 +813,12 @@ function playIntro(then = null) {
     // a recording that failed or never started: the voice carries the script
     const failed = !!v.error || (t === 0 && now - startedAt > INTRO_STALL_MS);
     const over = v.ended || failed;
+    if (narrated && !failed) {
+      if (v.ended) { setTimeout(finish, INTRO_TAIL_MS); return; }
+      raf = requestAnimationFrame(tick);
+      return;
+    }
+    if (failed) narrated = false;
     // the voice sets the pace (26 Oct 2026, by request: the narrator fell
     // behind the captions): just before the next section the recording
     // holds its frame until the line before it has been said
@@ -794,7 +834,12 @@ function playIntro(then = null) {
     raf = requestAnimationFrame(tick);
   };
   try { v.currentTime = 0; } catch {}
-  v.play().catch(() => {});       // muted: autoplay is never refused
+  // with its sound (the Continue or the drawer's button is the user's
+  // gesture); refused, it plays muted and the voice reads the script over it
+  v.muted = false;
+  v.volume = Math.max(0, Math.min(1, A11Y.volVoice ?? 1));
+  audio.watchMedia?.(v);          // the music steps back while she speaks
+  v.play().then(() => { narrated = true; }).catch(() => { v.muted = true; v.play().catch(() => {}); });
   raf = requestAnimationFrame(tick);
 }
 
@@ -805,7 +850,8 @@ function enterSelect() {
   show("screen-select");
   if (fromWelcome) {
     const prof = store.getProfile(state.patient, state.side);
-    speak(prof ? "What shall we play today?" : "Let's draw your circle first, so the games fit you.");
+    // (3 Nov 2026, by request: no "What shall we play today?" as the hub opens)
+    if (!prof) speak("Let's draw your circle first, so the games fit you.");
   }
 }
 
@@ -1929,6 +1975,244 @@ function renderPartnerMeasure() {
   }, 50);
 }
 
+// PONG'S PADDLE-RANGE CHECK (3 Nov 2026, by request: "a test ROM button so
+// I can check they get the paddle up and down; if not, a quick set, reach
+// all the way up and I press set top, all the way down and set bottom; left
+// and right too; a way to troubleshoot if the assessment fails"). For staff.
+// The camera picture with the skeleton, so it is plain whether the arm is
+// being tracked at all, beside the patient's paddle on its lane, driven by
+// the game's own mapping (pongRangeOf, pongLaneFrac in games.js: the middle
+// 70% of the range spans the lane, the paddle half its length past a wall at
+// either end), with a ruler of the range and the arm now. "Set top" takes the
+// highest point of the last two seconds (they may already be coming down
+// when it is pressed), "Set bottom" the lowest; Abd-Add the same left and
+// right. The ends are stored at once per patient, arm and way of playing in
+// the "pongRange" progress bag and win over the assessment's, end by end,
+// until "Use the assessment's range" forgets them.
+const PR_KEEP_MS = 2000;                 // "Set" takes the extreme of this much of the past
+function pongRangeBag() { return store.getProgress(state.patient, "pongRange") || {}; }
+function pongManual(axis, side) {
+  const m = pongRangeBag()[axis === "abd" ? "abd" : "fe"]?.[side];
+  return m && (m.lo != null || m.hi != null) ? m : null;
+}
+function setPongManual(axis, side, patch) {
+  const bag = pongRangeBag(), ax = axis === "abd" ? "abd" : "fe";
+  bag[ax] ??= {};
+  if (patch == null) delete bag[ax][side];
+  else bag[ax][side] = { ...(bag[ax][side] || {}), ...patch, at: new Date().toISOString() };
+  store.setProgress(state.patient, "pongRange", bag);
+}
+function renderPongRange(axis = state.pongAxis) {
+  axis = axis === "abd" ? "abd" : "fe";
+  state.pongAxis = axis;
+  const wrap = $("cards"), side = state.side || "right", abd = axis === "abd";
+  wrap.innerHTML = "";
+  subView(`Pong: check the paddle range, ${side} arm`);
+  const cm = store.getPatient(state.patient)?.shoulderCm;
+  const unit = v => abd ? (cm ? `${Math.round(v * cm)} cm` : `${(Math.round(v * 100) / 100).toFixed(2)} SW`) : `${Math.round(v)}°`;
+  const ends = abd ? ["left", "right"] : ["bottom", "top"];
+  wrap.innerHTML = `<div class="duo-setup prange" style="${accentVars("pong")}">
+    <div class="prange-ways" role="group" aria-label="Way of playing">
+      <button class="btn ${abd ? "ghost-light" : ""}" id="pr-fe" data-dwell="1">Up and down</button>
+      <button class="btn ${abd ? "" : "ghost-light"}" id="pr-abd" data-dwell="1">Side to side</button>
+    </div>
+    <div class="prange-stage">
+      <div class="prange-pane"><canvas id="pr-cam"></canvas><span class="prange-tag">Camera</span></div>
+      <div class="prange-pane"><canvas id="pr-lane"></canvas><span class="prange-tag">The paddle</span></div>
+    </div>
+    <div class="prange-read">
+      <div class="prange-now" id="pr-now">Looking for the arm</div>
+      <div class="prange-checks"><span id="pr-chk-0">${cap(ends[1])}: not yet</span><span id="pr-chk-1">${cap(ends[0])}: not yet</span></div>
+    </div>
+    <p class="hint" id="pr-range"></p>
+    <div class="prange-btns">
+      <button class="btn big" id="pr-set-hi" data-dwell="1"><span>Set ${ends[1]}</span><small>${abd ? "Hand all the way to the right" : "Arm all the way up"}</small></button>
+      <button class="btn big" id="pr-set-lo" data-dwell="1"><span>Set ${ends[0]}</span><small>${abd ? "Hand all the way to the left" : "Arm all the way down"}</small></button>
+      <button class="btn big ghost-light" id="pr-clear" data-dwell="1"><span>Use the assessment's range</span><small>Forget the ends set here</small></button>
+    </div>
+    <p class="hint" id="pr-msg">Ask them to reach all the way ${abd ? "to the right" : "up"} and press <b>Set ${ends[1]}</b>, then all the way ${abd ? "to the left" : "down"} and press <b>Set ${ends[0]}</b>. Each takes the furthest point of the last two seconds.</p>
+  </div>`;
+  const done = pillBtn("Done", "Back to Pong", () => renderLevelMap("pong"), "pong");
+  wrap.prepend(done);
+  const t = state.tracker;
+  const buf = [], hist = [];
+  let seen = null, raf = 0, reached = [false, false];
+  const range = () => pongRangeOf(store.getProfile(state.patient, side), side, axis, pongManual(axis, side));
+  const read = () => {
+    const a = !t ? null : abd ? (t.handRel(side)?.x ?? null) : t.armAngle(side);
+    if (a == null) return null;
+    if (t.lastSeen !== seen) { seen = t.lastSeen; buf.push(a); if (buf.length > 5) buf.shift(); }
+    const s = [...buf].sort((x, y) => x - y);
+    return s[s.length >> 1];
+  };
+  const msg = html => { $("pr-msg").innerHTML = html; };
+  const showRange = () => {
+    const r = range(), w = pongWindow(r.lo, r.hi, axis), m = pongManual(axis, side);
+    const from = !m ? (r.from === "default" ? "no assessment yet, a default range" : "from the assessment")
+      : m.lo != null && m.hi != null ? `both ends set here on ${new Date(m.at).toLocaleDateString()}`
+      : `${m.hi != null ? ends[1] : ends[0]} set here, the other from the assessment`;
+    $("pr-range").innerHTML = `Their range: <b>${unit(r.lo)}</b> to <b>${unit(r.hi)}</b>, ${from}. `
+      + `The paddle is at the ${ends[0]} from <b>${unit(w.lo)}</b> and at the ${ends[1]} from <b>${unit(w.hi)}</b> (the middle ${Math.round(PONG_LANE_FRAC * 100)}%).`;
+    $("pr-clear").disabled = !m;
+  };
+  const set = which => {
+    const now = performance.now(), vals = hist.filter(h => now - h.t <= PR_KEEP_MS).map(h => h.v);
+    if (!vals.length) { msg(`I cannot see the ${side} arm. Check they are in the camera picture, then try again.`); return; }
+    const r = range(), minGap = abd ? 0.2 : 10;
+    if (which === "hi") {
+      const v = Math.max(...vals);
+      if (v < r.lo + minGap) { msg(`That is not past the ${ends[0]} (${unit(r.lo)}). Ask them to reach all the way ${abd ? "to the right" : "up"}, then press <b>Set ${ends[1]}</b> again.`); return; }
+      setPongManual(axis, side, { hi: abd ? Math.round(v * 100) / 100 : Math.round(v) });
+      msg(`${cap(ends[1])} set to <b>${unit(v)}</b>.`);
+    } else {
+      const v = Math.min(...vals);
+      if (v > r.hi - minGap) { msg(`That is not past the ${ends[1]} (${unit(r.hi)}). Ask them to reach all the way ${abd ? "to the left" : "down"}, then press <b>Set ${ends[0]}</b> again.`); return; }
+      setPongManual(axis, side, { lo: abd ? Math.round(v * 100) / 100 : Math.round(v) });
+      msg(`${cap(ends[0])} set to <b>${unit(v)}</b>.`);
+    }
+    audio.note?.(5);
+    reached = [false, false];
+    showRange();
+  };
+  $("pr-set-hi").addEventListener("click", () => set("hi"));
+  $("pr-set-lo").addEventListener("click", () => set("lo"));
+  $("pr-clear").addEventListener("click", () => { setPongManual(axis, side, null); reached = [false, false]; msg("Back to the assessment's range."); showRange(); });
+  $("pr-fe").addEventListener("click", () => { if (abd) { cancelAnimationFrame(raf); renderPongRange("fe"); } });
+  $("pr-abd").addEventListener("click", () => { if (!abd) { cancelAnimationFrame(raf); renderPongRange("abd"); } });
+  showRange();
+  focusHint($("pr-set-hi"));
+
+  const fit = cv => {
+    const r = cv.getBoundingClientRect(), d = Math.min(2, window.devicePixelRatio || 1);
+    const w = Math.round(r.width * d), h = Math.round(r.height * d);
+    if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+    return cv.getContext("2d");
+  };
+  const loop = () => {
+    const camC = $("pr-cam"), laneC = $("pr-lane");
+    if (!laneC || state.screen !== "screen-select") return;
+    const a = read(), now = performance.now();
+    if (a != null) hist.push({ t: now, v: a });
+    while (hist.length && now - hist[0].t > PR_KEEP_MS) hist.shift();
+    // the camera, with the skeleton on the person followed
+    const cx = fit(camC);
+    cx.fillStyle = TC.night; cx.fillRect(0, 0, camC.width, camC.height);
+    if (t && drawVideoMirror(cx, camC, t, 0.2) && t.trackingOk) drawBody(cx, camC, t, { framed: true });
+    if (a == null) {
+      cx.fillStyle = "rgba(20,23,42,.7)"; cx.fillRect(0, camC.height * 0.4, camC.width, camC.height * 0.2);
+      cx.fillStyle = TC.onNight; cx.font = `800 ${Math.round(camC.height * 0.07)}px Nunito, sans-serif`;
+      cx.textAlign = "center"; cx.textBaseline = "middle";
+      cx.fillText(t ? `Cannot see the ${side} arm` : "The camera is still starting", camC.width / 2, camC.height / 2);
+    }
+    drawPongRangeLane(fit(laneC), laneC, { a, r: range(), abd, side, unit, ends });
+    // has the paddle been to each end since the range was last changed?
+    if (a != null) {
+      const r = range(), f = pongLaneFrac(a, r.lo, r.hi, axis);
+      if (f >= 0.995) reached[0] = true;
+      if (f <= 0.005) reached[1] = true;
+      $("pr-now").textContent = `${abd ? "Hand now" : "Arm now"}: ${unit(a)}`;
+    } else $("pr-now").textContent = t ? `Cannot see the ${side} arm` : "The camera is still starting";
+    [0, 1].forEach(i => {
+      const el = $(`pr-chk-${i}`), end = cap(ends[1 - i]);
+      el.textContent = reached[i] ? `${end}: reached ✓` : `${end}: not yet`;
+      el.classList.toggle("ok", reached[i]);
+    });
+    raf = requestAnimationFrame(loop);
+  };
+  raf = requestAnimationFrame(loop);
+}
+const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
+// the lane on the check screen: the court's rails, the patient's paddle on
+// its own side placed exactly as the game places it, and a ruler beside the
+// court of the arm's range in its units: its two ends (beyond the rails),
+// the window that spans the lane (on the rails), and the arm now
+function drawPongRangeLane(ctx, c, { a, r, abd, side, unit, ends }) {
+  const W = c.width, H = c.height, A = ACCENTS.pong, k = H / 400;
+  ctx.fillStyle = TC.paper; ctx.fillRect(0, 0, W, H);
+  const w = pongWindow(r.lo, r.hi, abd ? "abd" : "fe");
+  const f = a == null ? null : pongLaneFrac(a, r.lo, r.hi, abd ? "abd" : "fe");
+  // the game's proportions: a paddle 0.15 of the screen on a lane of 0.66
+  const padK = 0.15 / 0.66;
+  ctx.font = `800 ${Math.round(15 * k)}px Nunito, sans-serif`;
+  if (!abd) {
+    const y0 = H * 0.22, y1 = H * 0.78, L = y1 - y0, padL = padK * L;
+    const right = side === "right";
+    const cx0 = W * (right ? 0.08 : 0.30), cx1 = W * (right ? 0.62 : 0.92);
+    ctx.fillStyle = A.tint; ctx.fillRect(cx0, y0, cx1 - cx0, L);
+    ctx.strokeStyle = TC.ink2; ctx.lineWidth = 3 * k;
+    for (const y of [y0, y1]) { ctx.beginPath(); ctx.moveTo(cx0, y); ctx.lineTo(cx1, y); ctx.stroke(); }
+    const px = right ? cx1 : cx0;
+    if (f != null) {
+      const cy = y1 - f * L;
+      ctx.fillStyle = A.solid;
+      rrectPath(ctx, px - 7 * k, cy - padL / 2, 14 * k, padL, 7 * k); ctx.fill();
+    }
+    // the ruler, on the far side of the court
+    const rx = right ? W * 0.74 : W * 0.18, dir = right ? 1 : -1;
+    const yOf = v => y1 - (v - w.lo) / (w.hi - w.lo) * L;
+    const clampY = y => Math.max(8 * k, Math.min(H - 8 * k, y));
+    ctx.strokeStyle = TC.line; ctx.lineWidth = 6 * k; ctx.lineCap = "round";
+    ctx.beginPath(); ctx.moveTo(rx, clampY(yOf(r.hi))); ctx.lineTo(rx, clampY(yOf(r.lo))); ctx.stroke();
+    ctx.strokeStyle = A.light; ctx.beginPath(); ctx.moveTo(rx, y0); ctx.lineTo(rx, y1); ctx.stroke();
+    const tick = (v, label, col, bold) => {
+      const y = clampY(yOf(v));
+      ctx.strokeStyle = col; ctx.lineWidth = 3 * k;
+      ctx.beginPath(); ctx.moveTo(rx - 10 * k, y); ctx.lineTo(rx + 10 * k, y); ctx.stroke();
+      ctx.fillStyle = col; ctx.textBaseline = "middle"; ctx.textAlign = dir > 0 ? "left" : "right";
+      ctx.font = `${bold ? 900 : 700} ${Math.round(15 * k)}px Nunito, sans-serif`;
+      ctx.fillText(label, rx + dir * 16 * k, y);
+    };
+    tick(r.hi, `${unit(r.hi)} their top`, TC.ink3);
+    tick(w.hi, `${unit(w.hi)} paddle at the top`, A.deep, true);
+    tick(w.lo, `${unit(w.lo)} paddle at the bottom`, A.deep, true);
+    tick(r.lo, `${unit(r.lo)} their bottom`, TC.ink3);
+    if (a != null) {
+      const y = clampY(yOf(a));
+      ctx.fillStyle = TC.ink; ctx.beginPath(); ctx.arc(rx, y, 9 * k, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = TC.ink; ctx.lineWidth = 2 * k; ctx.setLineDash([5 * k, 5 * k]);
+      ctx.beginPath(); ctx.moveTo(px, y); ctx.lineTo(rx - dir * 12 * k, y); ctx.stroke(); ctx.setLineDash([]);
+    }
+  } else {
+    // side to side: the lane runs left to right, the paddle along its bottom
+    const x0 = W * 0.2, x1 = W * 0.8, L = x1 - x0, padL = padK * L;
+    const cy0 = H * 0.12, cy1 = H * 0.5;
+    ctx.fillStyle = A.tint; ctx.fillRect(x0, cy0, L, cy1 - cy0);
+    ctx.strokeStyle = TC.ink2; ctx.lineWidth = 3 * k;
+    for (const x of [x0, x1]) { ctx.beginPath(); ctx.moveTo(x, cy0); ctx.lineTo(x, cy1); ctx.stroke(); }
+    if (f != null) {
+      const cx = x0 + f * L;
+      ctx.fillStyle = A.solid;
+      rrectPath(ctx, cx - padL / 2, cy1 - 7 * k, padL, 14 * k, 7 * k); ctx.fill();
+    }
+    const ry = H * 0.66, xOf = v => x0 + (v - w.lo) / (w.hi - w.lo) * L;
+    const clampX = x => Math.max(8 * k, Math.min(W - 8 * k, x));
+    ctx.strokeStyle = TC.line; ctx.lineWidth = 6 * k; ctx.lineCap = "round";
+    ctx.beginPath(); ctx.moveTo(clampX(xOf(r.lo)), ry); ctx.lineTo(clampX(xOf(r.hi)), ry); ctx.stroke();
+    ctx.strokeStyle = A.light; ctx.beginPath(); ctx.moveTo(x0, ry); ctx.lineTo(x1, ry); ctx.stroke();
+    const tick = (v, l1, l2, col, bold, row) => {
+      const x = clampX(xOf(v));
+      ctx.strokeStyle = col; ctx.lineWidth = 3 * k;
+      ctx.beginPath(); ctx.moveTo(x, ry - 10 * k); ctx.lineTo(x, ry + 10 * k); ctx.stroke();
+      ctx.fillStyle = col; ctx.textAlign = "center"; ctx.textBaseline = "top";
+      ctx.font = `${bold ? 900 : 700} ${Math.round(15 * k)}px Nunito, sans-serif`;
+      const y = ry + 16 * k + row * 44 * k;
+      ctx.fillText(l1, x, y); ctx.fillText(l2, x, y + 18 * k);
+    };
+    tick(r.lo, unit(r.lo), "their left", TC.ink3, false, 1);
+    tick(w.lo, unit(w.lo), "paddle at the left", A.deep, true, 0);
+    tick(w.hi, unit(w.hi), "paddle at the right", A.deep, true, 0);
+    tick(r.hi, unit(r.hi), "their right", TC.ink3, false, 1);
+    if (a != null) {
+      const x = clampX(xOf(a));
+      ctx.fillStyle = TC.ink; ctx.beginPath(); ctx.arc(x, ry, 9 * k, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+}
+function rrectPath(ctx, x, y, w, h, r) {
+  ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+}
+
 // THE LANTERN'S LEVEL MAP (Oct 2026, by request: keep the level choice and
 // the leaderboard, so every stage can be tried). Six stages, every level a
 // button, the ladder's own level marked; the Guild board beside it.
@@ -2049,6 +2333,17 @@ function renderLevelMap(gameId) {
   const prog = store.getProgress(state.patient, mapVal(def.bag)) || {};
   const played = Object.keys(prog.best || {}).length, starSum = Object.values(prog.stars || {}).reduce((a, b) => a + (b || 0), 0);
   let html = `<div class="duo-setup lvl-map" style="${accentVars(gameId)}">`;
+  // GRASP AND RELEASE as a tick box (2 Nov 2026, by request: "add it to the
+  // level selection so I can check it there"): the fruit squeezed to pick
+  // up and opened over the box to drop, the candle squeezed at the basket
+  // and the hand opened in the lantern; no holding still
+  const graspTick = gameId === "fruit" || gameId === "candles";
+  if (graspTick) {
+    const on = gameId === "fruit" ? state.fruitDrop === "grasp" : state.candlesGrasp;
+    html += `<label class="grasp-tick"><input type="checkbox" id="grasp-tick"${on ? " checked" : ""}><span><b>Grasp and release</b> ${gameId === "fruit"
+      ? "Squeeze your hand to pick a fruit up, open it over the box to drop"
+      : "Squeeze your hand at the basket to take a candle, open it in the lantern to light it"}</span></label>`;
+  }
   html += levelMapSVG(def, cur, prog);
   html += gameId === "pong"
     ? `<p class="hint">You are at level <b>${cur}</b>${rallyEver() ? ` · your longest rally ever: <b>${rallyEver()}</b>` : ""}. Win a match to go up a level; click any level to play it.</p>`
@@ -2057,6 +2352,15 @@ function renderLevelMap(gameId) {
   // 1 Nov 2026, by request: one board for every game, This week's board)
   html += `</div>`;
   wrap.innerHTML = html;
+  if (graspTick) $("grasp-tick").addEventListener("change", e => {
+    if (gameId === "fruit") {
+      state.fruitDrop = e.target.checked ? "grasp" : "hold";
+      localStorage.setItem("strive-fruit-drop", state.fruitDrop); $("in-fruit-drop").value = state.fruitDrop;
+    } else {
+      state.candlesGrasp = e.target.checked;
+      localStorage.setItem("strive-candles-grasp", e.target.checked ? "1" : "0");
+    }
+  });
   wrap.querySelectorAll(".node").forEach(g => {
     const go = () => { state[def.pick] = +g.dataset.level; startGame(gameId, true); };
     g.addEventListener("click", go);
@@ -2069,6 +2373,8 @@ function renderLevelMap(gameId) {
   // clean-up): a long map used to push them under the fold of a TV
   const back = pillBtn("↩ Back", "All games", renderSelect);
   wrap.prepend(play, back);
+  // Pong: the paddle-range check, for staff, beside Back (3 Nov 2026, by request)
+  if (gameId === "pong") back.after(pillBtn("Check paddle range", "Does the paddle reach both ends?", () => renderPongRange()));
   focusHint(play);
 }
 function renderLanternLevels() { renderLevelMap("candles"); }
@@ -2157,14 +2463,9 @@ function startAssessment(opts = {}) {
     // device-level A/B switch (staff drawer): the drawn figure with two
     // circles and a lift, or the instruction video
     style: localStorage.getItem("strive-assess-style") || "video",
-    // moved to a new spot partway: the shape so far is about the old spot,
-    // so the measurement starts again from the beginning (26 Oct 2026)
-    onMoved: () => {
-      audio.stopBgm();
-      $("prompt").innerHTML = "You moved to a new spot<small>Let's start again from the beginning</small>";
-      speak("You moved to a new spot, so let's start the measurement again from the beginning.");
-      setTimeout(() => { if (state.current === a) startAssessment({ ...opts, override: true, force: true }); }, 3500);
-    },
+    // (onMoved, which started the measurement again from the beginning after
+    // a move partway, went on 2 Nov 2026, by request: "no need to restart the
+    // assessment"; a move re-centres and the measurement carries on)
   });
   state.current = a;
   const t0 = performance.now();
@@ -2423,10 +2724,11 @@ function startGame(id, fresh) {
     axis: id === "pong" ? state.pongAxis : undefined,
     // Cozy Fruit Merge: how to drop, the box left unfinished, the biggest fruit ever made
     drop: id === "fruit" ? state.fruitDrop : undefined,
+    grasp: id === "candles" ? state.candlesGrasp : undefined,
     board: id === "fruit" ? state.fruitBoard : undefined,
     bestFruit: id === "fruit" ? (store.getProgress(state.patient, "fruitMap")?.bestFruit || 0) : undefined,
     // the guided start: the first round of the first play on this arm (fruitMap.tutorialDone)
-    tutorial: id === "fruit" ? (state.fruitTutorial || (state.roundNumber === 1 && !store.getProgress(state.patient, "fruitMap")?.tutorialDone?.[state.side])) : undefined,
+    tutorial: id === "fruit" ? fruitTutorialNow() : undefined,
     // the Lantern's per-level bests and Star Atlas (Pip's flag is set from them)
     lumen: id === "candles" ? store.getProgress(state.patient, "candlesLumen") : undefined,
     starRank: id === "pong" ? store.getLevel(state.patient, "starRank") : undefined,
@@ -2437,6 +2739,8 @@ function startGame(id, fresh) {
     // (Oct 2026: the sweep no longer sets it; the speed level does)
     calibrate: false,
     pongLevel: id === "pong" ? (state.pongLevelPick || store.getLevel(state.patient, pongLevelKey(state.pongAxis, state.side))) : undefined,
+    // the lane's ends staff set by hand on the paddle-range check, per arm (renderPongRange)
+    laneRange: id === "pong" ? { left: pongManual(state.pongAxis, "left"), right: pongManual(state.pongAxis, "right") } : undefined,
     // the Pong dials, the same for the single and the two-player game
     pongSpeed: id === "pong" ? state.pongSpeed : undefined,
     powerups: id === "pong" ? state.pongPowerups : undefined,
@@ -2484,6 +2788,18 @@ function duoProfile() {
 }
 
 // Pong's speed level, per arm and per Pong (FE / Abd-Add): starts at 1
+// Cozy Fruit's guided start: the first round of the first play on this arm.
+// Marked as seen the moment it is offered (2 Nov 2026, by request: "no need
+// tutorial for each fruit level, just the first"): it used to be marked only
+// when a round ended, so leaving a level early brought it back every time.
+function fruitTutorialNow() {
+  if (state.fruitTutorial) return true;
+  if (state.roundNumber !== 1) return false;
+  const bag = store.getProgress(state.patient, "fruitMap") || {};
+  if (bag.tutorialDone?.[state.side]) return false;
+  if (state.patient) store.setProgress(state.patient, "fruitMap", { ...bag, tutorialDone: { ...(bag.tutorialDone || {}), [state.side]: true } });
+  return true;
+}
 const pongLevelKey = (axis, side) => `pongLevel-${axis === "abd" ? "abd" : "fe"}-${side}`;
 
 function onRoundEnd(round) {
@@ -3445,7 +3761,8 @@ for (let L = 1; L <= WINDY_MAX; L++) $("in-windy-level").add(new Option(`Level $
 $("in-windy-level").addEventListener("change", e => { state.windyLevelPick = +e.target.value || null; });
 for (let L = 1; L <= FRUIT_MAX; L++) $("in-fruit-level").add(new Option(`Level ${L}`, String(L)));
 $("in-fruit-level").addEventListener("change", e => { state.fruitLevelPick = +e.target.value || null; });
-$("in-fruit-drop").addEventListener("change", e => { state.fruitDrop = e.target.value; });
+$("in-fruit-drop").value = state.fruitDrop;
+$("in-fruit-drop").addEventListener("change", e => { state.fruitDrop = e.target.value; localStorage.setItem("strive-fruit-drop", state.fruitDrop); });
 $("in-pong-speed").addEventListener("change", e => { state.pongSpeed = e.target.value; });
 $("in-pong-power").addEventListener("change", e => { state.pongPowerups = e.target.value === "on"; });
 $("in-song").addEventListener("change", e => { state.song = e.target.value; });
@@ -3467,6 +3784,20 @@ $("btn-drawer-intro").addEventListener("click", () => {
   playIntro(() => show(back));
 });
 
+// the paddle-range check from the drawer: over a round it ends the round
+// first (the check needs the arm and the screen), then opens the check
+$("btn-pong-range").addEventListener("click", () => {
+  $("drawer").classList.add("hidden");
+  if (!state.patient) return;
+  if (state.screen === "stage") {
+    if (state.current?.id === "pong") state.pongAxis = state.current.axis || state.pongAxis;
+    state.warmupThen = null;
+    state.current?.stop(); state.current = null; audio.stopBgm();
+    $("cue").classList.add("hidden"); $("paused").classList.add("hidden");
+  }
+  show("screen-select");
+  renderPongRange();
+});
 $("btn-quit").addEventListener("click", () => {
   const skipTo = state.warmupThen;   // a warm-up on the way to the assessment: ✕ skips the stretch, not the measurement
   state.warmupThen = null;
@@ -3711,7 +4042,7 @@ if (previewOf === "pongscore") {
 const TEST_TARGETS = {
   select: "the hub", welcome: "the welcome screen", warmup: "the warm-up", assess: "the assessment",
   rom: "the after-assessment screen", schedule: "the session plan", levels: "a level map (&game=)",
-  duo: "Pong two-player setup", profile: "the therapist profile", board: "the boards (&tab=plan|days|reps|me)",
+  duo: "Pong two-player setup", pongrange: "Pong's paddle-range check (&axis=fe|abd)", profile: "the therapist profile", board: "the boards (&tab=plan|days|reps|me)",
 };
 function testProfile(arm) {
   const envelope = Array.from({ length: 32 }, (_, i) =>
@@ -3771,6 +4102,7 @@ function testJump(q) {
     case "rom": renderRomCompare([arm]); show("screen-romcompare"); romLiveLoop(); break;
     case "schedule": renderSchedule(toHub); break;
     case "levels": renderLevelMap(MAP_DEFS[q.get("game")] ? q.get("game") : "windy"); show("screen-select"); break;
+    case "pongrange": state.pongAxis = q.get("axis") === "abd" ? "abd" : "fe"; show("screen-select"); renderPongRange(); break;
     case "duo": state.pongMode = "duo"; state.pongAxis = "fe"; $("in-pong").value = "duo"; renderDuoSetup(); show("screen-select"); break;
     case "profile": renderProfile(); show("screen-profile"); break;
     case "board": renderLeaderboard(q.get("tab") || "plan"); show("screen-select"); break;

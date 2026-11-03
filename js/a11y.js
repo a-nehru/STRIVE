@@ -186,8 +186,11 @@ export function speakLine(text, rate = 0.9, caption = true, onend = null, coach 
     if (!url) { browser(); return; }
     try {
       const a = new Audio(url);
-      a.preservesPitch = true;
-      a.playbackRate = Math.min(1.2, Math.max(0.6, rate * cv.rate));
+      // the cloned voice plays at its own speed (2 Nov 2026, by request: "make
+      // the voice a bit more natural"): stretching a rendered line to the
+      // house rate (0.9) smeared it; the narrator's reference clip is already
+      // unhurried. The rate still sets the browser voice and the timings.
+      a.playbackRate = 1;
       a.volume = Math.min(1, Math.max(0, A11Y.volVoice));
       a.onended = () => { if (voiceEl === a) voiceEl = null; ended(); };
       a.onerror = () => { if (voiceEl === a) voiceEl = null; browser(); };

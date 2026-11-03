@@ -464,7 +464,10 @@ export class Assessment {
     // moved to a new spot: start again (the opts.onMoved hook), or, without
     // one, re-baseline as before
     if (this._movedCheck(now)) return;
-    if (this.t.relocated() && !this.opts.onMoved) this.t.setBaseline();
+    // a lean, tilt or turn is the posture coach's, never a move (2 Nov 2026)
+    const cp = this.t.compensation(this.side);
+    const posture = (cp.lean ?? 0) > 0.7 || (cp.tilt ?? 0) > 0.7 || (cp.rotation ?? 0) > 0.7;
+    if (!posture && this.t.relocated() && !this.opts.onMoved) this.t.setBaseline();
 
     // The WRIST is the measured point, on every camera path. The palm centre
     // is for pick-up interactions in the games; on the ZED path it is built

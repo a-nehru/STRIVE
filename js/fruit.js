@@ -42,7 +42,7 @@
 //    never filling it over the line.
 //  - One level is one round of up to FRUIT_ROUND_S; a box not finished in
 //    time is kept for the next round of the same level (main.js state.fruitBoard).
-import { GameBase, TAU, CENTER, drawHand } from "./engine.js";
+import { GameBase, TAU, CENTER, drawHand, ROM_SHARE, romWindow } from "./engine.js";
 import { audio } from "./audio.js";
 import { A11Y, hushVoice } from "./a11y.js";
 import { ACCENTS, alpha } from "./theme.js";
@@ -63,6 +63,12 @@ function loadMatter() {
   });
   return matterLoading;
 }
+// the glossy pictures the way FLUENT_FIT does it, where fitting the whole
+// picture leaves the fruit small: [body width, body centre x, centre y] in
+// the picture's pixels. The grape's bunch is half its picture under a big
+// leaf, so fitted whole it filled three quarters of its circle (2 Nov 2026,
+// by request: "make the grape size proper"); measured from its purple pixels.
+const GLOSSY_FIT = { Grape: [175, 108, 158] };
 // the glossy pictures, by fruit name, when the local file is there
 let GLOSSY = null, glossyLoading = null;
 function loadGlossy() {
@@ -90,7 +96,9 @@ const FLUENT_FILL = 1.06;        // a touch over the circle, so touching fruit l
 // each fruit and a light on its upper left, drawn with the screen's light,
 // not turning with the fruit. 0 off, 1 soft, 2 strong; device-level
 // localStorage strive-fruit-gloss overrides FRUIT_GLOSS.
-const FRUIT_GLOSS = 0;             // off: on 2 Nov 2026 the user kept the Fluent fruit as they are
+// on this computer only (2 Nov 2026, by request: "use shine locally"); the
+// live site keeps the Fluent fruit as they are
+const FRUIT_GLOSS = ["localhost", "127.0.0.1"].includes(location.hostname) ? 1 : 0;
 const GLOSS = [null,
   { shadow: 0.22, blur: 0.28, drop: 0.10, spec: 0.55, specR: 0.42, rim: 0 },
   { shadow: 0.30, blur: 0.34, drop: 0.13, spec: 0.8, specR: 0.5, rim: 0.35 }];
@@ -116,13 +124,16 @@ const EXT = 1.9;                  // sprite half-size in radii (room for stems a
 // THE LADDER: r in logical units, pts for making it, col for its sparks,
 // art = which drawn fruit (drawFruit), glossy = the picture's name
 export const FRUITS = [
-  { n: "Strawberry", r: 15, pts: 1, col: "#f2545b", art: "strawberry" },
-  { n: "Grape", r: 20, pts: 3, col: "#8a5cf0", art: "grape" },
-  { n: "Orange", r: 27, pts: 6, col: "#ff8a1f", art: "orange" },
-  { n: "Apple", r: 35, pts: 10, col: "#e8323c", art: "apple" },
-  { n: "Peach", r: 46, pts: 15, col: "#ff9ea0", art: "peach" },
-  { n: "Pineapple", r: 59, pts: 21, col: "#ffc933", art: "pineapple" },
-  { n: "Melon", r: 76, pts: 28, col: "#9fd462", art: "melon" },
+  // the small fruit bigger since 2 Nov 2026, by request (they were tiny in
+  // the box on a laptop: 15, 20, 27, 35, 46, 59, 76), the big ones nearly
+  // as they were, so the box holds about as much
+  { n: "Strawberry", r: 20, pts: 1, col: "#f2545b", art: "strawberry" },
+  { n: "Grape", r: 25, pts: 3, col: "#8a5cf0", art: "grape" },
+  { n: "Orange", r: 32, pts: 6, col: "#ff8a1f", art: "orange" },
+  { n: "Apple", r: 40, pts: 10, col: "#e8323c", art: "apple" },
+  { n: "Peach", r: 50, pts: 15, col: "#ff9ea0", art: "peach" },
+  { n: "Pineapple", r: 62, pts: 21, col: "#ffc933", art: "pineapple" },
+  { n: "Melon", r: 78, pts: 28, col: "#9fd462", art: "melon" },
   // the top fruit: a watermelon since 2 Nov 2026, by request (a pumpkin
   // from 31 Oct, chosen then to keep off Suika's ladder; the game around it
   // is STRIVE's own)
@@ -137,13 +148,13 @@ const FRUIT_STILL_GRACE = 350;    // ms a hold survives a wobble outside it
 const FRUIT_GRASP_MS = 300;
 // the fruit in hand is drawn this much bigger (2 Nov 2026, by request: too
 // small to follow while carried); it eases back to its size as it drops
-const FRUIT_HELD_SCALE = 1.4;
-const FRUIT_DROP_EASE_MS = 220;       // a squeeze counts once the hand has been closed this long
+const FRUIT_HELD_SCALE = 1;      // 1.4 from 2 Nov 2026; back to the box's size the same day, by request ("same as the drops"), now the fruit are bigger
+const FRUIT_DROP_EASE_MS = 220;
+const FRUIT_ROLL_STEPS = 48, FRUIT_ROLL_VMAX = 6;   // the roll: reach the random spot in about this many 60 Hz steps, never faster       // a squeeze counts once the hand has been closed this long
 const FRUIT_NEXT_MS = 480;        // the next fruit arrives after a drop (the mockup's)
 const FRUIT_OVER_MS = 2200;       // a box full past its line this long lets the top fruit go
 const FRUIT_RAISE = 0.8;          // of rangeScale x the reach straight up: a raised hand
 const FRUIT_RAISE_MS = 700;       // held raised this long calls up the shake
-const FRUIT_X_PAD = 0.05;         // SW shaved off each end of the sideways range
 const FRUIT_MIN_SPAN = 0.5;       // SW: the lane never narrower than this
 const SHAKE_MS = 4500;
 // THE GUIDED START (31 Oct 2026, by request): the first play on each arm.
@@ -275,6 +286,7 @@ function drawWatermelon3D(ctx, r) {
   ctx.beginPath(); ctx.moveTo(0, -r * .9); ctx.quadraticCurveTo(r * .02, -r * 1.04, r * .1, -r * 1.09); ctx.stroke();
 }
 
+export function drawFruitArt(ctx, art, r) { drawFruit(ctx, art, r); }
 function drawFruit(ctx, art, r) {
   switch (art) {
     case "strawberry": {
@@ -426,6 +438,49 @@ function goalPhrase(LV) {
   if (LV.count > 1) return `Make ${LV.count} ${plural(nm)}`;
   return `Make ${/^[AEIOU]/.test(nm) ? "an" : "a"} ${nm}`;
 }
+// what the coach says as a level begins ("Level 7. Make 2 Peaches. And new,
+// bumpers!"), one place for the game and the voice list
+function levelLine(lv) {
+  const news = lv.news.length ? " " + lv.news[0].replace("New:", "And new,").replace(/[.!]*$/, "") + (lv.news[0].endsWith("!") ? "!" : ".") : "";
+  return `Level ${lv.n}. ${goalPhrase(lv)}.${news}`;
+}
+// the guided start's words per step: [title, line under it, what is said]
+function tutLines(grasp) {
+  return {
+    pick: grasp ? ["Reach out to the fruit", "Squeeze your hand to pick it up", "Reach out to the fruit under Next, and squeeze your hand to pick it up."]
+                : ["Reach out to the fruit", "Hold your hand on it to pick it up", "Reach out to the fruit under Next, and hold your hand there to pick it up."],
+    carry: ["Bring it over the box", "The fruit comes with your hand", "Lovely, you picked it up. Now bring it back over the box."],
+    drop: grasp ? ["Now open your hand", "The fruit drops into the box", "Now open your hand, and the fruit drops into the box."]
+                : ["Now hold your hand still", "The ring fills, and the fruit drops", "Now hold your hand still. The ring fills up, and the fruit drops into the box."],
+    match: ["Pick up the next one", "Drop it on top of the first", "Now pick up the next one, and drop it right on top of the first. Two the same join together."],
+    grew1: ["They joined!", "Two strawberries make a grape", "They joined! Two strawberries make a grape. Look at the ring: every pair grows into the next fruit."],
+    evolve: ["Now the grape on the grape", "Two grapes make an orange", "Now pick up the grape, and drop it right on top of the grape."],
+    grew2: ["An orange!", "Every pair grows into the next fruit", "An orange! Every pair grows into the next fruit, all the way to the watermelon. Let's play!"],
+    done: ["Well done", "Let's play", "Well done. Let's play!"],
+  };
+}
+// EVERY LINE THE GAME SAYS THAT CAN BE KNOWN AHEAD (2 Nov 2026, by request:
+// "audio is lagging the feedback"): the coach's voice renders a line the
+// first time it is ever said, one to two seconds while the patient waits, so
+// main.js#warmVoice hands these to the voice bridge at login with the
+// phrasebook. Must match the say() calls word for word.
+export function fruitVoiceLines() {
+  const out = new Set();
+  for (let i = 1; i < FRUITS.length; i++) {
+    const nm = fruitName(i).toLowerCase();
+    out.add(`Your first ${nm}!`); out.add(`One ${nm}. One more to go.`);
+  }
+  for (let n = 1; n <= FRUIT_MAX; n++) {
+    const lv = fruitLevelDef(n);
+    out.add(levelLine(lv));
+    out.add(`Level ${n} complete!`);
+  }
+  for (const grasp of [false, true]) for (const l of Object.values(tutLines(grasp))) out.add(l[2]);
+  ["You earned a shake. Raise your hand to use it.", "Wave your hand side to side!", "Lovely. Two of the same fruit join together.",
+   "The box was full, so the top fruit rolled away. Keep going!", "Time for a rest. Your box will be here next time.",
+   "Reach out to your side, to the fruit under Next.", "That's fine. Here it is.", "Keep your hand still for a moment."].forEach(t => out.add(t));
+  return [...out];
+}
 // the level's chapters for the map: grouped by goal fruit
 export function fruitChapters() {
   const out = [];
@@ -460,6 +515,15 @@ class Channel {
 }
 // the sideways lane: the assessment's own x limits about the body centre
 // (the same as Pong Abd-Add's, games.js pongXLimits)
+export function fruitXLimits(prof, arm) { return xLimits(prof, arm); }
+// the lane the hand's x is read over (CozyFruit._lane): the middle
+// ROM_SHARE (70%) of the sideways range, every game's share since 3 Nov 2026
+// (it was the range less 0.05 SW each end, times rangeScale), never narrower
+// than FRUIT_MIN_SPAN; shared with the practice-and-set-range tile
+export function fruitLane(xLo, xHi) {
+  const w = romWindow(xLo, xHi, FRUIT_MIN_SPAN);
+  return { lo: w.lo, hi: w.hi, span: w.hi - w.lo };
+}
 function xLimits(prof, arm) {
   const xs = [], cen = prof?.center?.x || 0;
   if (prof?.envPts?.length) for (const q of prof.envPts) if (q) xs.push(cen + q.x);
@@ -506,6 +570,9 @@ export class CozyFruit extends GameBase {
     this.confetti = new Confetti();
     this.xCh = new Channel();
     [this.xLo, this.xHi] = xLimits(this.profile, this.side);
+    // ends staff set by hand on the practice-and-set-range tile win, end by end
+    if (this.opts.laneRange?.lo != null) this.xLo = this.opts.laneRange.lo;
+    if (this.opts.laneRange?.hi != null) this.xHi = this.opts.laneRange.hi;
     this.sprites = []; this.spriteS = 0;
     this.carried = this.opts.board?.level === this.level ? this.opts.board : null;
     this.saidLevel = false;
@@ -724,15 +791,8 @@ export class CozyFruit extends GameBase {
         if (e.type === "click") this._tutEnd(performance.now(), true);
         return;
       }
-      const x = (sx - L.ox) / L.S;
-      if (this.shakeMode) { if (x > -40 && x < W + 40) this._shakeInput(x); return; }
-      this.curX = x; this.mouseUntil = performance.now() + 2500;
-      if (e.type === "click") {
-        // a click on the bubble under Next picks the fruit up; on the box, drops it
-        const nc = this._nextCard(L), now = performance.now();
-        if (!this.holding && Math.hypot(sx - nc.bx, sy - nc.by) <= nc.br * 1.3) this._pick(now, "key");
-        else if (this.holding && x >= this.BOX_L && x <= this.BOX_R) { this._followCur(); this._drop(now, "key"); }
-      }
+      // no mouse play (2 Nov 2026, by request): the mouse used to aim, pick up
+      // and drop; the arm does, and the keys stay for staff
     };
     addEventListener("keydown", this._onKey);
     addEventListener("keyup", this._onKey);
@@ -751,12 +811,8 @@ export class CozyFruit extends GameBase {
     this._clampAim(); audio.fruit("swap");
   }
   // the lane: the sideways range in SW, grown live past what was measured,
-  // times rangeScale about its own middle, never narrower than FRUIT_MIN_SPAN
-  _lane() {
-    const mid = (this.xLo + this.xHi) / 2;
-    const half = Math.max(FRUIT_MIN_SPAN / 2, ((this.xHi - this.xLo) / 2 - FRUIT_X_PAD) * this.params.rangeScale);
-    return { lo: mid - half, hi: mid + half, span: 2 * half };
-  }
+  // the middle 70% (ROM_SHARE) of the sideways range, never narrower than FRUIT_MIN_SPAN (fruitLane)
+  _lane() { return fruitLane(this.xLo, this.xHi); }
   _aimFromHand(now, dt) {
     const h = this.t.handRel(this.side);
     const x = this.xCh.push(h ? h.x : null, this.t.lastSeen, dt);
@@ -867,7 +923,19 @@ export class CozyFruit extends GameBase {
     this._clampAim();
     const b = this._makeFruit(this.current, this.aimX, HOLD_Y);
     b.droppedAt = now;
-    Body.setVelocity(b, { x: 0, y: 2 });
+    // ROLLED OFF TO A RANDOM PLACE (2 Nov 2026, by request: always dropping
+    // at the near edge of the box skipped the carry, and picked "drop and
+    // roll to a random position" over a drop zone): the fruit leaves the hand
+    // heading for a random spot across the box, turning as it goes, so where
+    // it is dropped no longer decides where it lands. The guided start drops
+    // straight, since it asks for a fruit on its twin.
+    if (this.tut) Body.setVelocity(b, { x: 0, y: 2 });
+    else {
+      const r = FRUITS[this.current].r, tx = this.BOX_L + r + Math.random() * Math.max(1, this.BOX_R - this.BOX_L - 2 * r);
+      const vx = Math.max(-FRUIT_ROLL_VMAX, Math.min(FRUIT_ROLL_VMAX, (tx - this.aimX) / FRUIT_ROLL_STEPS));
+      Body.setVelocity(b, { x: vx, y: 2 });
+      Body.setAngularVelocity(b, vx / r * 0.6);
+    }
     if (this.tut) { this.tut.droppedAt = now; this.tut.firstBody ??= b; }
     this.canDrop = false; this.holding = false; this.nextAt = now + FRUIT_NEXT_MS;
     this.drops++; this.byHow[how] = (this.byHow[how] || 0) + 1;
@@ -928,7 +996,7 @@ export class CozyFruit extends GameBase {
     if (this.state === "play" && !this.saidLevel && playT >= 0) {
       this.saidLevel = true;
       const lv = this.LV;
-      this.say(`Level ${lv.n}. ${goalPhrase(lv)}.${lv.news.length ? " " + lv.news[0].replace("New:", "And new,") + "." : ""}`, true);
+      this.say(levelLine(lv), true);
     }
     if (this.state === "play" && playT >= FRUIT_ROUND_S) {
       this.state = "time"; this.timeAt = now;
@@ -947,7 +1015,7 @@ export class CozyFruit extends GameBase {
     if (playT >= 0 || this.tut?.picksOn || this.tut?.dropsOn) this._handTick(now, dt);
     // a raised hand calls up the shake
     const h = this.t.handRel(this.side);
-    if (this.state === "play" && this.shakes > 0 && !this.shakeMode && h && h.y - CENTER.y >= FRUIT_RAISE * this.params.rangeScale * this.envAt(Math.PI / 2)) {
+    if (this.state === "play" && this.shakes > 0 && !this.shakeMode && h && h.y - CENTER.y >= Math.min(FRUIT_RAISE * this.params.rangeScale, ROM_SHARE) * this.envAt(Math.PI / 2)) {
       this.raiseAcc += dt;
       if (this.raiseAcc >= FRUIT_RAISE_MS) { this.raiseAcc = 0; this._useShake(now); }
     } else this.raiseAcc = Math.max(0, this.raiseAcc - dt * 2);
@@ -980,18 +1048,7 @@ export class CozyFruit extends GameBase {
     const t = this.tut;
     t.step = step; t.stepAt = now; t.inSince = null; t.nudged = false;
     const grasp = this.dropMode === "grasp";
-    const lines = {
-      pick: grasp ? ["Reach out to the fruit", "Squeeze your hand to pick it up", "Reach out to the fruit under Next, and squeeze your hand to pick it up."]
-                  : ["Reach out to the fruit", "Hold your hand on it to pick it up", "Reach out to the fruit under Next, and hold your hand there to pick it up."],
-      carry: ["Bring it over the box", "The fruit comes with your hand", "Lovely, you picked it up. Now bring it back over the box."],
-      drop: grasp ? ["Now open your hand", "The fruit drops into the box", "Now open your hand, and the fruit drops into the box."]
-                  : ["Now hold your hand still", "The ring fills, and the fruit drops", "Now hold your hand still. The ring fills up, and the fruit drops into the box."],
-      match: ["Pick up the next one", "Drop it on top of the first", "Now pick up the next one, and drop it right on top of the first. Two the same join together."],
-      grew1: ["They joined!", "Two strawberries make a grape", "They joined! Two strawberries make a grape. Look at the ring: every pair grows into the next fruit."],
-      evolve: ["Now the grape on the grape", "Two grapes make an orange", "Now pick up the grape, and drop it right on top of the grape."],
-      grew2: ["An orange!", "Every pair grows into the next fruit", "An orange! Every pair grows into the next fruit, all the way to the watermelon. Let's play!"],
-      done: ["Well done", "Let's play", "Well done. Let's play!"],
-    }[step];
+    const lines = tutLines(grasp)[step];
     t.title = lines[0]; t.sub = lines[1];
     this.say(lines[2], true);
     t.picksOn = step === "pick" || step === "match" || step === "evolve";
@@ -1211,7 +1268,10 @@ export class CozyFruit extends GameBase {
     const gl = style === "glossy" && GLOSSY?.get(f.n);
     const fl = style !== "drawn" && FLUENT?.[f.art];
     x.imageSmoothingQuality = "high";
-    if (gl && gl.naturalWidth) {
+    if (gl && gl.naturalWidth && GLOSSY_FIT[f.n]) {
+      const [d, cx, cy] = GLOSSY_FIT[f.n], sc = f.r * 2 * 0.98 / d;
+      x.drawImage(gl, -cx * sc, -cy * sc, gl.naturalWidth * sc, gl.naturalHeight * sc);
+    } else if (gl && gl.naturalWidth) {
       const fit = f.r * 2.18 / Math.max(gl.naturalWidth, gl.naturalHeight);
       x.drawImage(gl, -gl.naturalWidth * fit / 2, -gl.naturalHeight * fit / 2, gl.naturalWidth * fit, gl.naturalHeight * fit);
     } else if (style !== "drawn" && f.art === "watermelon") {
@@ -1225,7 +1285,7 @@ export class CozyFruit extends GameBase {
   }
   // a fruit drawn at a logical radius in the current (board) transform
   _drawFruitAt(ctx, i, x, y, ang = 0, sc = 1) {
-    const s = this._sprite(i), G = this._artStyle() === "fluent" ? GLOSS[this.gloss] : null;
+    const s = this._sprite(i), G = this._artStyle() !== "drawn" ? GLOSS[this.gloss] : null;
     ctx.save(); ctx.translate(x, y);
     if (G) {
       // canvas shadows ignore the transform: scale them by the board's own
@@ -1250,7 +1310,7 @@ export class CozyFruit extends GameBase {
   }
   // a fruit icon at a screen point, `size` px across its body
   _icon(ctx, i, x, y, size, dim = false) {
-    const s = this._sprite(i), sc = size / (FRUITS[i].r * 2), G = this._artStyle() === "fluent" ? GLOSS[this.gloss] : null;
+    const s = this._sprite(i), sc = size / (FRUITS[i].r * 2), G = this._artStyle() !== "drawn" ? GLOSS[this.gloss] : null;
     ctx.save();
     if (dim) { ctx.globalAlpha = 0.45; ctx.filter = "saturate(0.6)"; }
     ctx.drawImage(s.c, x - s.half * sc, y - s.half * sc, s.half * 2 * sc, s.half * 2 * sc);
@@ -1752,8 +1812,10 @@ export class CozyFruit extends GameBase {
   extra() {
     const won = this.state === "won";
     const xs = this.dropLog.map(d => d.x).filter(v => v != null);
-    const mean = xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0;
-    const sd = xs.length > 1 ? Math.sqrt(xs.reduce((a, b) => a + (b - mean) ** 2, 0) / (xs.length - 1)) : 0;
+    // xMean, not mean: that name is the module's mean() used below (2 Nov
+    // 2026: shadowed here, it threw at every round's end and the game froze)
+    const xMean = xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0;
+    const sd = xs.length > 1 ? Math.sqrt(xs.reduce((a, b) => a + (b - xMean) ** 2, 0) / (xs.length - 1)) : 0;
     const across = xs.filter(x => this.side === "right" ? x < CENTER.x : x > CENTER.x).length;
     const ln = this._lane();
     return {

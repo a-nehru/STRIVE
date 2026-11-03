@@ -1149,7 +1149,25 @@ export class Tracker {
   resetWristBend() { this.bends = {}; }
   _handPts(side) {
     const h = this.hands[side];
-    return h && performance.now() - h.at < 600 ? h.pts : null;
+    if (!h || performance.now() - h.at >= 600) return null;
+    // ON THE ZED THE HAND RIDES THE BODY'S WRIST (2 Nov 2026, by request: "if
+    // I move fast the hand takes longer to move, but the ZED tracking is
+    // fine"): the hand model answers a few frames after the body and, its
+    // crop cut about where the wrist was, loses a fast hand for a moment, so
+    // its points stayed put while the arm moved on. Its shape (open, closed,
+    // the fingers) is kept; where it is comes from the ZED wrist, every frame.
+    if (this.source === "zed") {
+      const w = this.wrist(side);
+      if (w) {
+        if (h.shiftFor !== this.lastSeen || h.shiftAt !== h.at) {
+          const dx = w.x - h.pts[0].x, dy = w.y - h.pts[0].y;
+          h.shifted = h.pts.map(p => ({ x: p.x + dx, y: p.y + dy }));
+          h.shiftFor = this.lastSeen; h.shiftAt = h.at;
+        }
+        return h.shifted;
+      }
+    }
+    return h.pts;
   }
 
   // finger curl from the 21-point hand model: mean fingertip→wrist distance

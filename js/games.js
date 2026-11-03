@@ -5,7 +5,7 @@
 //  - targets only inside the assessed envelope × rangeScale, clamped on-screen
 // "Grab" is dwell-based in v1 (hand-close detection is the M3 upgrade).
 
-import { GameBase, TAU, CENTER, drawBody, drawVideoMirror, drawHand } from "./engine.js";
+import { GameBase, TAU, CENTER, drawBody, drawVideoMirror, drawHand, ROM_SHARE, romWindow } from "./engine.js";
 import { audio } from "./audio.js";
 import { songById } from "./songs.js";
 import { A11Y } from "./a11y.js";
@@ -650,8 +650,51 @@ const PONG_PAD_T = 16;          // paddle thickness, px
 // edges and the paddles along "y" inside the lane; only _P, the mapping
 // from court to screen, knows which way up the court is drawn.
 const PONG_ABD_X0 = 0.12, PONG_ABD_X1 = 0.88;   // where the sideways lane sits on screen (fractions of width)
-const PONG_X_PAD = 0.05;        // SW shaved off each end of the sideways range so the ends are reachable
 const PONG_X_MIN_SPAN = 0.5;    // SW: the sideways lane never collapses below this
+const PONG_ARC_MIN_SPAN = 20;   // degrees: the up-and-down lane never collapses below this
+// THE LANE IS THE MIDDLE 70% OF THE ARM'S RANGE (3 Nov 2026, by request: "to
+// make sure they can reach, inside their ROM"). The whole lane is the middle
+// PONG_LANE_FRAC of the range the arm was measured to have, 15% left off each
+// end, so the paddle touches a wall well before the arm's limit. Until then
+// the whole range was stretched across the lane less 5 degrees each end
+// (0.05 SW sideways), and the walls asked for the limit itself.
+export const PONG_LANE_FRAC = ROM_SHARE;   // every game's 70% (engine.js)
+// and the patient's paddle runs PAST a wall by this much of its own length
+// (by request, the same day: "not force stop on the walls, a bit more
+// leeway"): at the end of the lane its middle sits on the rail, so a ball
+// running along the rail is met before the arm is all the way there. Only
+// the paddles an arm drives; the other side's stays inside the walls.
+export const PONG_PAD_OVER = 0.5;
+// The raw ends of the arm's range the lane is cut from, before the 70%
+// window: the assessment's (the union of the lift and the whole elevation
+// arc; Abd-Add: the furthest the wrist went to each side), or the ends staff
+// set by hand on the paddle-range check (main.js renderPongRange, stored per
+// patient in the "pongRange" progress bag), which win end by end.
+export function pongRangeOf(prof, arm, axis, manual = null) {
+  let lo, hi, from = prof ? "assessment" : "default";
+  if (axis === "abd") [lo, hi] = pongXLimits(prof, arm);
+  else {
+    const los = [prof?.lift?.startDeg, prof?.arcMinDeg].filter(v => v != null);
+    const his = [prof?.lift?.peakDeg, prof?.arcMaxDeg].filter(v => v != null);
+    lo = los.length ? Math.min(...los) : 20;
+    hi = his.length ? Math.max(...his) : 120;
+  }
+  if (manual?.lo != null) { lo = manual.lo; from = "staff"; }
+  if (manual?.hi != null) { hi = manual.hi; from = "staff"; }
+  return { lo, hi, from };
+}
+// The window of the range that spans the lane: its middle PONG_LANE_FRAC,
+// never narrower than the axis's floor (widened about the middle, so a small
+// range asks as little past either end as it can).
+export function pongWindow(lo, hi, axis) {
+  return romWindow(lo, hi, axis === "abd" ? PONG_X_MIN_SPAN : PONG_ARC_MIN_SPAN);
+}
+// where a reading (degrees of elevation, or the wrist's x in SW) puts the
+// paddle along its lane: 0 at the bottom (Abd-Add: the lane's start), 1 at the top
+export function pongLaneFrac(a, lo, hi, axis) {
+  const w = pongWindow(lo, hi, axis);
+  return Math.max(0, Math.min(1, (a - w.lo) / (w.hi - w.lo)));
+}
 // LIVE PADDLE COLOURS (Sep 2026, by request): the patient's paddle is amber,
 // and a posture slip turns it a pulsing gold with the coach's cue, so the
 // feedback is on the thing they are watching, not only in the corner. The
@@ -784,7 +827,6 @@ const CHALLENGES = [
 // solo thresholds for the titles (two players are simply compared)
 const TITLE_SOLO = { wall: 15, sniper: 3, showboat: 500 };
 const mkPlayer = () => ({ style: 0, hits: 0, edge: 0, clutch: 0, heat: 0, orbs: 0, rallyBest: 0, powers: {} });
-const PONG_ARC_PAD = 5;         // degrees shaved off each end of the arm's range so the lane ends are reachable
 // The lunge is released on TIME, not on a fixed fraction of the flight: it
 // breaks the wrong way only when there is just barely enough left to get
 // back. A fixed fraction leaves the paddle still travelling when the ball
@@ -882,7 +924,15 @@ export class ArcPong extends GameBase {
   coachDock(c) {
     const k = uu(c), floor = this.axis === "abd" ? 0.835 : (this.court?.bottom ?? 0.82);
     const room = (c.height * (1 - floor) - 34 * k - 8) / k;
-    return dockRect(c, this.side, { corner: this.patientRight ? "right" : "left", h: Math.max(110, Math.min(185, room)) });
+    const r = dockRect(c, this.side, { corner: this.patientRight ? "right" : "left", h: Math.max(110, Math.min(185, room)) });
+    // Up and down: the paddle runs half its length past the bottom rail
+    // (PONG_PAD_OVER, 3 Nov 2026), into the strip the card sits in, so the
+    // card moves in from the corner to just inside the paddle's line
+    if (this.axis !== "abd" && this.court) {
+      const padX = this._edgeX(this._myEdge()) * c.width, gap = PONG_PAD_T + 26 * k;
+      r.x = this.patientRight ? Math.min(r.x, padX - gap - r.w) : Math.max(r.x, padX + gap);
+    }
+    return r;
   }
   _edgeX(edge) { return edge === "right" ? this.court.right : this.court.left; }
   // unit vector pointing OUT of the court at an edge, in screen pixels
@@ -1230,6 +1280,10 @@ export class ArcPong extends GameBase {
         .map(([k, v]) => [k, this.axis === "abd"
           ? { lo: Math.round(v.lo * 100) / 100, hi: Math.round(v.hi * 100) / 100 }
           : { lo: Math.round(v.lo), hi: Math.round(v.hi) }])),
+      // where those ends came from: "assessment", "staff" (set by hand on the
+      // paddle-range check) or "default"; the lane is their middle laneFrac
+      laneFrom: Object.fromEntries(Object.entries(this._padY ?? {}).filter(([, v]) => v.from).map(([k, v]) => [k, v.from])),
+      laneFrac: PONG_LANE_FRAC,
       pongCrossTime: this.pongCrossTime ? Math.round(this.pongCrossTime * 100) / 100 : null,
       // the pace (seconds across the court at full speed): where the round
       // started, where it ended after each game's win or loss, and the sweep
@@ -1489,8 +1543,10 @@ export class ArcPong extends GameBase {
     const prof = this.p2Profile;
     const lo = prof?.arcMinDeg ?? this.profile.arcMinDeg;
     const hi = prof?.arcMaxDeg ?? this.profile.arcMaxDeg;
-    const f = Math.max(0, Math.min(1, (a - lo) / Math.max(10, hi - lo)));
-    const cLo = this.wallTop + this.paddleH / 2, cHi = this.wallBottom - this.paddleH / 2;
+    // the same 70% window and wall overrun as the patient's paddle
+    const f = pongLaneFrac(a, lo, hi, "fe");
+    const over = PONG_PAD_OVER * this.paddleH;
+    const cLo = this.wallTop + this.paddleH / 2 - over, cHi = this.wallBottom - this.paddleH / 2 + over;
     this._lastP2Y = cHi - f * (cHi - cLo) - this.paddleH / 2;
     return this._lastP2Y;
   }
@@ -1533,27 +1589,21 @@ export class ArcPong extends GameBase {
       // the lane is the UNION of the lift and the whole elevation arc, and
       // it keeps GROWING within the round: an angle past either end widens
       // the lane to it, so the paddle always has somewhere to go when the
-      // arm does. A few degrees are shaved off each end so the top and
-      // bottom are reachable without a strain, and the span never collapses
-      // below 20°.
+      // arm does. Since 3 Nov 2026 the lane is the middle 70% of that range
+      // (pongLaneFrac), so both walls are inside it, and ends staff set by
+      // hand on the paddle-range check (opts.laneRange) replace the
+      // assessment's, end by end.
       if (st.lo == null) {
-        if (abd) [st.lo, st.hi] = pongXLimits(prof ?? this.profile, arm);
-        else {
-          const P = prof ?? this.profile;
-          const los = [P?.lift?.startDeg, P?.arcMinDeg].filter(v => v != null);
-          const his = [P?.lift?.peakDeg, P?.arcMaxDeg].filter(v => v != null);
-          st.lo = los.length ? Math.min(...los) : 20;
-          st.hi = his.length ? Math.max(...his) : 120;
-        }
+        const r = pongRangeOf(prof ?? this.profile, arm, this.axis, this.opts.laneRange?.[arm]);
+        st.lo = r.lo; st.hi = r.hi; st.from = r.from;
       }
       if (a < st.lo) st.lo = a;
       if (a > st.hi) st.hi = a;
-      const pad = abd ? PONG_X_PAD : PONG_ARC_PAD;
-      const lo = st.lo + pad;
-      const hi = st.hi - pad;
-      const f = Math.max(0, Math.min(1, (a - lo) / Math.max(abd ? PONG_X_MIN_SPAN : 20, hi - lo)));
-      // whole vertical range maps onto the lane: paddle stays flush inside
-      const cLo = this.wallTop + this.paddleH / 2, cHi = this.wallBottom - this.paddleH / 2;
+      const f = pongLaneFrac(a, st.lo, st.hi, this.axis);
+      // the range maps onto the lane with the paddle's middle running from
+      // rail to rail: half of it past a wall at either end (PONG_PAD_OVER)
+      const over = PONG_PAD_OVER * this.paddleH;
+      const cLo = this.wallTop + this.paddleH / 2 - over, cHi = this.wallBottom - this.paddleH / 2 + over;
       target = cHi - f * (cHi - cLo) - this.paddleH / 2;
     }
     // no angle this frame: HOLD position. Snapping to the middle on a dropped
@@ -2520,15 +2570,22 @@ export class ArcPong extends GameBase {
     ctx.fillStyle = col;
     ctx.font = `800 ${Math.round(c.height * 0.032)}px Nunito, sans-serif`;
     ctx.textBaseline = "middle";
+    // since 3 Nov 2026 a paddle an arm drives runs half its length past the
+    // rails (PONG_PAD_OVER), so the name keeps clear of where it can go
     if (this.axis !== "abd") {
-      const p = this._P(this._edgeX(edge), this.wallTop);
-      ctx.textAlign = "center";
-      ctx.fillText(text, p.x, p.y - 14);
+      // beside the paddle's line, on the court side, not over it
+      const p = this._P(this._edgeX(edge), this.wallTop), gap = Math.round(c.height * 0.022);
+      ctx.textAlign = edge === "left" ? "left" : "right";
+      ctx.fillText(text, p.x + (edge === "left" ? gap : -gap), p.y - 14);
     } else {
       const y = this._P(this._edgeX(edge), this.wallTop).y;
       const onRight = !this.patientRight;
+      // past the end the paddle can reach, as far as the screen allows
+      const reach = PONG_PAD_OVER * this.paddleH / (this.court.bottom - this.court.top) * (PONG_ABD_X1 - PONG_ABD_X0) * c.width;
+      const tw = ctx.measureText(text).width;
+      const shift = Math.max(0, Math.min(reach, onRight ? c.width - 8 - (PONG_ABD_X1 * c.width + 10) - tw : PONG_ABD_X0 * c.width - 10 - tw - 8));
       ctx.textAlign = onRight ? "left" : "right";
-      ctx.fillText(text, onRight ? PONG_ABD_X1 * c.width + 10 : PONG_ABD_X0 * c.width - 10, y);
+      ctx.fillText(text, onRight ? PONG_ABD_X1 * c.width + 10 + shift : PONG_ABD_X0 * c.width - 10 - shift, y);
     }
     ctx.restore();
   }
@@ -4798,7 +4855,8 @@ export class ConnectDots extends GameBase {
 // and the DDA's `lifetime` sets how long a candle burns); a lit lantern
 // is a hit with its reach fraction. Lighting is a dwell or a hold, never a
 // squeeze: nothing is asked of the hand.
-const CANDLE_REACH_MAX = 0.8;        // no lantern past this fraction of the measured reach, at any level
+const CANDLE_REACH_MAX = ROM_SHARE;  // no lantern past this fraction of the measured reach, at any level (0.8 until 3 Nov 2026: every game's 70%)
+const LUMEN_TRACK_IO = 0.18;         // a moving lantern's track runs this share in and out about its place
 const CANDLE_BOX_R = 0.2;            // disc: capture radius at the keeping hand's stand (a rest point, so generous)
 const CANDLE_DISC_FILL = 0.92;       // the disc's diameter as a fraction of the shorter screen side
 const CANDLE_HAND_SMOOTH = 0.45;     // EMA weight of the newest hand sample in disc space
@@ -4920,12 +4978,22 @@ const LUMEN_GOAL = 10;               // lanterns that wake the chapter's scene f
 // story's basket "never runs empty"; 31 Oct 2026, by request)
 const LUMEN_BASKET_HOLDS = 5;
 const LUMEN_UP = 0.8, LUMEN_DOWN = 0.5, LUMEN_MIN = 5;   // level up / down rule, min candles
-const LUMEN_BASKET_Y = -0.62;        // disc: the basket's home row
+// (2 Nov 2026, by request) every lantern is held a moment before it lights
+// ("hold in lantern a bit longer": levels 1-5 lit on the first touch), and a
+// grasp-and-release mode from the level map's tick box (opts.grasp): squeeze
+// at the basket to take the candle, open the hand in the lantern to light it
+const LUMEN_MIN_HOLD = 0.6;          // s, the shortest hold in a lantern
+const LUMEN_GRASP_MS = 300;          // a squeeze at the basket counts once held this long
+const LUMEN_RELEASE_MS = 250;        // an open hand in the lantern lights it once held this long
+const LUMEN_BASKET_Y = -0.54;        // disc: the basket's home row (-0.62 until 2 Nov 2026: "keep the target a little above")
 const LUMEN_BASKET_SIDE = 0.22;      // disc: the left / right basket spots (near enough the low lanterns to be clear of them)
 const LUMEN_MOVE_PEAK = 2.2;         // a moving lantern's peak speed, disc units/s, is this over the DDA's lifetime (clamped below)
 const LUMEN_BASKET_R = 0.17;         // disc: hover radius at the basket
 const LUMEN_LANTERN_R = 0.16;        // disc: lantern capture radius at size 1 (× A11Y.radiusScale)
-const LUMEN_STAND = { x: 0.62, y: -0.55 };   // disc: the keeping hand's candle-stand, on its own side
+// disc: the keeping hand's candle-stand (and in stage 2 the fire), on its own
+// side; (0.62, -0.55) until 3 Nov 2026, 0.83 of the reach out: pulled in
+// along its ray to ROM_SHARE, every game's 70%
+const LUMEN_STAND = (() => { const x = 0.62, y = -0.55, r = Math.hypot(x, y), k = Math.min(1, ROM_SHARE / r); return { x: x * k, y: y * k }; })();
 // THE HANDS BY COLOUR (23 Oct 2026, by request): the lighting hand is amber
 // and the other hand (the match, the keeping hand) is teal, each drawn as
 // the patient's real hand (drawHand, the way Pong puts the hand on its
@@ -5053,7 +5121,10 @@ export class Candles extends GameBase {
   // reach share (× rs for the moving track), never nearer the basket than a
   // lantern and a half
   _anglePos(a, rs = 1) {
-    const reach = Math.min(0.92, this._reach() * rs);
+    // never past ROM_SHARE of the reach (3 Nov 2026): a moving lantern's
+    // place is pulled in so the outer end of its track is at the limit
+    const lim = ROM_SHARE, base = this.lv.move ? Math.min(this._reach(), lim / (1 + LUMEN_TRACK_IO)) : this._reach();
+    const reach = Math.min(lim, base * rs);
     const H = { x: 0, y: LUMEN_BASKET_Y };
     const u = { x: Math.cos(a * Math.PI / 180), y: Math.sin(a * Math.PI / 180) };
     const hu = H.x * u.x + H.y * u.y, hh = H.x * H.x + H.y * H.y;
@@ -5064,7 +5135,7 @@ export class Candles extends GameBase {
     // the ends of the arc pass close to the side spots): pushed out along
     // the ray, never past the rim
     const minD = LUMEN_BASKET_R + this._lanternR() * 1.5;
-    const tMax = -hu + Math.sqrt(Math.max(0, hu * hu - hh + 0.92 * 0.92));
+    const tMax = -hu + Math.sqrt(Math.max(0, hu * hu - hh + lim * lim));
     const spots = [-LUMEN_BASKET_SIDE, 0, LUMEN_BASKET_SIDE].map(x => ({ x, y: LUMEN_BASKET_Y }));
     for (let k = 0; k < 40 && t < tMax; k++) {
       const p = { x: H.x + u.x * t, y: H.y + u.y * t };
@@ -5083,7 +5154,7 @@ export class Candles extends GameBase {
     const dist = Math.max(...[lo, (lo + hi) / 2, hi].map(a => lumenDist(H, this._anglePos(a))));
     const peakAllowed = Math.max(0.4, Math.min(1.4, LUMEN_MOVE_PEAK / Math.max(1, this.params.lifetime)));
     // peak linear speed at 1 cycle/s: the sweep, plus the in-and-out at twice the rate
-    const perCycle = dist * (hi - lo) / 2 * Math.PI / 180 * TAU + 0.18 * this._reach() * 2 * TAU;
+    const perCycle = dist * (hi - lo) / 2 * Math.PI / 180 * TAU + LUMEN_TRACK_IO * this._reach() * 2 * TAU;
     return Math.min(this.lv.speed, peakAllowed / Math.max(0.1, perCycle));
   }
   _buildTargets() {
@@ -5098,6 +5169,10 @@ export class Candles extends GameBase {
       this.targets.push({ i, ang: Math.round(a * 10) / 10, x: p.x, y: p.y, cut });
     }
   }
+  // the grasp-and-release mode is for the one-hand stages (the two-hand
+  // stage's candle hand keeps the candle while the other fetches the flame)
+  _graspMode() { return !!this.opts.grasp && !this.bimanual; }
+  _holdNeed() { return this._graspMode() ? 0 : Math.max(this.lv.hold, LUMEN_MIN_HOLD); }
   _moveRange(base) {
     let lo = base - LUMEN_MOVE_AMP, hi = base + LUMEN_MOVE_AMP;
     if (lo < 10) { hi += 10 - lo; lo = 10; } if (hi > 170) { lo -= hi - 170; hi = 170; }
@@ -5106,7 +5181,7 @@ export class Candles extends GameBase {
   _trackPos(mv, ph) {
     const [lo, hi] = this._moveRange(mv.base);
     const a = (lo + hi) / 2 + (hi - lo) / 2 * Math.sin(ph);
-    return { a, ...this._anglePos(a, 1 + 0.18 * Math.sin(2 * ph)) };
+    return { a, ...this._anglePos(a, 1 + LUMEN_TRACK_IO * Math.sin(2 * ph)) };
   }
   _homeX(side) {
     if (!side) return 0;
@@ -5114,8 +5189,11 @@ export class Candles extends GameBase {
   }
   _nextHome() {
     if (this.holdSide || this.bimanual || this.lv.move === "both") return 0;   // the keeping hand's stand (or the fire) needs the basket to stay put
+    // the middle and the trained arm's own side only (2 Nov 2026, by request:
+    // on the other side the basket sat by the other hand, which confused)
     if (!this.homeSeq.length) {
-      let a; do { a = lumenShuffle([-1, 0, 1]); } while (a[0] === this.home);
+      const own = this.side === "left" ? -1 : 1;
+      let a; do { a = lumenShuffle([0, own]); } while (a[0] === this.home);
       this.homeSeq = a;
     }
     return this.homeSeq.shift();
@@ -5230,7 +5308,7 @@ export class Candles extends GameBase {
       return;
     }
     const hand = this.holdSide ? `your ${this.lightSide} hand` : "your hand";
-    this.tips.objective = "Hold your hand on the basket to take a candle.";
+    this.tips.objective = this._graspMode() ? "Squeeze your hand at the basket to take a candle." : "Hold your hand on the basket to take a candle.";
     if (this.trialN === 0) this._say("Take a candle from the basket", `Hold ${hand} on the basket`);
     else this._prompt("Back to the basket", "for the next candle");
   }
@@ -5252,7 +5330,7 @@ export class Candles extends GameBase {
     this.trialN++;
     const tg = this.target, lv = this.lv;
     this.cur = { trial: this.trialN, level: this.level, angle: tg.ang, golden: tg.golden,
-      reachFrac: Math.round(tg.reachFrac * 100) / 100, targetR: Math.round(tg.r * 100) / 100, holdReq: lv.hold,
+      reachFrac: Math.round(tg.reachFrac * 100) / 100, targetR: Math.round(tg.r * 100) / 100, holdReq: this._holdNeed(), grasp: this._graspMode() ? 1 : 0,
       basket: ["left", "centre", "right"][(this.home || 0) + 1],
       tPickup: this.playT, tLeave: null, leave: null, tEnter: null, lastEnter: null, path: 0, eff: null, peak: 0,
       holdBreaks: 0, outcome: "", mt: null, rt: null, returnTime: null, points: 0,
@@ -5269,11 +5347,12 @@ export class Candles extends GameBase {
       else this._prompt("");
       return;
     }
-    this.tips.objective = lv.hold ? "Carry the flame to the lantern, and hold it inside until the ring fills."
+    this.tips.objective = this._graspMode() ? "Carry the flame to the lantern, and open your hand there to light it."
+      : lv.hold ? "Carry the flame to the lantern, and hold it inside until the ring fills."
       : tg.match ? (lumenIsTrail(this.level) ? "Light the lanterns in order. The number on your candle is the next one." : "Light the lantern that matches your candle's colour.")
       : this.moth ? "Carry the flame to the lantern, round the moth."
       : "Carry the flame to the lantern.";
-    if (this.trialN === 1) this._say("Carry the flame to the lantern", lv.hold ? "Hold it inside until the ring fills" : tg.match ? "The sign on your candle says which" : "", this.tips.objective);
+    if (this.trialN === 1) this._say("Carry the flame to the lantern", this._graspMode() ? "Open your hand there to light it" : lv.hold ? "Hold it inside until the ring fills" : tg.match ? "The sign on your candle says which" : "", this.tips.objective);
     else this._prompt("");
   }
   _hitQuiet(reachFrac) {   // GameBase.hit without its note: the bell below is the sound
@@ -5507,11 +5586,18 @@ export class Candles extends GameBase {
         this.prevTrial.returnTime = Math.round((this.playT - this.returnStart) * 100) / 100; this.returnStart = null;
       }
       if (!flame) return;
+      if (this._graspMode()) {
+        // a squeeze at the basket takes the candle
+        const closed = inB && this.t.handCurl(this.side) != null && this.t.handClosed(this.side);
+        if (closed) { this.gripAt ??= now; if (now - this.gripAt >= LUMEN_GRASP_MS) { this.gripAt = null; this.openAt = null; this._pickup(now); } }
+        else this.gripAt = null;
+        return;
+      }
       if (this.dwellProgress("basket", inB, now) >= 1) { this.clearDwell("basket"); this._pickup(now); }
       return;
     }
     // carrying
-    const c = this.cur, tg = this.target, hold = this.lv.hold;
+    const c = this.cur, tg = this.target, hold = this._holdNeed();
     const inside = flame && lumenDist(h, tg) < tg.r;
     if (c.tLeave == null && dB > LUMEN_BASKET_R) { c.tLeave = this.playT; c.leave = { x: h.x, y: h.y }; c.rt = Math.round((c.tLeave - c.tPickup) * 100) / 100; }
     // the decoy lantern (a thinking challenge)
@@ -5571,6 +5657,14 @@ export class Candles extends GameBase {
         c.eff = c.path > 0 ? Math.min(1, straight / c.path) : null;
       }
       if (!this.inside) { c.lastEnter = this.playT; this.inside = true; }
+      if (this._graspMode()) {
+        // the hand opening in the lantern lights it (one carried open lights
+        // as it arrives: the squeeze at the basket was the grasp)
+        const open = this.t.handCurl(this.side) == null || !this.t.handClosed(this.side);
+        if (open) { this.openAt ??= now; if (now - this.openAt >= LUMEN_RELEASE_MS) { this.openAt = null; this._light(now); } }
+        else this.openAt = null;
+        return;
+      }
       if (hold <= 0) { this._light(now); return; }
       if (holdOn) {
         this.matchOut = null;
@@ -5888,7 +5982,7 @@ export class Candles extends GameBase {
     }
   }
   _drawChoiceLanterns(ctx, litOnly, hp) {
-    const tg = this.target, hold = this.lv.hold, pulse = A11Y.calm ? 0.5 : 0.5 + 0.5 * Math.sin(this.clock * 4);
+    const tg = this.target, hold = this._holdNeed(), pulse = A11Y.calm ? 0.5 : 0.5 + 0.5 * Math.sin(this.clock * 4);
     const { Rs } = this._geo();
     const T = this._px(tg), tr = tg.r * Rs;
     const trail = lumenIsTrail(this.level) ? this.trail : null;
@@ -6011,7 +6105,7 @@ export class Candles extends GameBase {
     if (tg.match) { this._drawChoiceLanterns(ctx, false, hp); return; }
     if (tg.move) this._drawMoveTrack(ctx);
     const T = this._px(tg), tr = tg.r * Rs, pulse = A11Y.calm ? 0.5 : 0.5 + 0.5 * Math.sin(this.clock * 4);
-    const hold = this.lv.hold;
+    const hold = this._holdNeed();
     for (const p of this.targets) {   // faint marks for the level's other positions
       if (p.i === tg.i) continue;
       const q = this._px(p);
@@ -8975,6 +9069,9 @@ const WINDY_LIFETIME_REF = 3.0;           // params.lifetime at which the city f
 // pilot hangs on for WINDY_TEETER_S with a warning, and falls only if the jet
 // is still tilted; the fall itself takes WINDY_FALL_FRAMES
 const WINDY_SLIDE_DEG = 8, WINDY_SLIDE_DELAY_S = 2.0, WINDY_SLIDE_K = 0.3;
+const WINDY_SPACE_K = 1.25;               // towers a quarter further apart than the level says
+const WINDY_ONE_HAND_MS = 400;            // a hand unseen this long: fly on the other one
+const WINDY_LANE_GROW = 0.02;             // SW per reading the lane may grow, so one wild reading cannot stretch it
 const WINDY_TEETER_S = 2.0, WINDY_WARN_AT = 0.5, WINDY_FALL_FRAMES = 100;
 const WINDY_CAT_SCALE = 1.6;              // Rook drawn bigger (23 Oct 2026, by request; 1.35 -> 1.6 on 31 Oct for the TV)
 const WINDY_FINISH_MS = 6500;             // the finish-line celebration before the card
@@ -8984,7 +9081,10 @@ const WINDY_LANE_TOP = 0.12, WINDY_LANE_BOT = 0.82, WINDY_GROUND = 0.88;   // fr
 const WINDY_BOARD = 0.105;                // jet length, fraction of the screen height (the mockup's 66 of 640)
 const WINDY_SPAN_MIN = 0.6;               // SW: the hands' sideways distance never reads narrower than this (tilt = atan2(dy, dx))
 const WINDY_DEAD_DEG = 3;                 // degrees of tilt forgiven before the jet leans at all
-const WINDY_LANE_PAD = 0.9;               // the lane ends at 90% of the measured reach, so top and bottom are reachable without a strain
+// the jet's height lane, from the hands' range of mean heights (SW about
+// the body centre): its middle ROM_SHARE, never under half a shoulder width;
+// shared with the practice-and-set-range tile (js/rangecheck.js)
+export function windyLane(lo, hi) { return romWindow(lo, hi, 0.5); }
 const WINDY_STEADY_DEG = 5, WINDY_LOSE_DEG = 12;   // under 5° builds the combo, over 12° loses it
 const WINDY_HANDS_LOST_MS = 1500;         // both hands out of view this long pauses the jet
 const WINDY_SKIES = [
@@ -9269,34 +9369,49 @@ export class WindyCity extends GameBase {
     this.fb.lastEvent = performance.now();
     this._takeOff();
   }
-  _spacing() { return (this.lvl.spacing || 340) * this.k; }
+  // a quarter more room between towers than the mockup (2 Nov 2026, by request)
+  _spacing() { return (this.lvl.spacing || 340) * this.k * WINDY_SPACE_K; }
   _speedPx() { return this.lvl.speed * this.k / this.paceK; }   // px per 60 Hz step
 
   // ---- the two hands: height = mean, tilt = difference ------------------
   _readHands(now, dt) {
     const L = this.t.handRel("left"), R = this.t.handRel("right");
-    if (L) this.hL = L;
-    if (R) this.hR = R;
+    if (L) { this.hL = L; this.hLAt = now; }
+    if (R) { this.hR = R; this.hRAt = now; }
     if (L || R) this.handsAt = now;
     this.handsLost = !L && !R && now - this.handsAt > WINDY_HANDS_LOST_MS;
     if (!this.hL || !this.hR) return;
+    // ONE HAND OUT OF VIEW (2 Nov 2026, by request: "even when my hand was
+    // low the game did not respond": a hand below the desk is not seen, and
+    // the jet held the height it last had): fly on the hand that is seen,
+    // level, until the other comes back
+    const lost = now - (this.hLAt ?? 0) > WINDY_ONE_HAND_MS ? "L" : now - (this.hRAt ?? 0) > WINDY_ONE_HAND_MS ? "R" : null;
     const seen = this.t.lastSeen;
     // the lane in shoulder widths: the trained arm's measured reach straight
     // down to straight up (both arms move together, so the trained one is
     // the limit), grown live if the hands go past it, like Pong's lane
-    if (this.laneLo == null) {
-      this.laneLo = -this.params.rangeScale * this.envAt(-Math.PI / 2) * WINDY_LANE_PAD;
-      this.laneHi = this.params.rangeScale * this.envAt(Math.PI / 2) * WINDY_LANE_PAD;
+    // Since 3 Nov 2026 the lane is the middle ROM_SHARE (70%) of that range,
+    // like every game's (it was rangeScale × the reach × WINDY_LANE_PAD), and
+    // ends staff set by hand on the practice-and-set-range tile (the hands'
+    // mean height, SW) replace the assessment's, end by end. The RANGE grows
+    // live past what was measured; the lane is recut from it.
+    if (this.rangeLo == null) {
+      const m = this.opts.laneRange;
+      this.rangeLo = m?.lo ?? -this.envAt(-Math.PI / 2);
+      this.rangeHi = m?.hi ?? this.envAt(Math.PI / 2);
+      this.laneFrom = m ? "staff" : "assessment";
     }
-    const mean = (this.hL.y + this.hR.y) / 2;
-    if (mean < this.laneLo) this.laneLo = mean;
-    if (mean > this.laneHi) this.laneHi = mean;
-    const f = (mean - this.laneLo) / Math.max(0.5, this.laneHi - this.laneLo);
+    const mean = lost === "L" ? this.hR.y : lost === "R" ? this.hL.y : (this.hL.y + this.hR.y) / 2;
+    if (mean < this.rangeLo) this.rangeLo = Math.max(mean, this.rangeLo - WINDY_LANE_GROW);
+    if (mean > this.rangeHi) this.rangeHi = Math.min(mean, this.rangeHi + WINDY_LANE_GROW);
+    const ln = windyLane(this.rangeLo, this.rangeHi);
+    this.laneLo = ln.lo; this.laneHi = ln.hi;
+    const f = (mean - this.laneLo) / (this.laneHi - this.laneLo);
     this.fHeight = this.fH.push(Math.max(0, Math.min(1, f)), seen, dt) ?? 0;
     // tilt: the line between the two hands, degrees, positive = right hand
     // higher; a 0.5 SW difference across a shoulder width is about 25°
     const dx = Math.max(WINDY_SPAN_MIN, Math.abs(this.hR.x - this.hL.x));
-    let a = Math.atan2(this.hR.y - this.hL.y, dx) * 180 / Math.PI;
+    let a = lost ? 0 : Math.atan2(this.hR.y - this.hL.y, dx) * 180 / Math.PI;
     a = Math.sign(a) * Math.max(0, Math.abs(a) - WINDY_DEAD_DEG);
     this.tiltDeg = this.fTilt.push(a, seen, dt) ?? 0;
   }
@@ -9354,8 +9469,10 @@ export class WindyCity extends GameBase {
   _respawn() {
     if (this.lives <= 0) { this._finish(false); return; }
     this.rider.off = 0; this.rider.v = 0; this.invuln = 120;
-    const spc = this._spacing();
-    for (const o of this.obs) if (o.x < this.bx + 60 * this.k && o.x + o.w > this.bx - 60 * this.k) o.x += spc * 0.6;
+    // the towers stay where they are after a bump (2 Nov 2026, by request:
+    // "once hit, no need to reload the tower"; they used to be pushed back);
+    // the jet passes the one it hit while it blinks (invuln), and the towers
+    // are a quarter further apart than before (WINDY_SPACE_K)
   }
   // the next gap the jet has to fly through: its centre as a share of the
   // lane from the bottom (1 = a full lift), for the DDA's reach fraction
@@ -9384,8 +9501,9 @@ export class WindyCity extends GameBase {
       this._feedback(`${this.passed} gaps flown`, "#6fa35a");
     } else {
       audio.windy("lose");
-      this._prompt("The wind won that one", "Let's try again");
-      this.say("The wind won that one. Let's try again.", true);
+      // (2 Nov 2026, by request: "no need the wind won that one, tell try again, hard luck")
+      this._prompt("Hard luck", "Let's try again");
+      this.say("Hard luck. Let's try again.", true);
     }
   }
 

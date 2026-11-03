@@ -1180,7 +1180,10 @@ def main():
                     help="0-8, SDK default 4")
     ap.add_argument("--gamma", type=int, default=PICTURE_DEFAULTS["gamma"],
                     help="1-9, SDK default 8 (higher lifts the shadows)")
-    ap.add_argument("--preview-width", type=int, default=640)
+    # the picture sent to the game (the full 2K still feeds the tracking and
+    # the hand model): 1280 since 2 Nov 2026, by request, 640 before, which a
+    # window about 1900 wide stretched three times and showed soft
+    ap.add_argument("--preview-width", type=int, default=1280)
     ap.add_argument("--hand-model", choices=["mediapipe", "wilor"], default=cfg.get("hand_model", "mediapipe"),
                     help="which 21-point hand model runs on the wrist crops: mediapipe (CPU, "
                          "in-process) or wilor (CUDA, in tools/.venv-hands; tools/setup_hands_env.cmd)")

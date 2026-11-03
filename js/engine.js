@@ -17,6 +17,22 @@ export const TAU = Math.PI * 2;
 // GameBase.start() loads it so games and assessment always agree. The
 // values below are only the default for profiles that predate this.
 export const CENTER = { x: 0, y: 0.25 };
+// EVERY GAME ASKS FOR 70% OF THE MEASURED RANGE (3 Nov 2026, by request: "all
+// games should do only 70% for the initial testing"). One number for all of
+// them: Pong's lanes, Windy City's height lane and Cozy Fruit's rail are the
+// middle ROM_SHARE of the range the assessment measured (romWindow), the
+// Lantern's lanterns sit at most ROM_SHARE of the reach out in their own
+// direction, and envelope targets (samplePos) never past ROM_SHARE × the
+// envelope whatever the DDA's rangeScale says. While it holds, rangeScale no
+// longer widens Windy City's or Cozy Fruit's lane (it is still adjusted and
+// stored, so lifting the cap later picks up where it is).
+export const ROM_SHARE = 0.7;
+// the middle ROM_SHARE of a 1D range [lo, hi], never narrower than minSpan
+// (widened about the middle, so a small range asks as little past either end as it can)
+export function romWindow(lo, hi, minSpan = 0) {
+  const mid = (lo + hi) / 2, half = Math.max(minSpan, (hi - lo) * ROM_SHARE) / 2;
+  return { lo: mid - half, hi: mid + half };
+}
 const CENTER_DEFAULT = { x: 0, y: 0.25 };
 const BINS = 16;
 const MARGIN = 80;                 // px: no target may spawn closer to an edge
@@ -373,7 +389,13 @@ export class GameBase {
     }
 
     // graceful pause — only after the problem persists >1.2 s
-    const bad = !this.t.trackingOk || this.t.relocated();
+    // a lean is not a move (2 Nov 2026, by request: "the feedback stops the
+    // game"): leaning toward the camera widens the shoulders past the
+    // relocation check's 35%, which paused the game and re-centred; while the
+    // posture coach sees a lean, tilt or turn, that is its job, not a pause
+    const cp = this.t.compensation(this.side);
+    const posture = (cp.lean ?? 0) > 0.7 || (cp.tilt ?? 0) > 0.7 || (cp.rotation ?? 0) > 0.7;
+    const bad = !this.t.trackingOk || (!posture && this.t.relocated());
     if (bad) this.badSince ??= now; else this.badSince = null;
     const shouldPause = this.badSince && now - this.badSince > 1200;
     document.getElementById("paused").classList.toggle("hidden", !shouldPause);
@@ -466,8 +488,9 @@ export class GameBase {
       const th = opts.theta ?? (opts.upperHalf ? Math.random() * Math.PI : Math.random() * TAU);
       const env = this.envAt(th);
       const frac = 0.45 + Math.random() * 0.55;
-      const r = frac * this.params.rangeScale * env;
-      const pos = { x: CENTER.x + Math.cos(th) * r, y: CENTER.y + Math.sin(th) * r, isFar: r > 0.7 * this.params.rangeScale * env, reachFrac: r / env };
+      const rs = Math.min(this.params.rangeScale, ROM_SHARE);   // never past 70% of the reach (ROM_SHARE)
+      const r = frac * rs * env;
+      const pos = { x: CENTER.x + Math.cos(th) * r, y: CENTER.y + Math.sin(th) * r, isFar: r > 0.7 * rs * env, reachFrac: r / env };
       // visual-field policy (hemianopia ≠ hemiparesis: the reach envelope
       // covers the arm; this covers sight). comfort = keep targets where the
       // patient can see them; scan = deliberately train the cut side.

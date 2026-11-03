@@ -6,7 +6,7 @@
 <title>STRIVE</title>
 <!-- Nunito, self-hosted (SIL OFL 1.1, assets/fonts/OFL.txt): fetched at once so the first screen is in it -->
 <link rel="preload" href="assets/fonts/Nunito-latin.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="css/style.css?v=116">
+<link rel="stylesheet" href="css/style.css?v=117">
 <script>if (localStorage.getItem("strive-tv-safe") === "1") document.documentElement.classList.add("tv-safe");</script>
 </head>
 <body>
@@ -410,6 +410,7 @@
     <label>Pong power-ups
       <select id="in-pong-power"><option value="on" selected>On (orbs)</option><option value="off">Off</option></select>
     </label>
+    <div class="row"><button class="btn ghost-light" id="btn-pong-range" title="See the paddle move with the arm, and set the top and bottom by hand if it cannot reach">Check paddle range</button></div>
   </div>
   <div class="dwr-game" data-for="oars">
     <label>Ferry Oars pattern
@@ -555,6 +556,6 @@
 <div id="loading" class="hidden"><div class="loading-card"><div class="spinner"></div><div id="loading-text">Waking up the camera&hellip;</div>
   <div id="loading-error" class="hidden"><button class="btn big" id="btn-loading-retry">Try again</button><button class="btn big ghost-light" id="btn-loading-continue">Continue without the camera</button></div></div></div>
 
-<script type="module" src="js/main.js?v=116"></script>
+<script type="module" src="js/main.js?v=117"></script>
 </body>
 </html>
