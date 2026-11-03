@@ -15,7 +15,17 @@ import { COMP_T } from "./compensation.js";
 // The cue's words come from the chosen coach's phrasebook (coachlines.js,
 // Oct 2026): lean | hike | rotation | tilt each have a line in Rook's,
 // Lumi's and Maple's voice. Lumi's first lines are the original cues.
-const THRESH = { gentle: 1.0, strict: 0.65 };
+// MUCH LESS OF IT (3 Nov 2026, by request: "don't worry too much about
+// compensation movements now, make it much lesser", and "Face the screen" was
+// said too often): gentle, the default, needs a slip twice as big as before
+// (it was 1.0), held for COMP_HOLD_MS (was 0.6 s), rests COMP_REST_MS after a
+// cue (was 5 s), speaks each kind of cue at most once a COMP_SAY_EVERY_MS
+// (the figure and the words still show, silently, between) and no longer
+// dims the game. strict keeps the old line.
+const THRESH = { gentle: 2.0, strict: 0.65 };
+const COMP_HOLD_MS = { gentle: 2500, strict: 600 };
+const COMP_REST_MS = { gentle: 30000, strict: 5000 };
+const COMP_SAY_EVERY_MS = 60000;
 // an alert clears only once the slip is back under this share of the
 // threshold (compensation.js's hysteresis), so a posture hovering at the
 // line does not flicker the cue on and off
@@ -73,14 +83,19 @@ export class Coach {
     if (this.state === "idle") {
       if (over && now > this.cooldownUntil) {
         if (!this.overSince) this.overSince = now;
-        if (now - this.overSince > 600) {
+        if (now - this.overSince > (COMP_HOLD_MS[this.sens] ?? 600)) {
           this.state = "alert"; this.type = worst[0]; this.alertStart = now; this.stateT = now;
           if (!this.quiet) {
-            audio.whoosh();
             // a sideways lean is named by its side, the patient's own
             const toward = this.type === "tilt" && c.tiltLR ? (c.tiltLR > 0 ? "left" : "right") : null;
             const cue = coachLine("compensation", { type: this.type, toward });
-            this._speak(cue);
+            // out loud at most once a minute per kind of cue; between, the words only
+            this._saidAt ??= {};
+            if (this.sens !== "gentle" || !(now - (this._saidAt[this.type] ?? -1e9) < COMP_SAY_EVERY_MS)) {
+              this._saidAt[this.type] = now;
+              audio.whoosh();
+              this._speak(cue);
+            }
             this._cuePill(cue, true);
           }
         }
@@ -89,7 +104,7 @@ export class Coach {
       if (worst[1] < THRESH[this.sens] * RELEASE) {
         this.state = "recover"; this.stateT = now;
         this.events.push({ type: this.type, at: new Date().toISOString(), durationMs: Math.round(now - this.alertStart) });
-        this.cooldownUntil = now + 5000;
+        this.cooldownUntil = now + (COMP_REST_MS[this.sens] ?? 5000);
         this._cuePill("", false);
       }
     } else if (this.state === "recover") {
@@ -97,7 +112,7 @@ export class Coach {
     }
   }
 
-  get dimming() { return this.state === "alert" && !this.quiet ? 0.15 : 0; }
+  get dimming() { return this.state === "alert" && !this.quiet && this.sens !== "gentle" ? 0.15 : 0; }
 
   // caption false: the cue pill already shows the text on screen. A cue
   // never talks over another line: the pill and the dim carry it then.
